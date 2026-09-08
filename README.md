@@ -33,6 +33,19 @@ export PLURAPACK_PREFIX='p;'
 plurapack
 ```
 
+To run directly from a source checkout on Windows or another PC without using
+the installed console script, set the same environment variables and launch
+the repository's entry point:
+
+```powershell
+$env:STOAT_BOT_TOKEN = "..."
+$env:PLURAPACK_PREFIX = "p;"
+python main.py
+```
+
+From Windows Command Prompt, use `set STOAT_BOT_TOKEN=...` and then
+`python main.py` instead.
+
 Never commit `.env`, the SQLite database, or reference voice files. The bot needs permission in each target channel to view/send messages, use masquerades, upload files (when speech delivery is enabled), add/read reactions, edit its own messages, and delete the invoking user's source message. If deletion is denied, the proxy remains posted and the source is preserved; operators should grant only the permissions needed in intended proxy channels.
 
 Initial commands:
