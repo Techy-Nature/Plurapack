@@ -8,9 +8,11 @@ Plurapack is an early, self-hosted [Stoat](https://stoat.chat) member/headmate p
 - Multiple authorized Stoat accounts can share one system and its stable IDs through a 15-character, one-use, 15-minute code. Only the hash of the code is stored.
 - Text proxying through stoat.py masquerades. The replacement is posted and recorded before the source is deleted. Bot messages, commands, in-flight messages, and persisted duplicate source IDs are ignored.
 - Every proxy record retains platform message IDs, system/member IDs, channel and initiating owner, but **not message content**.
+- React to one of your proxies with ✏️ or 📝, then send its replacement text in the same channel, to edit it. React with ❌ or 🗑️ to delete it. Shared-system owners may manage one another's proxies.
+- Re-proxy an existing message by replying to it with only the new member's display name, stable five-character ID, or proxy prefix. The replacement is posted and recorded before the old proxy and selector reply are removed.
 - A bounded, cancellable, asynchronous speech queue and replaceable `SpeechBackend` interface. Playback is Off by default.
 
-Reaction-driven edit/delete/ping and the production Chatterbox HTTP adapter are the next integration increment. The authorization queries and immutable attribution required for them are present, but these actions are deliberately not advertised as live commands yet. No Stoat messages were sent while developing this release.
+The production Chatterbox HTTP adapter is the next integration increment. No Stoat messages were sent while developing this release.
 
 ## Install and run
 
@@ -41,6 +43,10 @@ p;member Alex [alex]            # proxy with: [alex] hello
 p;member Sam S: :S              # proxy with: S: hello :S
 p;link                          # run on the existing owner account
 p;verify abc123...              # run on the other account
+
+React ✏️ / 📝, then send text   # edit one of your system's proxies
+React ❌ / 🗑️                  # delete one of your system's proxies
+Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
 ```
 
 Change `PLURAPACK_PREFIX` to change the **command** prefix. Member input prefixes/suffixes are shortcuts, never identity keys.
@@ -53,7 +59,7 @@ For now, host [Chatterbox](https://github.com/resemble-ai/chatterbox) on the sam
 
 ## Verified versus integration-pending
 
-`pytest` mock-tests ID shape, authorization, shared stable identity, one-use account codes, attribution, command/duplicate suppression, and preservation of a source when posting fails. The installed stoat.py 1.2.1 API was locally inspected for `commands.Bot`, `MessageCreateEvent`, `MessageMasquerade`, channel `send`, and message `delete`. Live Stoat behavior, permissions, reaction events, attachments, and Chatterbox synthesis remain untested; authorize a private test channel before testing them.
+`pytest` mock-tests ID shape, authorization, shared stable identity, one-use account codes, attribution, command/duplicate suppression, reaction editing/deletion, reply re-proxying, and preservation of a source when posting fails. The installed stoat.py 1.2.1 API was locally inspected for message creation/reaction events, masqueraded sends, edits, fetches, and deletion. Live Stoat behavior, permissions, attachments, and Chatterbox synthesis remain untested; authorize a private test channel before testing them.
 
 ## Privacy and backups
 

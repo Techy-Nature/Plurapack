@@ -13,22 +13,64 @@ class Incoming:
     author_id: str
     content: str
     is_bot: bool = False
+    reply_to_id: str | None = None
 
 
 class Platform(Protocol):
     async def send_proxy(self, incoming: Incoming, member: Member, content: str) -> str: ...
     async def delete_source(self, incoming: Incoming) -> None: ...
+    async def edit_proxy(self, channel_id: str, proxy_id: str, content: str) -> None: ...
+    async def delete_proxy(self, channel_id: str, proxy_id: str) -> None: ...
+    async def send_reproxy(self, incoming: Incoming, proxy_id: str, member: Member) -> str: ...
 
 
 class ProxyService:
     def __init__(self, store: Store, platform: Platform, command_prefix: str = "p;"):
         self.store, self.platform, self.command_prefix = store, platform, command_prefix
         self._inflight: set[str] = set()
+        self._pending_edits: dict[tuple[str, str], str] = {}
+
+    async def handle_reaction(self, channel_id: str, proxy_id: str, account_id: str, emoji: str) -> bool:
+        """Handle the deliberately small reaction control surface for an owned proxy."""
+        if not self.store.proxy_owned_by(proxy_id, account_id, channel_id):
+            return False
+        if emoji in {"✏️", "📝"}:
+            self._pending_edits[(account_id, channel_id)] = proxy_id
+            return True
+        if emoji in {"❌", "🗑️"}:
+            await self.platform.delete_proxy(channel_id, proxy_id)
+            self.store.mark_proxy_deleted(proxy_id, account_id)
+            self._pending_edits = {key: value for key, value in self._pending_edits.items() if value != proxy_id}
+            return True
+        return False
 
     async def handle(self, message: Incoming) -> str | None:
         if (message.is_bot or message.id in self._inflight or self.store.source_was_processed(message.id)
                 or message.content.startswith(self.command_prefix)):
             return None
+        edit_key = (message.author_id, message.channel_id)
+        edit_target = self._pending_edits.get(edit_key)
+        if edit_target:
+            if not message.content.strip() or not self.store.proxy_owned_by(
+                    edit_target, message.author_id, message.channel_id):
+                self._pending_edits.pop(edit_key, None)
+                return None
+            await self.platform.edit_proxy(message.channel_id, edit_target, message.content.strip())
+            self._pending_edits.pop(edit_key, None)
+            await self.platform.delete_source(message)
+            return edit_target
+
+        if message.reply_to_id and self.store.proxy_owned_by(
+                message.reply_to_id, message.author_id, message.channel_id):
+            member = self.store.member_selected(message.author_id, message.content)
+            if member:
+                replacement_id = await self.platform.send_reproxy(message, message.reply_to_id, member)
+                if not self.store.replace_proxy(message.reply_to_id, replacement_id, member, message.author_id):
+                    await self.platform.delete_proxy(message.channel_id, replacement_id)
+                    return None
+                await self.platform.delete_proxy(message.channel_id, message.reply_to_id)
+                await self.platform.delete_source(message)
+                return replacement_id
         match = self.store.match_member(message.author_id, message.content)
         if not match:
             return None

@@ -8,6 +8,7 @@ from plurapack.storage import Store, short_hash
 class FakePlatform:
     def __init__(self, fail=False):
         self.sent, self.deleted, self.fail = [], [], fail
+        self.edited, self.deleted_proxies, self.reproxied = [], [], []
 
     async def send_proxy(self, incoming, member, content):
         self.sent.append((member.id, content))
@@ -17,6 +18,16 @@ class FakePlatform:
 
     async def delete_source(self, incoming):
         self.deleted.append(incoming.id)
+
+    async def edit_proxy(self, channel_id, proxy_id, content):
+        self.edited.append((channel_id, proxy_id, content))
+
+    async def delete_proxy(self, channel_id, proxy_id):
+        self.deleted_proxies.append((channel_id, proxy_id))
+
+    async def send_reproxy(self, incoming, proxy_id, member):
+        self.reproxied.append((proxy_id, member.id))
+        return "proxy-2"
 
 
 @pytest.fixture
@@ -58,6 +69,52 @@ async def test_failed_replacement_preserves_original(store):
     with pytest.raises(RuntimeError):
         await ProxyService(store, platform).handle(Incoming("source", "channel", "owner", "[alex] hi"))
     assert platform.deleted == []
+
+
+async def test_edit_reaction_uses_next_message_in_same_channel(store):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    await service.handle(Incoming("source-1", "channel", "owner", "[alex] before"))
+
+    assert await service.handle_reaction("wrong-channel", "proxy-1", "owner", "✏️") is False
+    assert await service.handle_reaction("channel", "proxy-1", "stranger", "✏️") is False
+    assert await service.handle_reaction("channel", "proxy-1", "owner", "✏️") is True
+    assert await service.handle(Incoming("edit-source", "channel", "owner", "after")) == "proxy-1"
+    assert platform.edited == [("channel", "proxy-1", "after")]
+    assert platform.deleted == ["source-1", "edit-source"]
+
+
+async def test_delete_reaction_requires_ownership_and_marks_proxy_deleted(store):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    await service.handle(Incoming("source-1", "channel", "owner", "[alex] hello"))
+
+    assert await service.handle_reaction("channel", "proxy-1", "stranger", "❌") is False
+    assert await service.handle_reaction("channel", "proxy-1", "owner", "❌") is True
+    assert platform.deleted_proxies == [("channel", "proxy-1")]
+    assert not store.proxy_owned_by("proxy-1", "owner")
+
+
+async def test_reply_with_member_name_id_or_prefix_reproxies_owned_message(store):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    await service.handle(Incoming("source-1", "channel", "owner", "[alex] hello"))
+    member = store.member_named("owner", "Alex")
+
+    reply = Incoming("selector", "channel", "owner", member.id, reply_to_id="proxy-1")
+    assert await service.handle(reply) == "proxy-2"
+    assert platform.reproxied == [("proxy-1", member.id)]
+    assert platform.deleted_proxies == [("channel", "proxy-1")]
+    assert platform.deleted == ["source-1", "selector"]
+    assert store.proxy_owned_by("proxy-2", "owner", "channel")
+
+
+def test_member_selector_accepts_name_id_and_proxy_prefix(store):
+    member = store.member_named("owner", "Alex")
+    assert store.member_selected("owner", " alex ") == member
+    assert store.member_selected("owner", member.id) == member
+    assert store.member_selected("owner", "[alex]") == member
+    assert store.member_selected("stranger", member.id) is None
 
 
 def test_other_account_cannot_select_or_manage_member(store):
