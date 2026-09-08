@@ -209,6 +209,24 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(f"Voice for **{configured.name}** is Off.")
 
+    @bot.command()
+    async def voiceformat(ctx: commands.Context, selector: str, enabled: str = "on",
+                          strikethrough: str = "normal") -> None:
+        """Opt into semantic Markdown speech and choose crossed-out delivery."""
+        if enabled.lower() not in {"on", "off"}:
+            await ctx.send("Formatting must be on or off.")
+            return
+        try:
+            configured = store.configure_speech_formatting(
+                ctx.author.id, selector, enabled.lower() == "on", strikethrough.lower()
+            )
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        state = "On" if configured.speech_formatting else "Off"
+        await ctx.send(f"Speech formatting for **{configured.name}** is {state}; crossed-out text is "
+                       f"`{configured.strikethrough_speech}`.")
+
     @bot.listen(stoat.MessageCreateEvent)
     async def proxy_listener(event: stoat.MessageCreateEvent) -> None:
         message = event.message

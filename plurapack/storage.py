@@ -27,6 +27,8 @@ class Member:
     voice_reference: str | None
     voice_settings: str
     playback: str
+    speech_formatting: int
+    strikethrough_speech: str
 
 
 class Store:
@@ -59,6 +61,8 @@ class Store:
                     name TEXT NOT NULL COLLATE NOCASE, prefix TEXT NOT NULL, suffix TEXT NOT NULL,
                     avatar TEXT, voice_reference TEXT, voice_settings TEXT NOT NULL DEFAULT '{}',
                     playback TEXT NOT NULL DEFAULT 'off' CHECK(playback IN ('off','local','send','both')),
+                    speech_formatting INTEGER NOT NULL DEFAULT 0,
+                    strikethrough_speech TEXT NOT NULL DEFAULT 'normal',
                     UNIQUE(system_id, name), UNIQUE(system_id, prefix, suffix)
                 );
                 CREATE TABLE IF NOT EXISTS links (
@@ -72,6 +76,11 @@ class Store:
                     deleted_at INTEGER, FOREIGN KEY(member_id) REFERENCES members(id)
                 );
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
+            if "speech_formatting" not in columns:
+                db.execute("ALTER TABLE members ADD COLUMN speech_formatting INTEGER NOT NULL DEFAULT 0")
+            if "strikethrough_speech" not in columns:
+                db.execute("ALTER TABLE members ADD COLUMN strikethrough_speech TEXT NOT NULL DEFAULT 'normal'")
 
     def create_system(self, account_id: str, name: str) -> str:
         with self.connect() as db:
@@ -145,6 +154,19 @@ class Store:
         with self.connect() as db:
             db.execute("UPDATE members SET voice_reference=?, voice_settings=?, playback=? WHERE id=?",
                        (voice_reference, normalized, playback, member.id))
+        return self.member_selected(account_id, member.id)  # type: ignore[return-value]
+
+    def configure_speech_formatting(self, account_id: str, member_selector: str, enabled: bool,
+                                    strikethrough: str = "normal") -> Member:
+        """Choose whether Markdown meaning, rather than its punctuation, reaches TTS."""
+        if strikethrough not in {"mumble", "normal", "omit", "whisper"}:
+            raise ValueError("Crossed-out speech must be mumble, normal, omit, or whisper.")
+        member = self.member_selected(account_id, member_selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        with self.connect() as db:
+            db.execute("UPDATE members SET speech_formatting=?, strikethrough_speech=? WHERE id=?",
+                       (int(enabled), strikethrough, member.id))
         return self.member_selected(account_id, member.id)  # type: ignore[return-value]
 
     def match_member(self, account_id: str, content: str) -> tuple[Member, str] | None:
