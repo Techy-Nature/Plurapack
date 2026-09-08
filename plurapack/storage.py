@@ -113,6 +113,15 @@ class Store:
                 WHERE o.account_id=? AND m.name=?""", (account_id, name)).fetchone()
             return Member(**dict(row)) if row else None
 
+    def member_selected(self, account_id: str, selector: str) -> Member | None:
+        """Resolve a reply selector as a stable ID, display name, or member prefix."""
+        selector = selector.strip()
+        with self.connect() as db:
+            row = db.execute("""SELECT m.* FROM members m JOIN owners o ON o.system_id=m.system_id
+                WHERE o.account_id=? AND (m.id=? OR m.name=? OR m.prefix=?)""",
+                (account_id, selector, selector, selector)).fetchone()
+            return Member(**dict(row)) if row else None
+
     def match_member(self, account_id: str, content: str) -> tuple[Member, str] | None:
         with self.connect() as db:
             rows = db.execute("""SELECT m.* FROM members m JOIN owners o ON o.system_id=m.system_id
@@ -169,8 +178,30 @@ class Store:
             db.execute("UPDATE links SET used_at=? WHERE token_hash=?", (int(time.time()), digest))
             return str(row["system_id"])
 
-    def proxy_owned_by(self, proxy_id: str, account_id: str) -> bool:
+    def proxy_owned_by(self, proxy_id: str, account_id: str, channel_id: str | None = None) -> bool:
         with self.connect() as db:
             return db.execute("""SELECT 1 FROM proxied_messages p JOIN owners o ON o.system_id=p.system_id
-                WHERE p.proxy_message_id=? AND o.account_id=? AND p.deleted_at IS NULL""",
-                (proxy_id, account_id)).fetchone() is not None
+                WHERE p.proxy_message_id=? AND o.account_id=? AND p.deleted_at IS NULL
+                AND (? IS NULL OR p.channel_id=?)""",
+                (proxy_id, account_id, channel_id, channel_id)).fetchone() is not None
+
+    def replace_proxy(self, old_proxy_id: str, new_proxy_id: str, member: Member, account_id: str) -> bool:
+        """Move durable attribution to a re-proxied message, if the caller owns both."""
+        if self.system_for(account_id) != member.system_id:
+            return False
+        try:
+            with self.connect() as db:
+                cursor = db.execute("""UPDATE proxied_messages
+                    SET proxy_message_id=?, member_id=?, owner_account_id=?
+                    WHERE proxy_message_id=? AND system_id=? AND deleted_at IS NULL""",
+                    (new_proxy_id, member.id, account_id, old_proxy_id, member.system_id))
+                return cursor.rowcount == 1
+        except sqlite3.IntegrityError:
+            return False
+
+    def mark_proxy_deleted(self, proxy_id: str, account_id: str) -> bool:
+        with self.connect() as db:
+            cursor = db.execute("""UPDATE proxied_messages SET deleted_at=unixepoch()
+                WHERE proxy_message_id=? AND deleted_at IS NULL AND system_id=(
+                    SELECT system_id FROM owners WHERE account_id=?)""", (proxy_id, account_id))
+            return cursor.rowcount == 1

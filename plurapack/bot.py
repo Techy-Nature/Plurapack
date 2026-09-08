@@ -14,6 +14,7 @@ from .storage import Member, Store
 @dataclass
 class StoatPlatform:
     messages: dict[str, stoat.Message]
+    state: stoat.State
 
     async def send_proxy(self, incoming: Incoming, member: Member, content: str) -> str:
         source = self.messages[incoming.id]
@@ -29,11 +30,28 @@ class StoatPlatform:
     async def delete_source(self, incoming: Incoming) -> None:
         await self.messages.pop(incoming.id).delete()
 
+    async def edit_proxy(self, channel_id: str, proxy_id: str, content: str) -> None:
+        await self.state.http.edit_message(channel_id, proxy_id, content=content)
+
+    async def delete_proxy(self, channel_id: str, proxy_id: str) -> None:
+        await self.state.http.delete_message(channel_id, proxy_id)
+
+    async def send_reproxy(self, incoming: Incoming, proxy_id: str, member: Member) -> str:
+        old = await self.state.http.get_message(incoming.channel_id, proxy_id)
+        channel = self.messages[incoming.id].get_channel()
+        if channel is None:
+            raise RuntimeError("Proxy channel is unavailable; the original was preserved.")
+        posted = await channel.send(
+            old.content,
+            masquerade=stoat.MessageMasquerade(name=member.name, avatar=member.avatar),
+        )
+        return posted.id
+
 
 def create_bot(prefix: str, database: str) -> commands.Bot:
     bot = commands.Bot(command_prefix=prefix, description="Plural communication proxy")
     store = Store(database)
-    platform = StoatPlatform({})
+    platform = StoatPlatform({}, bot.state)
     service = ProxyService(store, platform, prefix)
 
     @bot.command()
@@ -78,12 +96,30 @@ def create_bot(prefix: str, database: str) -> commands.Bot:
         author = message.get_author()
         if author is None:
             return
-        incoming = Incoming(message.id, message.channel_id, author.id, message.content, bool(getattr(author, "bot", None)))
+        incoming = Incoming(
+            message.id,
+            message.channel_id,
+            author.id,
+            message.content,
+            bool(getattr(author, "bot", None)),
+            message.replies[0] if message.replies else None,
+        )
         platform.messages[message.id] = message
         try:
             await service.handle(incoming)
         finally:
             platform.messages.pop(message.id, None)
+
+    @bot.listen(stoat.MessageReactEvent)
+    async def reaction_listener(event: stoat.MessageReactEvent) -> None:
+        message = event.message
+        if message is not None:
+            platform.messages[message.id] = message
+        try:
+            await service.handle_reaction(event.channel_id, event.message_id, event.user_id, event.emoji)
+        finally:
+            if message is not None:
+                platform.messages.pop(message.id, None)
 
     return bot
 
