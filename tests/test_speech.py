@@ -5,7 +5,7 @@ import pytest
 
 from plurapack.chatterbox import ChatterboxBackend, ChatterboxError
 from plurapack.proxy import Incoming, ProxyService
-from plurapack.speech import SpeechJob, SpeechQueue, speech_worker
+from plurapack.speech import SpeechJob, SpeechQueue, speech_parts, speech_worker
 from plurapack.storage import Store
 from test_proxy import FakePlatform
 
@@ -39,6 +39,54 @@ async def test_off_does_not_enqueue_and_send_delivers_complete_identity(voice_st
     assert queue.submit(SpeechJob("channel", "proxy", "hello", member))
     await queue.run_one()
     assert delivered == [("channel", "proxy", b"mp3")]
+
+
+def test_semantic_speech_formatting_is_opt_in(voice_store):
+    member = voice_store.member_named("owner", "Alex")
+    source = 'I said "hello" *waves* **very clearly** and ~~never mind~~.'
+    assert [part.text for part in speech_parts(source, member)] == [source]
+
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, "whisper")
+    assert [(part.text, part.style) for part in speech_parts(source, member)] == [
+        ('I said "hello"', "normal"),
+        ("very clearly", "emphasis"),
+        ("and", "normal"),
+        ("never mind", "whisper"),
+        (".", "normal"),
+    ]
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("normal", [("keep this", "normal")]),
+    ("mumble", [("keep this", "mumble")]),
+    ("whisper", [("keep this", "whisper")]),
+    ("omit", []),
+])
+def test_strikethrough_modes(voice_store, mode, expected):
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, mode)
+    assert [(part.text, part.style) for part in speech_parts("~~keep this~~", member)] == expected
+
+
+async def test_queue_uses_styled_backend_when_formatting_enabled(voice_store):
+    member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "send")
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, "omit")
+
+    class StyledBackend(Backend):
+        def __init__(self): self.parts = None
+        async def synthesize_styled(self, parts, member):
+            self.parts = parts
+            return b"styled-mp3"
+
+    backend = StyledBackend()
+    delivered = []
+    async def deliver(job, audio): delivered.append(audio)
+    queue = SpeechQueue(backend, deliver)
+    queue.submit(SpeechJob("c", "p", "hello *waves* **there** ~~no~~", member))
+    await queue.run_one()
+    assert [(part.text, part.style) for part in backend.parts] == [
+        ("hello", "normal"), ("there", "emphasis")
+    ]
+    assert delivered == [b"styled-mp3"]
 
 
 async def test_enqueue_occurs_after_record_and_saturation_preserves_proxy(voice_store):
@@ -127,6 +175,8 @@ def test_invalid_or_unauthorized_voice_configuration(voice_store):
         voice_store.configure_voice("owner", "Alex", "a.wav", "{}", "both")
     with pytest.raises(PermissionError):
         voice_store.configure_voice("stranger", "Alex", "a.wav", "{}", "send")
+    with pytest.raises(ValueError, match="mumble"):
+        voice_store.configure_speech_formatting("owner", "Alex", True, "shout")
 
 
 async def test_backend_rejects_settings_non_audio_and_oversized(voice_store, monkeypatch):

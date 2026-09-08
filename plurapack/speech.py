@@ -13,6 +13,60 @@ class SpeechBackend(Protocol):
 
 
 @dataclass(frozen=True)
+class SpeechPart:
+    text: str
+    style: str = "normal"
+
+
+def speech_parts(text: str, member: Member) -> tuple[SpeechPart, ...]:
+    """Interpret the small Markdown subset used for optional expressive speech.
+
+    Single-star spans are stage directions and are omitted. Double-star spans
+    are emphasized. Strikethrough follows the member's explicit preference.
+    Delimiters are never spoken. This intentionally is not a full Markdown
+    renderer, which keeps unmatched punctuation from silently eating speech.
+    """
+    if not member.speech_formatting:
+        return (SpeechPart(text),)
+    parts: list[SpeechPart] = []
+    buffer: list[str] = []
+
+    def add(value: str, style: str = "normal") -> None:
+        if not value:
+            return
+        if parts and parts[-1].style == style:
+            parts[-1] = SpeechPart(parts[-1].text + value, style)
+        else:
+            parts.append(SpeechPart(value, style))
+
+    index = 0
+    while index < len(text):
+        marker = next((item for item in ("**", "~~", "*") if text.startswith(item, index)), None)
+        if marker is None:
+            buffer.append(text[index])
+            index += 1
+            continue
+        end = text.find(marker, index + len(marker))
+        if end < 0:
+            buffer.append(marker)
+            index += len(marker)
+            continue
+        add("".join(buffer))
+        buffer.clear()
+        value = text[index + len(marker):end]
+        if marker == "**":
+            add(value, "emphasis")
+        elif marker == "~~" and member.strikethrough_speech != "omit":
+            add(value, member.strikethrough_speech)
+        # A single-star action and omitted strikethrough deliberately add nothing.
+        index = end + len(marker)
+    add("".join(buffer))
+    # Avoid awkward gaps left by omitted actions without altering spoken words.
+    return tuple(SpeechPart(" ".join(part.text.split()), part.style)
+                 for part in parts if part.text.strip())
+
+
+@dataclass(frozen=True)
 class SpeechJob:
     channel_id: str
     proxy_message_id: str
@@ -43,7 +97,14 @@ class SpeechQueue:
         job = await self.queue.get()
         try:
             if job.proxy_message_id not in self.cancelled:
-                audio = await self.backend.synthesize(job.text, job.member)
+                parts = speech_parts(job.text, job.member)
+                if not parts:
+                    return
+                styled = getattr(self.backend, "synthesize_styled", None)
+                if job.member.speech_formatting and styled is not None:
+                    audio = await styled(parts, job.member)
+                else:
+                    audio = await self.backend.synthesize(" ".join(part.text for part in parts), job.member)
                 if job.proxy_message_id not in self.cancelled:
                     await self.deliver(job, audio)
         finally:

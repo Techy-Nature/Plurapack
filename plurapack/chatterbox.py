@@ -7,6 +7,7 @@ import json
 from urllib.parse import urlsplit
 
 from .storage import Member
+from .speech import SpeechPart
 
 PERMITTED_SETTINGS = {
     "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor",
@@ -42,6 +43,37 @@ class ChatterboxBackend:
             settings = json.loads(member.voice_settings)
         except (TypeError, json.JSONDecodeError) as error:
             raise ChatterboxError("Speech voice settings are invalid.") from error
+        if not isinstance(settings, dict):
+            raise ChatterboxError("Speech voice settings must be an object.")
+        if set(settings) - PERMITTED_SETTINGS:
+            raise ChatterboxError("Speech voice settings contain unsupported fields.")
+        return await self._synthesize_with_settings(text, member, settings)
+
+    async def synthesize_styled(self, parts: tuple[SpeechPart, ...], member: Member) -> bytes:
+        """Render spans separately so Chatterbox's controls can convey formatting."""
+        try:
+            base = json.loads(member.voice_settings)
+        except (TypeError, json.JSONDecodeError) as error:
+            raise ChatterboxError("Speech voice settings are invalid.") from error
+        if not isinstance(base, dict) or set(base) - PERMITTED_SETTINGS:
+            raise ChatterboxError("Speech voice settings are invalid.")
+        presets = {
+            "normal": {},
+            "emphasis": {"exaggeration": 0.85, "cfg_weight": 0.35},
+            "mumble": {"exaggeration": 0.2, "cfg_weight": 0.2, "speed_factor": 1.12},
+            "whisper": {"exaggeration": 0.05, "cfg_weight": 0.15, "speed_factor": 0.9},
+        }
+        audio = []
+        for part in parts:
+            settings = {**base, **presets[part.style]}
+            audio.append(await self._synthesize_with_settings(part.text, member, settings))
+        # MPEG audio frames are independently decodable, so sequential streams
+        # remain one playable .mp3 attachment without requiring ffmpeg.
+        return b"".join(audio)
+
+    async def _synthesize_with_settings(self, text: str, member: Member, settings: dict) -> bytes:
+        if not member.voice_reference:
+            raise ChatterboxError("Speech voice reference is not configured.")
         if not isinstance(settings, dict):
             raise ChatterboxError("Speech voice settings must be an object.")
         if set(settings) - PERMITTED_SETTINGS:

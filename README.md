@@ -72,6 +72,16 @@ The adapter targets devnen's Chatterbox-TTS-Server JSON `/tts` contract: `voice_
 
 Use `p;voice MEMBER FILENAME send {}` to enable attachments and `p;voiceoff MEMBER` to disable them. Files must already exist directly or below the approved directory; the bot stores and sends only their constrained relative identifier, never audio bytes from chat. Settings must be a JSON object and are limited to `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`, `split_text`, and `chunk_size`. Although the database reserves `local` and `both`, they are rejected because server-only Plurapack cannot cause client-side playback; only `send` currently produces output.
 
+Semantic speech formatting is a separate opt-in and is **Off by default**. Enable it with
+`p;voiceformat MEMBER on normal`; replace `normal` with `mumble`, `omit`, or `whisper` to
+choose how `~~crossed-out text~~` sounds. When enabled, ordinary and quoted text is spoken,
+`*single-asterisk actions*` is not spoken, Markdown punctuation is removed, and
+`**double-asterisk text**` receives stronger emphasis. Mumble and whisper are best-effort
+Chatterbox performances using lower exaggeration/configuration weight and adjusted speed;
+results depend on the reference voice and model. Each differently styled span is rendered
+separately and the MPEG streams are delivered together as one MP3 attachment. Disable the
+interpretation without disabling voice attachments with `p;voiceformat MEMBER off`.
+
 ## Verified versus integration-pending
 
 `pytest` mock-tests ID shape, authorization, shared stable identity, one-use account codes, attribution, command/duplicate suppression, reaction editing/deletion, reply re-proxying, and preservation of a source when posting fails. The installed stoat.py 1.2.1 API was locally inspected for message creation/reaction events, masqueraded sends, edits, fetches, and deletion. Live Stoat behavior, permissions, attachments, and Chatterbox synthesis remain untested; authorize a private test channel before testing them.
