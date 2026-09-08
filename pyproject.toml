@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "plurapack"
+version = "0.1.0"
+description = "A self-hosted Stoat member proxy with optional local speech"
+requires-python = ">=3.11"
+dependencies = ["stoat.py>=1.2.1,<2"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-asyncio>=0.24"]
+
+[project.scripts]
+plurapack = "plurapack.bot:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
