@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from .storage import Member, Store
+from .speech import SpeechJob, SpeechQueue
 
 
 @dataclass(frozen=True)
@@ -25,8 +26,10 @@ class Platform(Protocol):
 
 
 class ProxyService:
-    def __init__(self, store: Store, platform: Platform, command_prefix: str = "p;"):
+    def __init__(self, store: Store, platform: Platform, command_prefix: str = "p;",
+                 speech_queue: SpeechQueue | None = None):
         self.store, self.platform, self.command_prefix = store, platform, command_prefix
+        self.speech_queue = speech_queue
         self._inflight: set[str] = set()
         self._pending_edits: dict[tuple[str, str], str] = {}
 
@@ -38,6 +41,8 @@ class ProxyService:
             self._pending_edits[(account_id, channel_id)] = proxy_id
             return True
         if emoji in {"❌", "🗑️"}:
+            if self.speech_queue:
+                self.speech_queue.cancel(proxy_id)
             await self.platform.delete_proxy(channel_id, proxy_id)
             self.store.mark_proxy_deleted(proxy_id, account_id)
             self._pending_edits = {key: value for key, value in self._pending_edits.items() if value != proxy_id}
@@ -82,6 +87,8 @@ class ProxyService:
                 return None
             if not self.store.record_proxy(message.id, proxy_id, message.channel_id, member, message.author_id):
                 return None
+            if self.speech_queue:
+                self.speech_queue.submit(SpeechJob(message.channel_id, proxy_id, body, member))
             # The source is removed only after the replacement exists and its attribution is durable.
             await self.platform.delete_source(message)
             return proxy_id

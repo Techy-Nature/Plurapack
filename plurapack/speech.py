@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -13,6 +14,7 @@ class SpeechBackend(Protocol):
 
 @dataclass(frozen=True)
 class SpeechJob:
+    channel_id: str
     proxy_message_id: str
     text: str
     member: Member
@@ -43,8 +45,20 @@ class SpeechQueue:
             if job.proxy_message_id not in self.cancelled:
                 audio = await self.backend.synthesize(job.text, job.member)
                 if job.proxy_message_id not in self.cancelled:
-                    await self.deliver(job.proxy_message_id, audio)
+                    await self.deliver(job, audio)
         finally:
             self.cancelled.discard(job.proxy_message_id)
             self.queue.task_done()
 
+
+async def speech_worker(queue: SpeechQueue) -> None:
+    """Run speech jobs forever without allowing one failed job to stop the worker."""
+    while True:
+        try:
+            await queue.run_one()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            # Job inputs may contain private text/audio identifiers. Log only the
+            # exception class, not its potentially sensitive message.
+            logging.getLogger(__name__).error("Speech job failed (%s)", type(error).__name__)
