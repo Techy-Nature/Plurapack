@@ -1,20 +1,41 @@
 """Thin stoat.py adapter. Importing this module never connects to Stoat."""
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import os
 from dataclasses import dataclass
-
-import stoat
-from stoat.ext import commands
+from typing import Any
 
 from .proxy import Incoming, ProxyService
 from .storage import Member, Store
 
 
+STOAT_INSTALL_MESSAGE = (
+    "The Stoat client dependency is not installed. Install Plurapack and its "
+    "dependencies with `python -m pip install -e .`, then try again."
+)
+
+
+class StoatDependencyError(RuntimeError):
+    """Raised when the bot is launched without the Stoat SDK installed."""
+
+
+def _load_stoat() -> tuple[Any, Any]:
+    """Load the runtime adapter only when a bot is being created."""
+    if importlib.util.find_spec("stoat") is None:
+        raise StoatDependencyError(STOAT_INSTALL_MESSAGE)
+
+    stoat = importlib.import_module("stoat")
+    commands = importlib.import_module("stoat.ext.commands")
+    return stoat, commands
+
+
 @dataclass
 class StoatPlatform:
-    messages: dict[str, stoat.Message]
-    state: stoat.State
+    messages: dict[str, Any]
+    state: Any
+    sdk: Any
 
     async def send_proxy(self, incoming: Incoming, member: Member, content: str) -> str:
         source = self.messages[incoming.id]
@@ -23,7 +44,7 @@ class StoatPlatform:
             raise RuntimeError("Source channel is unavailable; the original was preserved.")
         posted = await channel.send(
             content,
-            masquerade=stoat.MessageMasquerade(name=member.name, avatar=member.avatar),
+            masquerade=self.sdk.MessageMasquerade(name=member.name, avatar=member.avatar),
         )
         return posted.id
 
@@ -43,15 +64,16 @@ class StoatPlatform:
             raise RuntimeError("Proxy channel is unavailable; the original was preserved.")
         posted = await channel.send(
             old.content,
-            masquerade=stoat.MessageMasquerade(name=member.name, avatar=member.avatar),
+            masquerade=self.sdk.MessageMasquerade(name=member.name, avatar=member.avatar),
         )
         return posted.id
 
 
-def create_bot(prefix: str, database: str) -> commands.Bot:
+def create_bot(prefix: str, database: str) -> Any:
+    stoat, commands = _load_stoat()
     bot = commands.Bot(command_prefix=prefix, description="Plural communication proxy")
     store = Store(database)
-    platform = StoatPlatform({}, bot.state)
+    platform = StoatPlatform({}, bot.state, stoat)
     service = ProxyService(store, platform, prefix)
 
     @bot.command()
@@ -128,7 +150,14 @@ def main() -> None:
     token = os.environ.get("STOAT_BOT_TOKEN")
     if not token:
         raise SystemExit("STOAT_BOT_TOKEN is required (copy .env.example; never commit the token).")
-    create_bot(os.environ.get("PLURAPACK_PREFIX", "p;"), os.environ.get("PLURAPACK_DATABASE", "plurapack.sqlite3")).run(token)
+    try:
+        bot = create_bot(
+            os.environ.get("PLURAPACK_PREFIX", "p;"),
+            os.environ.get("PLURAPACK_DATABASE", "plurapack.sqlite3"),
+        )
+    except StoatDependencyError as error:
+        raise SystemExit(str(error)) from None
+    bot.run(token)
 
 
 if __name__ == "__main__":
