@@ -10,9 +10,9 @@ Plurapack is an early, self-hosted [Stoat](https://stoat.chat) member/headmate p
 - Every proxy record retains platform message IDs, system/member IDs, channel and initiating owner, but **not message content**.
 - React to one of your proxies with ✏️ or 📝, then send its replacement text in the same channel, to edit it. React with ❌ or 🗑️ to delete it. Shared-system owners may manage one another's proxies.
 - Re-proxy an existing message by replying to it with only the new member's display name, stable five-character ID, or proxy prefix. The replacement is posted and recorded before the old proxy and selector reply are removed.
-- A bounded, cancellable, asynchronous speech queue and replaceable `SpeechBackend` interface. Playback is Off by default.
+- A bounded, cancellable, asynchronous speech queue and Chatterbox HTTP backend. Playback is Off by default. Edits and re-proxy operations intentionally do not generate replacement audio in this first release; a newly tagged text proxy does.
 
-The production Chatterbox HTTP adapter is the next integration increment. No Stoat messages were sent while developing this release.
+No live Stoat messages or Chatterbox requests were sent while developing this release.
 
 ## Install and run
 
@@ -68,7 +68,9 @@ Change `PLURAPACK_PREFIX` to change the **command** prefix. Member input prefixe
 
 Plurapack's server cannot force playback on somebody else's computer. `local` mode therefore requires a future companion client/browser extension; `send` uploads one MP3 associated with the proxy; `both` is for one local event plus one attachment; `off` (the default) does neither. The queue rejects work beyond `PLURAPACK_TTS_QUEUE_LIMIT`, can cancel by proxy-message ID, and never blocks text proxying.
 
-For now, host [Chatterbox](https://github.com/resemble-ai/chatterbox) on the same trusted machine (preferably bound to `127.0.0.1`), keep reference audio outside the repository, and implement `SpeechBackend.synthesize()` for that service's endpoint. Do not expose an unauthenticated voice-cloning endpoint to the internet. `PLURAPACK_TTS_URL` is reserved for the forthcoming adapter and is inactive in this release.
+The adapter targets devnen's Chatterbox-TTS-Server JSON `/tts` contract: `voice_mode=clone`, `reference_audio_filename`, and `output_format=mp3`. Set `PLURAPACK_TTS_URL` to the full endpoint (for example `http://127.0.0.1:8004/tts`), `PLURAPACK_TTS_QUEUE_LIMIT` to 1–1000 (default 8), `PLURAPACK_TTS_WORKERS` to 1–4 (default 1), and `PLURAPACK_VOICE_REFERENCE_DIR` to the local approved directory mirroring the server's `reference_audio` directory. Do not expose an unauthenticated voice-cloning endpoint to the internet.
+
+Use `p;voice MEMBER FILENAME send {}` to enable attachments and `p;voiceoff MEMBER` to disable them. Files must already exist directly or below the approved directory; the bot stores and sends only their constrained relative identifier, never audio bytes from chat. Settings must be a JSON object and are limited to `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`, `split_text`, and `chunk_size`. Although the database reserves `local` and `both`, they are rejected because server-only Plurapack cannot cause client-side playback; only `send` currently produces output.
 
 ## Verified versus integration-pending
 

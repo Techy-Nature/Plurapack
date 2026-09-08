@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 import sqlite3
 import time
@@ -121,6 +122,30 @@ class Store:
                 WHERE o.account_id=? AND (m.id=? OR m.name=? OR m.prefix=?)""",
                 (account_id, selector, selector, selector)).fetchone()
             return Member(**dict(row)) if row else None
+
+    def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
+                        voice_settings: str = "{}", playback: str = "send") -> Member:
+        """Configure an owned member. Only ``send`` has output in this server-only release."""
+        if playback not in {"off", "local", "send", "both"}:
+            raise ValueError("Playback must be off, local, send, or both.")
+        if playback in {"local", "both"}:
+            raise ValueError("Local playback is not implemented; use off or send.")
+        try:
+            settings = json.loads(voice_settings)
+        except json.JSONDecodeError as error:
+            raise ValueError("Voice settings must be a JSON object.") from error
+        if not isinstance(settings, dict):
+            raise ValueError("Voice settings must be a JSON object.")
+        member = self.member_selected(account_id, member_selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        if playback == "send" and not voice_reference:
+            raise ValueError("Send playback requires a voice reference.")
+        normalized = json.dumps(settings, separators=(",", ":"), sort_keys=True)
+        with self.connect() as db:
+            db.execute("UPDATE members SET voice_reference=?, voice_settings=?, playback=? WHERE id=?",
+                       (voice_reference, normalized, playback, member.id))
+        return self.member_selected(account_id, member.id)  # type: ignore[return-value]
 
     def match_member(self, account_id: str, content: str) -> tuple[Member, str] | None:
         with self.connect() as db:
