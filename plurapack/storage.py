@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import secrets
 import sqlite3
 import time
@@ -24,6 +25,7 @@ class Member:
     prefix: str
     suffix: str
     avatar: str | None
+    color: str | None
     voice_reference: str | None
     voice_settings: str
     playback: str
@@ -59,7 +61,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS members (
                     id TEXT PRIMARY KEY CHECK(length(id)=5), system_id TEXT NOT NULL REFERENCES systems(id),
                     name TEXT NOT NULL COLLATE NOCASE, prefix TEXT NOT NULL, suffix TEXT NOT NULL,
-                    avatar TEXT, voice_reference TEXT, voice_settings TEXT NOT NULL DEFAULT '{}',
+                    avatar TEXT, color TEXT, voice_reference TEXT, voice_settings TEXT NOT NULL DEFAULT '{}',
                     playback TEXT NOT NULL DEFAULT 'off' CHECK(playback IN ('off','local','send','both')),
                     speech_formatting INTEGER NOT NULL DEFAULT 0,
                     strikethrough_speech TEXT NOT NULL DEFAULT 'normal',
@@ -77,6 +79,8 @@ class Store:
                 );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
+            if "color" not in columns:
+                db.execute("ALTER TABLE members ADD COLUMN color TEXT")
             if "speech_formatting" not in columns:
                 db.execute("ALTER TABLE members ADD COLUMN speech_formatting INTEGER NOT NULL DEFAULT 0")
             if "strikethrough_speech" not in columns:
@@ -131,6 +135,18 @@ class Store:
                 WHERE o.account_id=? AND (m.id=? OR m.name=? OR m.prefix=?)""",
                 (account_id, selector, selector, selector)).fetchone()
             return Member(**dict(row)) if row else None
+
+    def configure_color(self, account_id: str, member_selector: str, color: str) -> Member:
+        """Set the username color for an owned member using a six-digit RGB value."""
+        normalized = color.strip().lower().removeprefix("#")
+        if not re.fullmatch(r"[0-9a-f]{6}", normalized):
+            raise ValueError("Color must be a six-digit hex value, such as #7b68ee.")
+        member = self.member_selected(account_id, member_selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        with self.connect() as db:
+            db.execute("UPDATE members SET color=? WHERE id=?", (f"#{normalized}", member.id))
+        return self.member_selected(account_id, member.id)  # type: ignore[return-value]
 
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
                         voice_settings: str = "{}", playback: str = "send") -> Member:

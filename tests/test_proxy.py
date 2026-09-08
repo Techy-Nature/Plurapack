@@ -117,6 +117,24 @@ def test_member_selector_accepts_name_id_and_proxy_prefix(store):
     assert store.member_selected("stranger", member.id) is None
 
 
+def test_color_is_connected_to_member_id_and_normalized(store):
+    member = store.member_named("owner", "Alex")
+
+    configured = store.configure_color("owner", member.id, "7B68EE")
+
+    assert configured.id == member.id
+    assert configured.color == "#7b68ee"
+    assert store.member_named("owner", "Alex").color == "#7b68ee"
+
+
+def test_color_rejects_invalid_values_and_unowned_members(store):
+    member = store.member_named("owner", "Alex")
+    with pytest.raises(ValueError, match="six-digit hex"):
+        store.configure_color("owner", member.id, "purple")
+    with pytest.raises(PermissionError, match="not found or not owned"):
+        store.configure_color("stranger", member.id, "123456")
+
+
 def test_other_account_cannot_select_or_manage_member(store):
     assert store.match_member("stranger", "[alex] hello") is None
     member = store.member_named("owner", "Alex")

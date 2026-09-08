@@ -49,7 +49,9 @@ class StoatPlatform:
             raise RuntimeError("Source channel is unavailable; the original was preserved.")
         posted = await channel.send(
             content,
-            masquerade=self.sdk.MessageMasquerade(name=member.name, avatar=member.avatar),
+            masquerade=self.sdk.MessageMasquerade(
+                name=member.name, avatar=member.avatar, color=member.color
+            ),
         )
         return posted.id
 
@@ -69,7 +71,9 @@ class StoatPlatform:
             raise RuntimeError("Proxy channel is unavailable; the original was preserved.")
         posted = await channel.send(
             old.content,
-            masquerade=self.sdk.MessageMasquerade(name=member.name, avatar=member.avatar),
+            masquerade=self.sdk.MessageMasquerade(
+                name=member.name, avatar=member.avatar, color=member.color
+            ),
         )
         return posted.id
 
@@ -163,6 +167,16 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send(str(error))
             return
         await ctx.send(f"Single-use code: `{token}` (expires in 15 minutes). Send it privately to the other owner.")
+
+    @bot.command()
+    async def color(ctx: commands.Context, member_id: str, value: str) -> None:
+        """Associate a hex username color with an owned member ID."""
+        try:
+            configured = store.configure_color(ctx.author.id, member_id, value)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"Username color for **{configured.name}** (`{configured.id}`) is `{configured.color}`.")
 
     @bot.command()
     async def verify(ctx: commands.Context, token: str) -> None:
