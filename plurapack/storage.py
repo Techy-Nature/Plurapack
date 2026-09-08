@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+import hashlib
+import secrets
+import sqlite3
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Iterator
+
+
+def short_hash(length: int) -> str:
+    """Return a cryptographically random, lowercase SHA-256 fragment."""
+    return hashlib.sha256(secrets.token_bytes(32)).hexdigest()[:length]
+
+
+@dataclass(frozen=True)
+class Member:
+    id: str
+    system_id: str
+    name: str
+    prefix: str
+    suffix: str
+    avatar: str | None
+    voice_reference: str | None
+    voice_settings: str
+    playback: str
+
+
+class Store:
+    def __init__(self, path: str | Path):
+        self.path = str(path)
+        self._initialize()
+
+    @contextmanager
+    def connect(self) -> Iterator[sqlite3.Connection]:
+        db = sqlite3.connect(self.path)
+        db.row_factory = sqlite3.Row
+        db.execute("PRAGMA foreign_keys = ON")
+        try:
+            yield db
+            db.commit()
+        finally:
+            db.close()
+
+    def _initialize(self) -> None:
+        with self.connect() as db:
+            db.executescript("""
+                CREATE TABLE IF NOT EXISTS systems (
+                    id TEXT PRIMARY KEY CHECK(length(id)=10), display_name TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS owners (
+                    account_id TEXT PRIMARY KEY, system_id TEXT NOT NULL REFERENCES systems(id)
+                );
+                CREATE TABLE IF NOT EXISTS members (
+                    id TEXT PRIMARY KEY CHECK(length(id)=5), system_id TEXT NOT NULL REFERENCES systems(id),
+                    name TEXT NOT NULL COLLATE NOCASE, prefix TEXT NOT NULL, suffix TEXT NOT NULL,
+                    avatar TEXT, voice_reference TEXT, voice_settings TEXT NOT NULL DEFAULT '{}',
+                    playback TEXT NOT NULL DEFAULT 'off' CHECK(playback IN ('off','local','send','both')),
+                    UNIQUE(system_id, name), UNIQUE(system_id, prefix, suffix)
+                );
+                CREATE TABLE IF NOT EXISTS links (
+                    token_hash TEXT PRIMARY KEY, system_id TEXT NOT NULL REFERENCES systems(id),
+                    created_by TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER
+                );
+                CREATE TABLE IF NOT EXISTS proxied_messages (
+                    proxy_message_id TEXT PRIMARY KEY, source_message_id TEXT NOT NULL UNIQUE,
+                    channel_id TEXT NOT NULL, system_id TEXT NOT NULL, member_id TEXT NOT NULL,
+                    owner_account_id TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+                    deleted_at INTEGER, FOREIGN KEY(member_id) REFERENCES members(id)
+                );
+            """)
+
+    def create_system(self, account_id: str, name: str) -> str:
+        with self.connect() as db:
+            existing = db.execute("SELECT system_id FROM owners WHERE account_id=?", (account_id,)).fetchone()
+            if existing:
+                return str(existing[0])
+            while True:
+                system_id = short_hash(10)
+                try:
+                    db.execute("INSERT INTO systems VALUES (?,?)", (system_id, name))
+                    db.execute("INSERT INTO owners VALUES (?,?)", (account_id, system_id))
+                    return system_id
+                except sqlite3.IntegrityError:
+                    continue
+
+    def system_for(self, account_id: str) -> str | None:
+        with self.connect() as db:
+            row = db.execute("SELECT system_id FROM owners WHERE account_id=?", (account_id,)).fetchone()
+            return str(row[0]) if row else None
+
+    def add_member(self, account_id: str, name: str, prefix: str, suffix: str = "") -> Member:
+        system_id = self.system_for(account_id)
+        if not system_id:
+            raise PermissionError("Create a system first.")
+        with self.connect() as db:
+            while True:
+                member_id = short_hash(5)
+                try:
+                    db.execute("INSERT INTO members(id,system_id,name,prefix,suffix) VALUES (?,?,?,?,?)",
+                               (member_id, system_id, name, prefix, suffix))
+                    break
+                except sqlite3.IntegrityError as error:
+                    if "members.id" not in str(error):
+                        raise
+        return self.member_named(account_id, name)  # type: ignore[return-value]
+
+    def member_named(self, account_id: str, name: str) -> Member | None:
+        with self.connect() as db:
+            row = db.execute("""SELECT m.* FROM members m JOIN owners o ON o.system_id=m.system_id
+                WHERE o.account_id=? AND m.name=?""", (account_id, name)).fetchone()
+            return Member(**dict(row)) if row else None
+
+    def match_member(self, account_id: str, content: str) -> tuple[Member, str] | None:
+        with self.connect() as db:
+            rows = db.execute("""SELECT m.* FROM members m JOIN owners o ON o.system_id=m.system_id
+                WHERE o.account_id=? ORDER BY length(m.prefix)+length(m.suffix) DESC""", (account_id,)).fetchall()
+        for row in rows:
+            member = Member(**dict(row))
+            if content.startswith(member.prefix) and (not member.suffix or content.endswith(member.suffix)):
+                end = -len(member.suffix) if member.suffix else None
+                body = content[len(member.prefix):end].strip()
+                if body:
+                    return member, body
+        return None
+
+    def record_proxy(self, source_id: str, proxy_id: str, channel_id: str, member: Member, owner: str) -> bool:
+        if self.system_for(owner) != member.system_id:
+            raise PermissionError("Account does not own this member.")
+        try:
+            with self.connect() as db:
+                db.execute("""INSERT INTO proxied_messages
+                    (proxy_message_id,source_message_id,channel_id,system_id,member_id,owner_account_id)
+                    VALUES (?,?,?,?,?,?)""", (proxy_id, source_id, channel_id, member.system_id, member.id, owner))
+            return True
+        except sqlite3.IntegrityError:
+            return False
+
+    def source_was_processed(self, source_id: str) -> bool:
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM proxied_messages WHERE source_message_id=?", (source_id,)).fetchone() is not None
+
+    def create_link(self, account_id: str, lifetime_seconds: int = 900) -> str:
+        system_id = self.system_for(account_id)
+        if not system_id:
+            raise PermissionError("Create a system first.")
+        token = short_hash(15)
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self.connect() as db:
+            db.execute("INSERT INTO links VALUES (?,?,?,?,NULL)",
+                       (digest, system_id, account_id, int(time.time()) + lifetime_seconds))
+        return token
+
+    def redeem_link(self, account_id: str, token: str) -> str:
+        digest = hashlib.sha256(token.encode()).hexdigest()
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM links WHERE token_hash=? AND used_at IS NULL AND expires_at>=?",
+                             (digest, int(time.time()))).fetchone()
+            if not row:
+                raise PermissionError("That link code is invalid, expired, or already used.")
+            if row["created_by"] == account_id:
+                raise PermissionError("The code must be redeemed by the other account.")
+            existing = db.execute("SELECT system_id FROM owners WHERE account_id=?", (account_id,)).fetchone()
+            if existing and existing[0] != row["system_id"]:
+                raise PermissionError("This account already belongs to another system.")
+            db.execute("INSERT OR IGNORE INTO owners VALUES (?,?)", (account_id, row["system_id"]))
+            db.execute("UPDATE links SET used_at=? WHERE token_hash=?", (int(time.time()), digest))
+            return str(row["system_id"])
+
+    def proxy_owned_by(self, proxy_id: str, account_id: str) -> bool:
+        with self.connect() as db:
+            return db.execute("""SELECT 1 FROM proxied_messages p JOIN owners o ON o.system_id=p.system_id
+                WHERE p.proxy_message_id=? AND o.account_id=? AND p.deleted_at IS NULL""",
+                (proxy_id, account_id)).fetchone() is not None
