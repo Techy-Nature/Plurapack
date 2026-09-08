@@ -4,7 +4,7 @@ Plurapack is an early, self-hosted [Stoat](https://stoat.chat) member/headmate p
 
 ## What works in this initial release
 
-- Persistent SQLite systems (random 10-character SHA-256 fragments), members (5 characters), display names, proxy tags, avatar URLs, and voice preferences. Names select members; IDs remain stable across renames.
+- Persistent SQLite systems (random 10-character SHA-256 fragments), members (5 characters), display names, proxy tags, avatar URLs, username colors, and voice preferences. Names select members; IDs remain stable across renames.
 - Multiple authorized Stoat accounts can share one system and its stable IDs through a 15-character, one-use, 15-minute code. Only the hash of the code is stored.
 - Text proxying through stoat.py masquerades. The replacement is posted and recorded before the source is deleted. Bot messages, commands, in-flight messages, and persisted duplicate source IDs are ignored.
 - Every proxy record retains platform message IDs, system/member IDs, channel and initiating owner, but **not message content**.
@@ -54,6 +54,7 @@ Initial commands:
 p;setup My system
 p;member Alex [alex]            # proxy with: [alex] hello
 p;member Sam S: :S              # proxy with: S: hello :S
+p;color abc12 7b68ee            # color that member's username (also accepts #7b68ee)
 p;link                          # run on the existing owner account
 p;verify abc123...              # run on the other account
 
@@ -63,6 +64,7 @@ Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
 ```
 
 Change `PLURAPACK_PREFIX` to change the **command** prefix. Member input prefixes/suffixes are shortcuts, never identity keys.
+Username colors are stored against stable member IDs and used on both new and re-proxied messages. Colors must be six-digit hex RGB values. Stoat requires the bot to have the Manage Roles permission to apply a masquerade color.
 
 ## Optional local Chatterbox speech
 
