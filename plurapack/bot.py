@@ -2,13 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
+import importlib.util
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-
-import stoat
-from stoat.ext import commands
+from typing import Any
 
 from .proxy import Incoming, ProxyService
 from .chatterbox import ChatterboxBackend
@@ -16,10 +16,31 @@ from .speech import SpeechQueue, speech_worker
 from .storage import Member, Store
 
 
+STOAT_INSTALL_MESSAGE = (
+    "The Stoat client dependency is not installed. Install Plurapack and its "
+    "dependencies with `python -m pip install -e .`, then try again."
+)
+
+
+class StoatDependencyError(RuntimeError):
+    """Raised when the bot is launched without the Stoat SDK installed."""
+
+
+def _load_stoat() -> tuple[Any, Any]:
+    """Load the runtime adapter only when a bot is being created."""
+    if importlib.util.find_spec("stoat") is None:
+        raise StoatDependencyError(STOAT_INSTALL_MESSAGE)
+
+    stoat = importlib.import_module("stoat")
+    commands = importlib.import_module("stoat.ext.commands")
+    return stoat, commands
+
+
 @dataclass
 class StoatPlatform:
-    messages: dict[str, stoat.Message]
-    state: stoat.State
+    messages: dict[str, Any]
+    state: Any
+    sdk: Any
 
     async def send_proxy(self, incoming: Incoming, member: Member, content: str) -> str:
         source = self.messages[incoming.id]
@@ -28,7 +49,7 @@ class StoatPlatform:
             raise RuntimeError("Source channel is unavailable; the original was preserved.")
         posted = await channel.send(
             content,
-            masquerade=stoat.MessageMasquerade(name=member.name, avatar=member.avatar),
+            masquerade=self.sdk.MessageMasquerade(name=member.name, avatar=member.avatar),
         )
         return posted.id
 
@@ -48,7 +69,7 @@ class StoatPlatform:
             raise RuntimeError("Proxy channel is unavailable; the original was preserved.")
         posted = await channel.send(
             old.content,
-            masquerade=stoat.MessageMasquerade(name=member.name, avatar=member.avatar),
+            masquerade=self.sdk.MessageMasquerade(name=member.name, avatar=member.avatar),
         )
         return posted.id
 
@@ -57,29 +78,35 @@ class StoatPlatform:
         channel = self.state.get_channel(channel_id)
         safe_id = "".join(character for character in proxy_message_id if character.isalnum() or character in "-_")[:48]
         filename = f"speech-{safe_id or 'proxy'}.mp3"
-        await channel.send(attachments=[(filename, audio)], replies=[stoat.Reply(proxy_message_id)])
+        await channel.send(attachments=[(filename, audio)], replies=[self.sdk.Reply(proxy_message_id)])
 
 
-class PlurapackBot(commands.Bot):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.speech_queue: SpeechQueue | None = None
-        self.speech_worker_count = 0
-        self._speech_tasks: list[asyncio.Task[None]] = []
+def _plurapack_bot_class(commands: Any) -> type:
+    """Build the bot subclass after the optional Stoat dependency is loaded."""
+    class PlurapackBot(commands.Bot):
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self.speech_queue: SpeechQueue | None = None
+            self.speech_worker_count = 0
+            self._speech_tasks: list[asyncio.Task[None]] = []
 
-    async def setup_hook(self) -> None:
-        await super().setup_hook()
-        if self.speech_queue:
-            self._speech_tasks = [asyncio.create_task(speech_worker(self.speech_queue), name=f"speech-{index}")
-                                  for index in range(self.speech_worker_count)]
+        async def setup_hook(self) -> None:
+            await super().setup_hook()
+            if self.speech_queue:
+                self._speech_tasks = [
+                    asyncio.create_task(speech_worker(self.speech_queue), name=f"speech-{index}")
+                    for index in range(self.speech_worker_count)
+                ]
 
-    async def close(self, **kwargs) -> None:
-        for task in self._speech_tasks:
-            task.cancel()
-        if self._speech_tasks:
-            await asyncio.gather(*self._speech_tasks, return_exceptions=True)
-        self._speech_tasks.clear()
-        await super().close(**kwargs)
+        async def close(self, **kwargs: Any) -> None:
+            for task in self._speech_tasks:
+                task.cancel()
+            if self._speech_tasks:
+                await asyncio.gather(*self._speech_tasks, return_exceptions=True)
+            self._speech_tasks.clear()
+            await super().close(**kwargs)
+
+    return PlurapackBot
 
 
 def _positive_environment_integer(name: str, default: int, maximum: int) -> int:
@@ -93,10 +120,12 @@ def _positive_environment_integer(name: str, default: int, maximum: int) -> int:
     return value
 
 
-def create_bot(prefix: str, database: str) -> commands.Bot:
-    bot = PlurapackBot(command_prefix=prefix, description="Plural communication proxy")
+def create_bot(prefix: str, database: str) -> Any:
+    stoat, commands = _load_stoat()
+    bot_class = _plurapack_bot_class(commands)
+    bot = bot_class(command_prefix=prefix, description="Plural communication proxy")
     store = Store(database)
-    platform = StoatPlatform({}, bot.state)
+    platform = StoatPlatform({}, bot.state, stoat)
     speech_queue = None
     tts_url = os.environ.get("PLURAPACK_TTS_URL")
     if tts_url:
@@ -218,7 +247,14 @@ def main() -> None:
     token = os.environ.get("STOAT_BOT_TOKEN")
     if not token:
         raise SystemExit("STOAT_BOT_TOKEN is required (copy .env.example; never commit the token).")
-    create_bot(os.environ.get("PLURAPACK_PREFIX", "p;"), os.environ.get("PLURAPACK_DATABASE", "plurapack.sqlite3")).run(token)
+    try:
+        bot = create_bot(
+            os.environ.get("PLURAPACK_PREFIX", "p;"),
+            os.environ.get("PLURAPACK_DATABASE", "plurapack.sqlite3"),
+        )
+    except StoatDependencyError as error:
+        raise SystemExit(str(error)) from None
+    bot.run(token)
 
 
 if __name__ == "__main__":
