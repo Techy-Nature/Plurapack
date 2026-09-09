@@ -44,6 +44,22 @@ PREVIOUS_EMOJI = "⬅️"
 NEXT_EMOJI = "➡️"
 
 
+def _print_cli_status(message: str) -> None:
+    """Write a status line immediately for operators watching the process."""
+    print(f"[Plurapack] {message}", flush=True)
+
+
+def _register_cli_status_listeners(bot: Any, stoat: Any, prefix: str) -> None:
+    """Report the distinct WebSocket-connected and fully-ready states."""
+    @bot.listen(stoat.AfterConnectEvent)
+    async def connected_listener(event: Any) -> None:
+        _print_cli_status("Connected to Stoat.")
+
+    @bot.listen(stoat.ReadyEvent)
+    async def ready_listener(event: Any) -> None:
+        _print_cli_status(f"Ready to use. Command prefix: {prefix}")
+
+
 def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
     """Build one portable Stoat member card; clients size embeds responsively."""
     forms = store.forms_for_member(member.id)
@@ -210,6 +226,7 @@ def create_bot(prefix: str, database: str) -> Any:
                                        job.channel_id, job.proxy_message_id, audio), queue_limit)
         bot.speech_queue = speech_queue
     service = ProxyService(store, platform, prefix, speech_queue)
+    _register_cli_status_listeners(bot, stoat, prefix)
     # These controls are intentionally ephemeral: restarting the bot closes old
     # pagers and invalidates outstanding destructive confirmations.
     info_pages: dict[str, tuple[str, str, list[list[Any]], int]] = {}
@@ -682,6 +699,7 @@ def main() -> None:
         )
     except StoatDependencyError as error:
         raise SystemExit(str(error)) from None
+    _print_cli_status("Connecting to Stoat...")
     bot.run(token)
 
 
