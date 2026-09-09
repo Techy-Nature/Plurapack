@@ -10,7 +10,7 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `form MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]` | `f` | Create an alternate presentation. |
 | `front MEMBER_OR_FORM` | `fr` | Switch the current member and optional form. |
 | `autoproxy MEMBER_OR_OFF` | `ap` | Proxy untagged messages as a member; Off by default. |
-| `autofront on|off` | `af` | Opt in to making autoproxy follow the first/current fronter. |
+| `autofront on\|off` | `af` | Opt in to making autoproxy follow the first/current fronter. |
 | `color MEMBER HEX` | `c` | Set a six-digit username color. |
 | `link` | `l` | Create a single-use account connection code. |
 | `verify CODE` | `v` | Connect an account using a code. |
@@ -24,6 +24,23 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `voice MEMBER FILE [PLAYBACK] [SETTINGS]` | `vo` | Configure approved speech reference audio. |
 | `voiceoff MEMBER` | `of` | Disable speech for a member. |
 | `voiceformat MEMBER on\|off [MODE]` | `vf` | Configure semantic speech formatting. |
+
+## Autoproxy and autofront
+
+Both features are Off by default. These settings belong to the system and are
+shared by its linked accounts.
+
+- `p;autoproxy MEMBER` (shortcut `p;ap MEMBER`) selects the member for
+  untagged, non-command messages. Explicit proxy tags take priority.
+- `p;autofront on` (shortcut `p;af on`) makes autoproxy follow the
+  first/current fronter and subsequent front switches.
+- `p;autofront off` stops following front changes but keeps the selected
+  autoproxy member.
+- `p;autoproxy off` disables automatic proxying without turning autofront
+  off; a later front switch can select an autoproxy member again.
+
+To disable both, run `p;autofront off`, then `p;autoproxy off`.
+See [Proxy messages](../guides/proxying.md#autoproxy) for a walkthrough.
 
 ## Selector rules
 
