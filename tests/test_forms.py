@@ -17,6 +17,27 @@ def test_every_command_has_a_unique_one_or_two_letter_shortcut():
     assert len(COMMAND_SHORTCUTS) == len(set(COMMAND_SHORTCUTS.values()))
 
 
+def test_system_and_member_creation_preserve_multiline_descriptions(tmp_path):
+    store = Store(tmp_path / "descriptions.sqlite3")
+    system_id = store.create_system("owner", "Crew", "  First line\nSecond line  ")
+    member = store.add_member("owner", "Alex", "[alex]", "", "  About Alex\nMore details  ")
+
+    assert store.system_info(system_id).description == "First line\nSecond line"
+    assert member.description == "About Alex\nMore details"
+
+    form = store.create_form("owner", member.id, "Sea", soma="  Ocean form\nWith fins  ")
+    assert form.soma == "Ocean form\nWith fins"
+
+
+def test_creation_description_lengths_are_limited(tmp_path):
+    store = Store(tmp_path / "description-limits.sqlite3")
+    with pytest.raises(ValueError, match="System description"):
+        store.create_system("owner", "Crew", "x" * 1001)
+    store.create_system("owner", "Crew")
+    with pytest.raises(ValueError, match="Member description"):
+        store.add_member("owner", "Alex", "[alex]", "", "x" * 1001)
+
+
 def test_alias_selects_member_without_replacing_full_display_name(store):
     configured = store.configure_alias("owner", "Alexandra North", "Alex")
 

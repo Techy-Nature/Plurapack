@@ -4,8 +4,8 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 
 | Command | Shortcut | Purpose |
 | --- | --- | --- |
-| `setup [SYSTEM_NAME]` | `s` | Create the account's system, if needed. |
-| `member NAME PREFIX [SUFFIX]` | `m` | Add a member and proxy tag. |
+| `setup [SYSTEM_NAME] [DESCRIPTION]` | `s` | Create the account's system, with an optional description. |
+| `member NAME PREFIX [SUFFIX] [DESCRIPTION]` | `m` | Add a member and proxy tag, with an optional description. |
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |
 | `form MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]` | `f` | Create an alternate presentation. |
 | `formproxy FORM [PREFIX] [SUFFIX]` | `ft` | Set a form-specific proxy tag, or clear it by omitting the prefix. |
@@ -64,6 +64,8 @@ through responsive pages of up to two member embeds. `viewmembers` skips the
 system page, while `viewmember` always returns a single member embed. Member
 cards include the stable ID, hex color (or `default`), description, default
 form, and form names. Forms with pictures have a small linked preview marker.
+When a member has no description, their default form's soma description is
+shown instead.
 
 The paginator accepts the normal Unicode `⬅️` and `➡️` emoji. A Stoat server
 using custom emoji can set `PLURAPACK_PREVIOUS_EMOJI_ID` and
@@ -83,4 +85,18 @@ Quote arguments containing spaces. For example:
 ```text
 p;member "Alex North" [alex]
 p;form abc12 "Alex at Sea" https://example.test/alex.png "Blue fins and a long tail."
+```
+
+The final description argument for `setup`, `member`, and `form` consumes the
+rest of the message, including line breaks. Quote names and earlier arguments
+that contain spaces; use `""` for an omitted suffix or picture when a later
+description is present:
+
+```text
+p;setup "The Crew" Our shared system
+with a multi-line description.
+p;member "Alex North" [alex] "" First line
+Second line
+p;form abc12 "Alex at Sea" "" First line
+Second line
 ```

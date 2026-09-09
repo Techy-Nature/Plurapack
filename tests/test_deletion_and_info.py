@@ -97,3 +97,22 @@ def test_info_embeds_include_profiles_default_form_and_preview(tmp_path):
     assert "sea / seas" in member_card.description
     assert system_card.title == "Crew"
     assert system_id in system_card.description
+
+
+def test_member_embed_falls_back_to_default_form_description(tmp_path):
+    class Embed:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+    class SDK:
+        SendableEmbed = Embed
+
+    store = Store(tmp_path / "default-form-description.sqlite3")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "A:")
+    form = store.create_form("owner", member.id, "Sea", soma="First line\nSecond line")
+    member = store.configure_default_form("owner", member.id, form.id)
+
+    card = _member_embed(SDK, store, member)
+
+    assert card.description.startswith("First line\nSecond line\n\n**ID:**")
