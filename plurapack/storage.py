@@ -33,6 +33,15 @@ class Member:
     strikethrough_speech: str
     alias: str | None
     default_form_id: str | None
+    description: str
+
+
+@dataclass(frozen=True)
+class System:
+    id: str
+    display_name: str
+    description: str
+    logo: str | None
 
 
 @dataclass(frozen=True)
@@ -82,7 +91,8 @@ class Store:
         with self.connect() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS systems (
-                    id TEXT PRIMARY KEY CHECK(length(id)=10), display_name TEXT NOT NULL
+                    id TEXT PRIMARY KEY CHECK(length(id)=10), display_name TEXT NOT NULL,
+                    description TEXT NOT NULL DEFAULT '', logo TEXT
                 );
                 CREATE TABLE IF NOT EXISTS owners (
                     account_id TEXT PRIMARY KEY, system_id TEXT NOT NULL REFERENCES systems(id)
@@ -95,6 +105,7 @@ class Store:
                     speech_formatting INTEGER NOT NULL DEFAULT 0,
                     strikethrough_speech TEXT NOT NULL DEFAULT 'normal',
                     default_form_id TEXT REFERENCES forms(id) ON DELETE SET NULL,
+                    description TEXT NOT NULL DEFAULT '',
                     UNIQUE(system_id, name), UNIQUE(system_id, prefix, suffix)
                 );
                 CREATE TABLE IF NOT EXISTS links (
@@ -135,6 +146,13 @@ class Store:
                 db.execute("ALTER TABLE members ADD COLUMN alias TEXT")
             if "default_form_id" not in columns:
                 db.execute("ALTER TABLE members ADD COLUMN default_form_id TEXT")
+            if "description" not in columns:
+                db.execute("ALTER TABLE members ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+            system_columns = {row[1] for row in db.execute("PRAGMA table_info(systems)")}
+            if "description" not in system_columns:
+                db.execute("ALTER TABLE systems ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+            if "logo" not in system_columns:
+                db.execute("ALTER TABLE systems ADD COLUMN logo TEXT")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
 
     def create_system(self, account_id: str, name: str) -> str:
@@ -145,7 +163,7 @@ class Store:
             while True:
                 system_id = short_hash(10)
                 try:
-                    db.execute("INSERT INTO systems VALUES (?,?)", (system_id, name))
+                    db.execute("INSERT INTO systems(id,display_name) VALUES (?,?)", (system_id, name))
                     db.execute("INSERT INTO owners VALUES (?,?)", (account_id, system_id))
                     return system_id
                 except sqlite3.IntegrityError:
@@ -155,6 +173,74 @@ class Store:
         with self.connect() as db:
             row = db.execute("SELECT system_id FROM owners WHERE account_id=?", (account_id,)).fetchone()
             return str(row[0]) if row else None
+
+    def system_info(self, selector: str) -> System | None:
+        """Resolve a system by stable ID or exact name for its public card."""
+        with self.connect() as db:
+            rows = db.execute("""SELECT * FROM systems WHERE id=? OR display_name=?
+                ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END""", (selector, selector, selector)).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1 and rows[0]["id"] != selector:
+            raise ValueError("More than one system has that name; use the system ID instead.")
+        return System(**dict(rows[0]))
+
+    def members_for_system(self, system_id: str) -> list[Member]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM members WHERE system_id=? ORDER BY name", (system_id,)).fetchall()
+        return [Member(**dict(row)) for row in rows]
+
+    def public_member_selected(self, selector: str, system_id: str | None = None) -> Member | None:
+        """Resolve a card selector without granting any mutation permissions."""
+        query = "SELECT * FROM members WHERE (id=? OR name=?)"
+        parameters: list[str] = [selector.strip(), selector.strip()]
+        if system_id:
+            query += " AND system_id=?"
+            parameters.append(system_id)
+        query += " ORDER BY CASE WHEN id=? THEN 0 ELSE 1 END"
+        parameters.append(selector.strip())
+        with self.connect() as db:
+            rows = db.execute(query, parameters).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1 and rows[0]["id"] != selector.strip():
+            raise ValueError("More than one member has that name; use the member ID instead.")
+        return Member(**dict(rows[0]))
+
+    def forms_for_member(self, member_id: str) -> list[Form]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM forms WHERE member_id=? ORDER BY display_name", (member_id,)).fetchall()
+        return [Form(**dict(row)) for row in rows]
+
+    def delete_member(self, account_id: str, selector: str) -> Member:
+        """Delete an owned member and every form and attribution tied to it."""
+        member = self.member_selected(account_id, selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        with self.connect() as db:
+            db.execute("DELETE FROM proxied_messages WHERE member_id=?", (member.id,))
+            db.execute("DELETE FROM current_fronts WHERE member_id=?", (member.id,))
+            db.execute("UPDATE autoproxy_settings SET member_id=NULL WHERE member_id=?", (member.id,))
+            db.execute("DELETE FROM members WHERE id=?", (member.id,))
+        return member
+
+    def delete_system(self, account_id: str, confirmation: str) -> str:
+        """Irreversibly erase an owned system after its exact ID is supplied."""
+        system_id = self.system_for(account_id)
+        if system_id is None or confirmation.strip() != system_id:
+            raise PermissionError("The confirmation must exactly match your system ID.")
+        with self.connect() as db:
+            if not db.execute("SELECT 1 FROM owners WHERE account_id=? AND system_id=?",
+                              (account_id, system_id)).fetchone():
+                raise PermissionError("That system is not owned by this account.")
+            db.execute("DELETE FROM proxied_messages WHERE system_id=?", (system_id,))
+            db.execute("DELETE FROM current_fronts WHERE system_id=?", (system_id,))
+            db.execute("DELETE FROM autoproxy_settings WHERE system_id=?", (system_id,))
+            db.execute("DELETE FROM links WHERE system_id=?", (system_id,))
+            db.execute("DELETE FROM members WHERE system_id=?", (system_id,))
+            db.execute("DELETE FROM owners WHERE system_id=?", (system_id,))
+            db.execute("DELETE FROM systems WHERE id=?", (system_id,))
+        return system_id
 
     def add_member(self, account_id: str, name: str, prefix: str, suffix: str = "") -> Member:
         system_id = self.system_for(account_id)

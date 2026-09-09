@@ -79,6 +79,11 @@ p;import tupperbox {"tuppers":[...]}                 # paste a Tupperbox JSON ex
 p;export plurapack              # attached backup; also: pluralkit or tupperbox
 p;link                          # run on the existing owner account
 p;verify abc123...              # run on the other account
+p;viewinfo                     # system card, then member cards with arrow reactions
+p;viewmember abc12             # one member card by stable ID or exact name
+p;viewmembers                  # member cards only, two embeds per responsive page
+p;deletemember abc12           # permanently remove member, forms, and records
+p;deletesystem                 # reply to its warning with the exact system ID
 
 React ✏️ / 📝, then send text   # edit one of your system's proxies
 React ❌ / 🗑️                  # delete one of your system's proxies
@@ -88,7 +93,15 @@ Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
 Every command also has a one- or two-letter shortcut: `s` (setup), `m` (member),
 `i` (import), `x` (export), `l` (link), `c` (color), `v` (verify), `vo` (voice),
 `of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `fr` (front),
-`ap` (autoproxy), and `af` (autofront).
+`ap` (autoproxy), `af` (autofront), `vi` (viewinfo), `ml` (viewmembers), `vm`
+(viewmember), `dm` (deletemember), and `ds` (deletesystem).
+
+View pagers use Unicode left/right arrows by default and accept configured Stoat
+custom emoji IDs through `PLURAPACK_PREVIOUS_EMOJI_ID` and
+`PLURAPACK_NEXT_EMOJI_ID`. Only the requesting account can turn its pages.
+Before using `p;deletesystem`, create a private `p;export plurapack` JSON backup
+if needed. The bot requires an exact system-ID reply to its warning before it
+erases the system and all associated data.
 
 Aliases are short selectors only: the member's full name remains the name shown
 on ordinary proxy messages and member cards. Forms are alternate presentations
