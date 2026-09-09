@@ -1,0 +1,20 @@
+:root {
+  --plura-yellow: #ffd43b;
+  --plura-orange: #ffaa00;
+  --plura-pink: #ff3681;
+  --plura-purple: #7923a6;
+  --plura-blue: #348fe2;
+  --plura-cyan: #08c7c4;
+  --plura-green: #00c987;
+}
+
+[data-bs-theme="dark"] body,
+body { accent-color: var(--plura-pink); }
+
+.navbar { background: linear-gradient(100deg, #11212a, #271439 55%, #102d38); }
+.navbar-brand::before { content: "◯"; color: var(--plura-yellow); margin-right: .45rem; text-shadow: 8px 4px var(--plura-pink), 4px 9px var(--plura-blue); }
+a { color: #087f93; }
+code { color: #a12670; }
+.ring-callout { border: 1px solid color-mix(in srgb, var(--plura-purple) 60%, transparent); border-left: .35rem solid var(--plura-pink); border-radius: .6rem; padding: 1rem 1.25rem; background: linear-gradient(120deg, rgb(121 35 166 / 10%), rgb(8 199 196 / 8%)); margin: 1.5rem 0; }
+.ring-callout h2 { margin-top: 0; }
+table th { border-top: 3px solid var(--plura-cyan); }

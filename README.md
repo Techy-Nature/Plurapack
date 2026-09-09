@@ -1,5 +1,7 @@
 # Plurapack
 
+New to Plurapack? The text-only, website-ready user guide lives in [`documentation/`](documentation/README.md), with onboarding, everyday workflows, configuration, privacy, and troubleshooting documentation.
+
 ## Responsive dashboard
 
 The repository includes a dependency-free dashboard prototype that can be hosted on GitHub Pages or any static web server. It provides responsive desktop and mobile layouts, independently scrollable member and profile panels on larger screens, member search, profile switching, and an interactive new-member dialog.
@@ -10,7 +12,7 @@ Open `index.html` directly, or serve the repository root locally:
 python -m http.server 8000
 ```
 
-Then visit `http://localhost:8000`. The dashboard currently stores its demo data in memory; connect the form actions in `app.js` to your preferred authenticated API before using it for persistent member management.
+Then visit `http://localhost:8000`. The member array in `app.js` remains preview data for an empty example system, while account and system identity are loaded from the authenticated API. The dashboard expects `GET /api/account` and `GET /api/systems/:systemId`, and posts new records to `POST /api/systems/:systemId/members` and `POST /api/systems/:systemId/members/:memberId/forms`. JSON responses use the same camel-case fields shown in the example member objects. Requests include same-origin credentials; a `401` redirects to `/login`, while a `403` displays a private-system state without leaking system data.
 
 Plurapack is an early, self-hosted [Stoat](https://stoat.chat) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
 
