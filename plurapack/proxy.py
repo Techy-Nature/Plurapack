@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from .storage import Member, Store
@@ -15,6 +15,7 @@ class Incoming:
     content: str
     is_bot: bool = False
     reply_to_id: str | None = None
+    server_id: str | None = None
 
 
 class Platform(Protocol):
@@ -69,6 +70,9 @@ class ProxyService:
                 message.reply_to_id, message.author_id, message.channel_id):
             member = self.store.proxy_identity(message.author_id, message.content)
             if member:
+                member = replace(member, name=self.store.proxy_name(
+                    member, message.server_id, message.channel_id
+                ))
                 replacement_id = await self.platform.send_reproxy(message, message.reply_to_id, member)
                 if not self.store.replace_proxy(message.reply_to_id, replacement_id, member, message.author_id):
                     await self.platform.delete_proxy(message.channel_id, replacement_id)
@@ -89,6 +93,9 @@ class ProxyService:
                 if front and front.member.id == autoproxy.member.id and front.form:
                     member = self.store.proxy_identity(message.author_id, front.form.id) or member
             body = message.content.strip()
+        member = replace(member, name=self.store.proxy_name(
+            member, message.server_id, message.channel_id
+        ))
         self._inflight.add(message.id)
         try:
             proxy_id = await self.platform.send_proxy(message, member, body)

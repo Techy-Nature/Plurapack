@@ -15,6 +15,18 @@ A: This tag has two sides. :A
 
 Plurapack ignores bot messages, commands, messages already being processed, and source IDs it has already proxied.
 
+## System tags
+
+Set a system tag with `p;systemtag TAG`. When enabled, it is appended to every
+member and form name. The tag belongs to the stable system ID, so all linked
+owners share it.
+
+Visibility is On by default. Use `p;systemtagshow system off` to change the
+system default. In a server or channel, use `p;systemtagshow server off` or
+`p;systemtagshow channel on` for an override; `default` removes a server or
+channel override. Channel settings take precedence over server settings, which
+take precedence over the system default.
+
 ## Edit a proxy
 
 1. React to one of your system's proxied messages with ✏️ or 📝.

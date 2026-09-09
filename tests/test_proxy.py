@@ -94,6 +94,40 @@ async def test_autofront_proxies_with_selected_form_name_and_image(store):
     assert platform.presentations[0].avatar == "https://example.test/sea.png"
 
 
+async def test_system_tag_is_appended_to_member_and_form_names_with_scope_overrides(store):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    store.configure_system_tag("owner", "| Crew")
+    member = store.member_named("owner", "Alex")
+    form = store.create_form("owner", member.id, "Alex at Sea", prefix="sea:")
+
+    await service.handle(Incoming("member", "one", "owner", "[alex] hi", server_id="server"))
+    await service.handle(Incoming("form", "one", "owner", "sea: hi", server_id="server"))
+    assert [identity.name for identity in platform.presentations] == [
+        "Alex | Crew", "Alex at Sea | Crew"
+    ]
+
+    store.configure_system_tag_visibility("owner", False, "server", "server")
+    store.configure_system_tag_visibility("owner", True, "channel", "special")
+    await service.handle(Incoming("hidden", "one", "owner", "[alex] hi", server_id="server"))
+    await service.handle(Incoming("shown", "special", "owner", "[alex] hi", server_id="server"))
+    assert [identity.name for identity in platform.presentations[-2:]] == ["Alex", "Alex | Crew"]
+
+    store.clear_system_tag_visibility_override("owner", "channel", "special")
+    assert store.proxy_name(member, "server", "special") == "Alex"
+
+
+def test_system_tag_is_associated_with_shared_system_id(store):
+    store.configure_system_tag("owner", "[Crew]")
+    token = store.create_link("owner")
+    store.redeem_link("second-owner", token)
+
+    system_id = store.system_for("owner")
+    assert store.system_for("second-owner") == system_id
+    assert store.system_info(system_id).system_tag == "[Crew]"
+    assert store.proxy_name(store.member_named("second-owner", "Alex")) == "Alex [Crew]"
+
+
 def test_autofront_is_opt_in_and_tracks_front_without_coupling_by_default(store):
     alex = store.member_named("owner", "Alex")
     sam = store.add_member("owner", "Sam", "[sam]")

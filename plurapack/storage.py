@@ -43,6 +43,8 @@ class System:
     display_name: str
     description: str
     logo: str | None
+    system_tag: str | None
+    show_system_tag: int
 
 
 @dataclass(frozen=True)
@@ -96,7 +98,9 @@ class Store:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS systems (
                     id TEXT PRIMARY KEY CHECK(length(id)=10), display_name TEXT NOT NULL,
-                    description TEXT NOT NULL DEFAULT '', logo TEXT
+                    description TEXT NOT NULL DEFAULT '', logo TEXT,
+                    system_tag TEXT, show_system_tag INTEGER NOT NULL DEFAULT 1
+                        CHECK(show_system_tag IN (0,1))
                 );
                 CREATE TABLE IF NOT EXISTS owners (
                     account_id TEXT PRIMARY KEY, system_id TEXT NOT NULL REFERENCES systems(id)
@@ -140,6 +144,13 @@ class Store:
                     member_id TEXT REFERENCES members(id) ON DELETE SET NULL,
                     autofront INTEGER NOT NULL DEFAULT 0 CHECK(autofront IN (0,1))
                 );
+                CREATE TABLE IF NOT EXISTS system_tag_overrides (
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    scope_type TEXT NOT NULL CHECK(scope_type IN ('server','channel')),
+                    scope_id TEXT NOT NULL,
+                    show_system_tag INTEGER NOT NULL CHECK(show_system_tag IN (0,1)),
+                    PRIMARY KEY(system_id, scope_type, scope_id)
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
             if "color" not in columns:
@@ -168,6 +179,10 @@ class Store:
                 db.execute("ALTER TABLE systems ADD COLUMN description TEXT NOT NULL DEFAULT ''")
             if "logo" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN logo TEXT")
+            if "system_tag" not in system_columns:
+                db.execute("ALTER TABLE systems ADD COLUMN system_tag TEXT")
+            if "show_system_tag" not in system_columns:
+                db.execute("ALTER TABLE systems ADD COLUMN show_system_tag INTEGER NOT NULL DEFAULT 1")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
 
     def create_system(self, account_id: str, name: str) -> str:
@@ -199,6 +214,73 @@ class Store:
         if len(rows) > 1 and rows[0]["id"] != selector:
             raise ValueError("More than one system has that name; use the system ID instead.")
         return System(**dict(rows[0]))
+
+    def configure_system_tag(self, account_id: str, tag: str | None) -> System:
+        """Set the tag owned by a system's stable ID, or clear it."""
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        normalized = tag.strip() if tag else None
+        if normalized and len(normalized) > 32:
+            raise ValueError("System tags must be no more than 32 characters.")
+        with self.connect() as db:
+            db.execute("UPDATE systems SET system_tag=? WHERE id=?", (normalized, system_id))
+        return self.system_info(system_id)  # type: ignore[return-value]
+
+    def configure_system_tag_visibility(self, account_id: str, show: bool,
+                                        scope_type: str = "system",
+                                        scope_id: str | None = None) -> None:
+        """Set system-wide visibility or a server/channel override."""
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        if scope_type == "system":
+            with self.connect() as db:
+                db.execute("UPDATE systems SET show_system_tag=? WHERE id=?", (int(show), system_id))
+            return
+        if scope_type not in {"server", "channel"} or not scope_id:
+            raise ValueError("A server or channel visibility setting requires its ID.")
+        with self.connect() as db:
+            db.execute("""INSERT INTO system_tag_overrides
+                (system_id,scope_type,scope_id,show_system_tag) VALUES (?,?,?,?)
+                ON CONFLICT(system_id,scope_type,scope_id) DO UPDATE SET
+                    show_system_tag=excluded.show_system_tag""",
+                (system_id, scope_type, scope_id, int(show)))
+
+    def clear_system_tag_visibility_override(self, account_id: str, scope_type: str,
+                                             scope_id: str) -> None:
+        if scope_type not in {"server", "channel"}:
+            raise ValueError("Only server and channel settings are overrides.")
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        with self.connect() as db:
+            db.execute("DELETE FROM system_tag_overrides WHERE system_id=? AND scope_type=? AND scope_id=?",
+                       (system_id, scope_type, scope_id))
+
+    def proxy_name(self, member: Member, server_id: str | None = None,
+                   channel_id: str | None = None) -> str:
+        """Return a presentation name with the most-specific visible system tag."""
+        with self.connect() as db:
+            system = db.execute(
+                "SELECT system_tag,show_system_tag FROM systems WHERE id=?", (member.system_id,)
+            ).fetchone()
+            if system is None or not system["system_tag"]:
+                return member.name
+            show = bool(system["show_system_tag"])
+            if server_id:
+                row = db.execute("""SELECT show_system_tag FROM system_tag_overrides
+                    WHERE system_id=? AND scope_type='server' AND scope_id=?""",
+                    (member.system_id, server_id)).fetchone()
+                if row is not None:
+                    show = bool(row[0])
+            if channel_id:
+                row = db.execute("""SELECT show_system_tag FROM system_tag_overrides
+                    WHERE system_id=? AND scope_type='channel' AND scope_id=?""",
+                    (member.system_id, channel_id)).fetchone()
+                if row is not None:
+                    show = bool(row[0])
+        return f"{member.name} {system['system_tag']}" if show else member.name
 
     def members_for_system(self, system_id: str) -> list[Member]:
         with self.connect() as db:

@@ -33,6 +33,7 @@ COMMAND_SHORTCUTS = {
     "viewmembers": "ml", "viewmember": "vm",
     "pronouns": "p", "formpronouns": "fp",
     "formproxy": "ft",
+    "systemtag": "st", "systemtagshow": "ts",
 }
 
 # Compatibility names people commonly try based on the nouns used by other
@@ -567,6 +568,50 @@ def create_bot(prefix: str, database: str) -> Any:
         detail = f" Autoproxy is now **{configured.member.name}**." if configured.member else ""
         await ctx.send(f"Autofront is {'On' if configured.autofront else 'Off'}.{detail}")
 
+    @bot.command(aliases=[COMMAND_SHORTCUTS["systemtag"]])
+    async def systemtag(ctx: commands.Context, *, tag: str = "") -> None:
+        """Set the tag appended to every member and form name, or clear it."""
+        try:
+            configured = store.configure_system_tag(ctx.author.id, tag or None)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        if configured.system_tag:
+            await ctx.send(f"System tag is now **{configured.system_tag}**.")
+        else:
+            await ctx.send("System tag is cleared.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["systemtagshow"]])
+    async def systemtagshow(ctx: commands.Context, scope: str, setting: str) -> None:
+        """Control tag visibility system-wide or override it here."""
+        scope, setting = scope.casefold(), setting.casefold()
+        if scope not in {"system", "server", "channel"}:
+            await ctx.send("Scope must be system, server, or channel.")
+            return
+        if setting not in {"on", "off", "default"} or (scope == "system" and setting == "default"):
+            await ctx.send("Setting must be on or off; server/channel also accept default.")
+            return
+        message = ctx.message
+        scope_id = None
+        if scope == "channel":
+            scope_id = message.channel_id
+        elif scope == "server":
+            scope_id = getattr(message, "server_id", None)
+            if scope_id is None:
+                await ctx.send("This command must be used in a server to set a server override.")
+                return
+        try:
+            if setting == "default":
+                store.clear_system_tag_visibility_override(ctx.author.id, scope, scope_id)
+            else:
+                store.configure_system_tag_visibility(
+                    ctx.author.id, setting == "on", scope, scope_id
+                )
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"System tag visibility for this {scope} is now **{setting.title()}**.")
+
     @bot.listen(stoat.MessageCreateEvent)
     async def proxy_listener(event: stoat.MessageCreateEvent) -> None:
         message = event.message
@@ -594,6 +639,7 @@ def create_bot(prefix: str, database: str) -> Any:
             message.content,
             bool(getattr(author, "bot", None)),
             message.replies[0] if message.replies else None,
+            getattr(message, "server_id", None),
         )
         platform.messages[message.id] = message
         try:
