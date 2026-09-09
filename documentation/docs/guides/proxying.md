@@ -4,6 +4,10 @@
 
 Place the configured member prefix before the message and the suffix after it. If no suffix was configured, only the prefix is required.
 
+Forms can also have their own prefix and suffix. A form tag selects that form's
+name, picture, and pronouns for the message without changing who is currently
+fronting. Configure one with `p;formproxy FORM_ID PREFIX [SUFFIX]`.
+
 ```text
 [alex] This appears as Alex.
 A: This tag has two sides. :A

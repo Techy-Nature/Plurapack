@@ -32,6 +32,7 @@ COMMAND_SHORTCUTS = {
     "deletemember": "dm", "deletesystem": "ds", "viewinfo": "vi",
     "viewmembers": "ml", "viewmember": "vm",
     "pronouns": "p", "formpronouns": "fp",
+    "formproxy": "ft",
 }
 
 # Compatibility names people commonly try based on the nouns used by other
@@ -53,7 +54,8 @@ def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
         preview = f"[▣]({form.avatar} \"{form.display_name} preview\") " if form.avatar else ""
         form_pronouns = form.pronouns if form.pronouns is not None else member.pronouns
         pronoun_note = f" — {form_pronouns}" if form_pronouns else ""
-        form_lines.append(f"{preview}**{form.display_name}** (`{form.id}`){pronoun_note}{marker}")
+        proxy_note = f" — proxy `{form.prefix}text{form.suffix}`" if form.prefix else ""
+        form_lines.append(f"{preview}**{form.display_name}** (`{form.id}`){pronoun_note}{proxy_note}{marker}")
     description = member.description or "No member description provided."
     description += (
         f"\n\n**ID:** `{member.id}`\n**Color:** `{member.color or 'default'}`"
@@ -476,8 +478,28 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(
             f"Created form **{created.display_name}** (`{created.id}`) for member `{created.member_id}`. "
-            f"Use `{prefix}front {created.id}` to switch both member and form."
+            f"Use `{prefix}formproxy {created.id} PREFIX [SUFFIX]` to give it a proxy tag, or "
+            f"`{prefix}front {created.id}` to switch both member and form."
         )
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["formproxy"]])
+    async def formproxy(ctx: commands.Context, selector: str, form_prefix: str = "",
+                        suffix: str = "") -> None:
+        """Set or clear the prefix and suffix that select a form directly."""
+        try:
+            configured = store.configure_form_proxy(
+                ctx.author.id, selector, form_prefix or None, suffix
+            )
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        if configured.prefix:
+            await ctx.send(
+                f"Proxy tag for **{configured.display_name}** is "
+                f"`{configured.prefix}text{configured.suffix}`."
+            )
+        else:
+            await ctx.send(f"Proxy tag for **{configured.display_name}** is cleared.")
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["front"], *COMMAND_ALIASES["front"]])
     async def front(ctx: commands.Context, selector: str) -> None:
