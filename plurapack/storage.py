@@ -185,7 +185,10 @@ class Store:
                 db.execute("ALTER TABLE systems ADD COLUMN show_system_tag INTEGER NOT NULL DEFAULT 1")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
 
-    def create_system(self, account_id: str, name: str) -> str:
+    def create_system(self, account_id: str, name: str, description: str = "") -> str:
+        description = description.strip()
+        if len(description) > 1000:
+            raise ValueError("System description must be no more than 1000 characters.")
         with self.connect() as db:
             existing = db.execute("SELECT system_id FROM owners WHERE account_id=?", (account_id,)).fetchone()
             if existing:
@@ -193,7 +196,10 @@ class Store:
             while True:
                 system_id = short_hash(10)
                 try:
-                    db.execute("INSERT INTO systems(id,display_name) VALUES (?,?)", (system_id, name))
+                    db.execute(
+                        "INSERT INTO systems(id,display_name,description) VALUES (?,?,?)",
+                        (system_id, name, description),
+                    )
                     db.execute("INSERT INTO owners VALUES (?,?)", (account_id, system_id))
                     return system_id
                 except sqlite3.IntegrityError:
@@ -339,16 +345,23 @@ class Store:
             db.execute("DELETE FROM systems WHERE id=?", (system_id,))
         return system_id
 
-    def add_member(self, account_id: str, name: str, prefix: str, suffix: str = "") -> Member:
+    def add_member(self, account_id: str, name: str, prefix: str, suffix: str = "",
+                   description: str = "") -> Member:
         system_id = self.system_for(account_id)
         if not system_id:
             raise PermissionError("Create a system first.")
+        description = description.strip()
+        if len(description) > 1000:
+            raise ValueError("Member description must be no more than 1000 characters.")
         with self.connect() as db:
             while True:
                 member_id = short_hash(5)
                 try:
-                    db.execute("INSERT INTO members(id,system_id,name,prefix,suffix) VALUES (?,?,?,?,?)",
-                               (member_id, system_id, name, prefix, suffix))
+                    db.execute(
+                        """INSERT INTO members(id,system_id,name,prefix,suffix,description)
+                        VALUES (?,?,?,?,?,?)""",
+                        (member_id, system_id, name, prefix, suffix, description),
+                    )
                     break
                 except sqlite3.IntegrityError as error:
                     if "members.id" not in str(error):

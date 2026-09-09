@@ -73,7 +73,8 @@ def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
         pronoun_note = f" — {form_pronouns}" if form_pronouns else ""
         proxy_note = f" — proxy `{form.prefix}text{form.suffix}`" if form.prefix else ""
         form_lines.append(f"{preview}**{form.display_name}** (`{form.id}`){pronoun_note}{proxy_note}{marker}")
-    description = member.description or "No member description provided."
+    description = member.description or (default.soma if default else "")
+    description = description or "No member description provided."
     description += (
         f"\n\n**ID:** `{member.id}`\n**Color:** `{member.color or 'default'}`"
         f"\n**Pronouns:** {member.pronouns or 'Not set'}"
@@ -244,17 +245,22 @@ def create_bot(prefix: str, database: str) -> Any:
                 await bot.state.http.add_reaction_to_message(posted.channel_id, posted.id, emoji)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["setup"]])
-    async def setup(ctx: commands.Context, *, name: str = "My system") -> None:
-        system_id = store.create_system(ctx.author.id, name)
+    async def setup(ctx: commands.Context, name: str = "My system", *, description: str = "") -> None:
+        try:
+            system_id = store.create_system(ctx.author.id, name, description)
+        except ValueError as error:
+            await ctx.send(str(error))
+            return
         await ctx.send(
             f"System `{system_id}` is ready. Origins, diagnoses, and proof are never required. "
             f"Voice playback defaults to Off. Add a member with `{prefix}member Name [text]`."
         )
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["member"]])
-    async def member(ctx: commands.Context, name: str, member_prefix: str, suffix: str = "") -> None:
+    async def member(ctx: commands.Context, name: str, member_prefix: str, suffix: str = "", *,
+                     description: str = "") -> None:
         try:
-            created = store.add_member(ctx.author.id, name, member_prefix, suffix)
+            created = store.add_member(ctx.author.id, name, member_prefix, suffix, description)
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return
