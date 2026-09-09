@@ -13,7 +13,7 @@ from typing import Any
 from .proxy import Incoming, ProxyService
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
-from .storage import Member, Store
+from .storage import Member, Store, System
 from .transfer import TransferError, export_document, parse_import
 
 
@@ -29,7 +29,39 @@ COMMAND_SHORTCUTS = {
     "link": "l", "color": "c", "verify": "v", "voice": "vo",
     "voiceoff": "of", "voiceformat": "vf", "alias": "a", "form": "f",
     "front": "fr", "defaultform": "df", "autoproxy": "ap", "autofront": "af",
+    "deletemember": "dm", "deletesystem": "ds", "viewinfo": "vi",
+    "viewmembers": "ml", "viewmember": "vm",
 }
+
+PREVIOUS_EMOJI = "⬅️"
+NEXT_EMOJI = "➡️"
+
+
+def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
+    """Build one portable Stoat member card; clients size embeds responsively."""
+    forms = store.forms_for_member(member.id)
+    default = next((form for form in forms if form.id == member.default_form_id), None)
+    avatar = default.avatar if default and default.avatar else member.avatar
+    form_lines = []
+    for form in forms:
+        marker = " ★ default" if form.id == member.default_form_id else ""
+        preview = f"[▣]({form.avatar} \"{form.display_name} preview\") " if form.avatar else ""
+        form_lines.append(f"{preview}**{form.display_name}** (`{form.id}`){marker}")
+    description = member.description or "No member description provided."
+    description += (
+        f"\n\n**ID:** `{member.id}`\n**Color:** `{member.color or 'default'}`"
+        f"\n**Default form:** {default.display_name if default else 'Member profile'}"
+        f"\n**Forms:**\n" + ("\n".join(form_lines) if form_lines else "None")
+    )
+    return sdk.SendableEmbed(title=member.name, description=description,
+                             icon_url=avatar, color=member.color)
+
+
+def _system_embed(sdk: Any, system: System, member_count: int) -> Any:
+    description = system.description or "No system description provided."
+    description += f"\n\n**System ID:** `{system.id}`\n**Members:** {member_count}"
+    return sdk.SendableEmbed(title=system.display_name, description=description,
+                             icon_url=system.logo)
 
 
 class StoatDependencyError(RuntimeError):
@@ -150,6 +182,21 @@ def create_bot(prefix: str, database: str) -> Any:
                                        job.channel_id, job.proxy_message_id, audio), queue_limit)
         bot.speech_queue = speech_queue
     service = ProxyService(store, platform, prefix, speech_queue)
+    # These controls are intentionally ephemeral: restarting the bot closes old
+    # pagers and invalidates outstanding destructive confirmations.
+    info_pages: dict[str, tuple[str, str, list[list[Any]], int]] = {}
+    delete_confirmations: dict[str, tuple[str, str]] = {}
+
+    async def send_pages(ctx: commands.Context, pages: list[list[Any]]) -> None:
+        posted = await ctx.send(embeds=pages[0])
+        if len(pages) > 1:
+            info_pages[posted.id] = (ctx.author.id, posted.channel_id, pages, 0)
+            reactions = (
+                os.environ.get("PLURAPACK_PREVIOUS_EMOJI_ID") or PREVIOUS_EMOJI,
+                os.environ.get("PLURAPACK_NEXT_EMOJI_ID") or NEXT_EMOJI,
+            )
+            for emoji in reactions:
+                await bot.state.http.add_reaction_to_message(posted.channel_id, posted.id, emoji)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["setup"]])
     async def setup(ctx: commands.Context, *, name: str = "My system") -> None:
@@ -167,6 +214,82 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send(str(error))
             return
         await ctx.send(f"Added **{created.name}** (`{created.id}`); voice is Off.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["deletemember"]])
+    async def deletemember(ctx: commands.Context, *, selector: str) -> None:
+        try:
+            deleted = store.delete_member(ctx.author.id, selector)
+        except PermissionError as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"Deleted **{deleted.name}** (`{deleted.id}`) and all of their forms and records.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["deletesystem"]])
+    async def deletesystem(ctx: commands.Context) -> None:
+        system_id = store.system_for(ctx.author.id)
+        if system_id is None:
+            await ctx.send("Create a system first.")
+            return
+        posted = await ctx.send(
+            "⚠️ **Permanent system deletion**\n"
+            "This erases the system, every member and form, linked owners, settings, links, and proxy records. "
+            f"Use `{prefix}export plurapack` first if you may need a private JSON backup.\n\n"
+            f"To confirm, **reply to this message** with the system ID exactly: `{system_id}`"
+        )
+        delete_confirmations[posted.id] = (ctx.author.id, system_id)
+
+    def selected_system(account_id: str, selector: str | None) -> System | None:
+        value = selector or store.system_for(account_id)
+        return store.system_info(value) if value else None
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"]])
+    async def viewinfo(ctx: commands.Context, *, selector: str = "") -> None:
+        try:
+            system = selected_system(ctx.author.id, selector or None)
+            if system:
+                members = store.members_for_system(system.id)
+                pages = [[_system_embed(stoat, system, len(members))]]
+                pages.extend([[_member_embed(stoat, store, member) for member in members[index:index + 2]]
+                              for index in range(0, len(members), 2)])
+                await send_pages(ctx, pages)
+                return
+            member_value = store.public_member_selected(selector)
+        except ValueError as error:
+            await ctx.send(str(error))
+            return
+        if member_value is None:
+            await ctx.send("System or member not found. Use an exact name or stable ID.")
+            return
+        await send_pages(ctx, [[_member_embed(stoat, store, member_value)]])
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewmembers"]])
+    async def viewmembers(ctx: commands.Context, *, system_selector: str = "") -> None:
+        try:
+            system = selected_system(ctx.author.id, system_selector or None)
+        except ValueError as error:
+            await ctx.send(str(error))
+            return
+        if system is None:
+            await ctx.send("System not found. Use an exact name or stable ID.")
+            return
+        members = store.members_for_system(system.id)
+        if not members:
+            await ctx.send(f"**{system.display_name}** has no members.")
+            return
+        await send_pages(ctx, [[_member_embed(stoat, store, member) for member in members[index:index + 2]]
+                               for index in range(0, len(members), 2)])
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewmember"]])
+    async def viewmember(ctx: commands.Context, *, selector: str) -> None:
+        try:
+            selected = store.public_member_selected(selector)
+        except ValueError as error:
+            await ctx.send(str(error))
+            return
+        if selected is None:
+            await ctx.send("Member not found. Use an exact name or stable ID.")
+            return
+        await send_pages(ctx, [[_member_embed(stoat, store, selected)]])
 
     @bot.command(name="import", aliases=[COMMAND_SHORTCUTS["import"]])
     async def import_system(ctx: commands.Context, source: str, *, document: str) -> None:
@@ -382,6 +505,20 @@ def create_bot(prefix: str, database: str) -> Any:
         author = message.get_author()
         if author is None:
             return
+        reply_id = None
+        if message.replies:
+            reply = message.replies[0]
+            reply_id = reply if isinstance(reply, str) else getattr(reply, "id", None)
+        confirmation = delete_confirmations.get(reply_id) if reply_id else None
+        if confirmation and confirmation[0] == author.id:
+            try:
+                store.delete_system(author.id, message.content.strip())
+            except PermissionError:
+                await message.reply("Deletion cancelled: that reply did not exactly match the system ID.")
+            else:
+                delete_confirmations.pop(reply_id, None)
+                await message.reply(f"System `{confirmation[1]}` and all associated data were permanently deleted.")
+            return
         incoming = Incoming(
             message.id,
             message.channel_id,
@@ -398,6 +535,16 @@ def create_bot(prefix: str, database: str) -> Any:
 
     @bot.listen(stoat.MessageReactEvent)
     async def reaction_listener(event: stoat.MessageReactEvent) -> None:
+        pager = info_pages.get(event.message_id)
+        previous_values = {PREVIOUS_EMOJI, os.environ.get("PLURAPACK_PREVIOUS_EMOJI_ID")}
+        next_values = {NEXT_EMOJI, os.environ.get("PLURAPACK_NEXT_EMOJI_ID")}
+        if pager and event.user_id == pager[0] and event.emoji in previous_values | next_values:
+            owner, channel_id, pages, index = pager
+            direction = -1 if event.emoji in previous_values else 1
+            index = (index + direction) % len(pages)
+            await bot.state.http.edit_message(channel_id, event.message_id, embeds=pages[index])
+            info_pages[event.message_id] = (owner, channel_id, pages, index)
+            return
         message = event.message
         if message is not None:
             platform.messages[message.id] = message
