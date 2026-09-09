@@ -55,6 +55,9 @@ p;setup My system
 p;member Alex [alex]            # proxy with: [alex] hello
 p;member Sam S: :S              # proxy with: S: hello :S
 p;color abc12 7b68ee            # color that member's username (also accepts #7b68ee)
+p;import pluralkit {"name":"...","members":[...]}  # paste a PluralKit JSON export
+p;import tupperbox {"tuppers":[...]}                 # paste a Tupperbox JSON export
+p;export plurapack              # attached backup; also: pluralkit or tupperbox
 p;link                          # run on the existing owner account
 p;verify abc123...              # run on the other account
 
@@ -65,6 +68,26 @@ Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
 
 Change `PLURAPACK_PREFIX` to change the **command** prefix. Member input prefixes/suffixes are shortcuts, never identity keys.
 Username colors are stored against stable member IDs and used on both new and re-proxied messages. Colors must be six-digit hex RGB values. Stoat requires the bot to have the Manage Roles permission to apply a masquerade color.
+
+## Moving systems
+
+`p;import pluralkit JSON` accepts the `name` and `members` fields from a PluralKit
+JSON export, including the first `proxy_tags` entry, `avatar_url`, and `color`.
+`p;import tupperbox JSON` accepts a `tuppers` array with each tupper's `name`,
+two-item `brackets`, avatar, and color. The JSON may be pasted directly or in a
+fenced code block. An account without a system gets one automatically; otherwise
+members are added to its existing system. Imports are all-or-nothing when a name
+or proxy tag conflicts. Members without external proxy tags receive `Name:` as a
+predictable default. Voice configuration is deliberately not inferred or enabled.
+
+`p;export` sends a versioned Plurapack JSON attachment. Use `p;export pluralkit`
+or `p;export tupperbox` for a best-effort file shaped for that service. Transfer
+files include system/member names, proxy tags, avatar URLs, and colors. They never
+include owner account IDs, linking codes, proxy-message records, message content,
+or voice settings. External IDs are not reused, so imported members receive new
+Plurapack IDs. Treat exports as private files because member metadata can still be
+sensitive. Service formats may evolve; inspect a generated file before relying on
+it as your only backup.
 
 ## Optional local Chatterbox speech
 
