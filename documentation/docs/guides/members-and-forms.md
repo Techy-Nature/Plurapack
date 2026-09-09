@@ -47,6 +47,17 @@ p;form MEMBER "Alex at Sea" https://example.test/alex-sea.png Blue fins and a lo
 
 The picture and soma are optional. Picture URLs must use HTTP or HTTPS. The bot returns the form's own stable five-character ID.
 
+Give the form its own proxy prefix and optional suffix to use its presentation
+directly, even when that form is not fronting:
+
+```text
+p;formproxy FORM_ID sea: :sea
+sea: This message uses the sea form. :sea
+```
+
+Run `p;formproxy FORM_ID` with no prefix to clear the form's proxy tag. Form
+tags must be unique within the system and cannot duplicate a member tag.
+
 ## Switch the current front
 
 ```text

@@ -103,7 +103,7 @@ $("#formForm").addEventListener("submit", async event => {
   const picture = data.get("picture").trim(); if (picture && !/^https?:\/\//i.test(picture)) return showToast("Picture must be an HTTP or HTTPS URL.", true);
   try {
     setBusy(formElement, true);
-    const form = await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}/forms`, { method: "POST", body: JSON.stringify({ displayName, pronouns: data.get("pronouns").trim() || null, picture: picture || null, soma: data.get("soma").trim() }) });
+    const form = await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}/forms`, { method: "POST", body: JSON.stringify({ displayName, pronouns: data.get("pronouns").trim() || null, picture: picture || null, soma: data.get("soma").trim(), prefix: data.get("prefix").trim(), suffix: data.get("suffix").trim() }) });
     (activeMember.forms ||= []).push(form); closeFormModal(); showMember(activeMember); showToast(`Form ${form.id} connected to ${activeMember.name}`);
   } catch (error) { if (error.status !== 401) showToast(error.message, true); } finally { setBusy(formElement, false); }
 });

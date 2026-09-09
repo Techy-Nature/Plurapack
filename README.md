@@ -69,6 +69,7 @@ p;setup My system
 p;member Alex [alex]            # proxy with: [alex] hello
 p;alias abc12 Al                # short selector; proxies still display the full name
 p;form abc12 "Alex at Sea" https://example/avatar.png Blue fins and a long tail.
+p;formproxy 4f8ac sea: :sea     # sea: proxy with this form even off-front :sea
 p;front 4f8ac                   # a form ID selects its linked member and form together
 p;autoproxy Alex                # proxy Alex's untagged messages (Off by default)
 p;autofront on                  # make autoproxy follow the current/first fronter
@@ -92,7 +93,7 @@ Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
 
 Every command also has a one- or two-letter shortcut: `s` (setup), `m` (member),
 `i` (import), `x` (export), `l` (link), `c` (color), `v` (verify), `vo` (voice),
-`of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `fr` (front),
+`of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `ft` (formproxy), `fr` (front),
 `ap` (autoproxy), `af` (autofront), `vi` (viewinfo), `ml` (viewmembers), `vm`
 (viewmember), `dm` (deletemember), and `ds` (deletesystem).
 

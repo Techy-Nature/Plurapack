@@ -54,6 +54,8 @@ class Form:
     avatar: str | None
     soma: str
     pronouns: str | None
+    prefix: str
+    suffix: str
 
 
 @dataclass(frozen=True)
@@ -125,6 +127,7 @@ class Store:
                     id TEXT PRIMARY KEY CHECK(length(id)=5),
                     member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
                     display_name TEXT NOT NULL, avatar TEXT, soma TEXT NOT NULL DEFAULT '', pronouns TEXT,
+                    prefix TEXT NOT NULL DEFAULT '', suffix TEXT NOT NULL DEFAULT '',
                     UNIQUE(member_id, display_name)
                 );
                 CREATE TABLE IF NOT EXISTS current_fronts (
@@ -156,6 +159,10 @@ class Store:
             form_columns = {row[1] for row in db.execute("PRAGMA table_info(forms)")}
             if "pronouns" not in form_columns:
                 db.execute("ALTER TABLE forms ADD COLUMN pronouns TEXT")
+            if "prefix" not in form_columns:
+                db.execute("ALTER TABLE forms ADD COLUMN prefix TEXT NOT NULL DEFAULT ''")
+            if "suffix" not in form_columns:
+                db.execute("ALTER TABLE forms ADD COLUMN suffix TEXT NOT NULL DEFAULT ''")
             system_columns = {row[1] for row in db.execute("PRAGMA table_info(systems)")}
             if "description" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN description TEXT NOT NULL DEFAULT ''")
@@ -330,7 +337,8 @@ class Store:
         return self.member_selected(account_id, member.id)  # type: ignore[return-value]
 
     def create_form(self, account_id: str, member_selector: str, display_name: str,
-                    avatar: str | None = None, soma: str = "", pronouns: str | None = None) -> Form:
+                    avatar: str | None = None, soma: str = "", pronouns: str | None = None,
+                    prefix: str = "", suffix: str = "") -> Form:
         """Create a form whose ID permanently resolves back to its member."""
         member = self.member_selected(account_id, member_selector)
         if member is None:
@@ -344,15 +352,27 @@ class Store:
             raise ValueError("Form picture must be an HTTP or HTTPS URL.")
         if len(soma) > 1000:
             raise ValueError("Form soma must be no more than 1000 characters.")
+        self._validate_proxy_tag(prefix, suffix)
         try:
             with self.connect() as db:
+                if prefix:
+                    collision = db.execute("""SELECT 1 FROM forms f JOIN members m ON m.id=f.member_id
+                        WHERE m.system_id=? AND f.prefix=? AND f.suffix=?""",
+                        (member.system_id, prefix, suffix)).fetchone()
+                    member_collision = db.execute("""SELECT 1 FROM members
+                        WHERE system_id=? AND prefix=? AND suffix=?""",
+                        (member.system_id, prefix, suffix)).fetchone()
+                    if collision or member_collision:
+                        raise ValueError("That proxy prefix and suffix are already in use.")
                 while True:
                     form_id = short_hash(5)
                     if db.execute("SELECT 1 FROM members WHERE id=?", (form_id,)).fetchone():
                         continue
                     try:
-                        db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns) VALUES (?,?,?,?,?,?)",
-                                   (form_id, member.id, display_name, avatar, soma, pronouns))
+                        db.execute("""INSERT INTO forms
+                            (id,member_id,display_name,avatar,soma,pronouns,prefix,suffix)
+                            VALUES (?,?,?,?,?,?,?,?)""",
+                            (form_id, member.id, display_name, avatar, soma, pronouns, prefix, suffix))
                         break
                     except sqlite3.IntegrityError as error:
                         if "forms.id" not in str(error):
@@ -365,7 +385,8 @@ class Store:
         """Resolve an owned form by stable ID or its exact display name."""
         with self.connect() as db:
             rows = db.execute("""SELECT f.id form_id, f.member_id, f.display_name, f.avatar form_avatar,
-                f.soma, f.pronouns form_pronouns, m.* FROM forms f JOIN members m ON m.id=f.member_id
+                f.soma, f.pronouns form_pronouns, f.prefix form_prefix, f.suffix form_suffix,
+                m.* FROM forms f JOIN members m ON m.id=f.member_id
                 JOIN owners o ON o.system_id=m.system_id
                 WHERE o.account_id=? AND (f.id=? OR f.display_name=?)
                 ORDER BY CASE WHEN f.id=? THEN 0 ELSE 1 END""",
@@ -377,7 +398,8 @@ class Store:
         row = rows[0]
         values = dict(row)
         form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
-                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"))
+                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
+                    values.pop("form_prefix"), values.pop("form_suffix"))
         values.pop("member_id")
         return form, Member(**values)
 
@@ -535,6 +557,37 @@ class Store:
             db.execute("UPDATE forms SET pronouns=? WHERE id=?", (normalized, form.id))
         return self.form_selected(account_id, form.id)[0]  # type: ignore[index]
 
+    @staticmethod
+    def _validate_proxy_tag(prefix: str, suffix: str) -> None:
+        if not prefix:
+            if suffix:
+                raise ValueError("A proxy suffix requires a proxy prefix.")
+            return
+        if len(prefix) > 32 or len(suffix) > 32:
+            raise ValueError("Proxy prefixes and suffixes must each be no more than 32 characters.")
+
+    def configure_form_proxy(self, account_id: str, form_selector: str,
+                             prefix: str | None, suffix: str = "") -> Form:
+        """Set a form-specific proxy tag, or clear it when no prefix is supplied."""
+        selected = self.form_selected(account_id, form_selector)
+        if selected is None:
+            raise PermissionError("Form not found or not owned by this account.")
+        form, member = selected
+        normalized_prefix = prefix or ""
+        self._validate_proxy_tag(normalized_prefix, suffix)
+        with self.connect() as db:
+            collision = db.execute("""SELECT 1 FROM forms f JOIN members m ON m.id=f.member_id
+                WHERE m.system_id=? AND f.id<>? AND f.prefix=? AND f.suffix=? AND f.prefix<>''""",
+                (member.system_id, form.id, normalized_prefix, suffix)).fetchone()
+            member_collision = db.execute("""SELECT 1 FROM members
+                WHERE system_id=? AND prefix=? AND suffix=?""",
+                (member.system_id, normalized_prefix, suffix)).fetchone()
+            if normalized_prefix and (collision or member_collision):
+                raise ValueError("That proxy prefix and suffix are already in use.")
+            db.execute("UPDATE forms SET prefix=?,suffix=? WHERE id=?",
+                       (normalized_prefix, suffix, form.id))
+        return self.form_selected(account_id, form.id)[0]  # type: ignore[index]
+
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
                         voice_settings: str = "{}", playback: str = "send") -> Member:
         """Configure an owned member. Only ``send`` has output in this server-only release."""
@@ -574,8 +627,20 @@ class Store:
 
     def match_member(self, account_id: str, content: str) -> tuple[Member, str] | None:
         with self.connect() as db:
+            form_rows = db.execute("""SELECT f.id, f.prefix, f.suffix FROM forms f
+                JOIN members m ON m.id=f.member_id JOIN owners o ON o.system_id=m.system_id
+                WHERE o.account_id=? AND f.prefix<>''
+                ORDER BY length(f.prefix)+length(f.suffix) DESC""", (account_id,)).fetchall()
             rows = db.execute("""SELECT m.* FROM members m JOIN owners o ON o.system_id=m.system_id
                 WHERE o.account_id=? ORDER BY length(m.prefix)+length(m.suffix) DESC""", (account_id,)).fetchall()
+        for form in form_rows:
+            if content.startswith(form["prefix"]) and (not form["suffix"] or content.endswith(form["suffix"])):
+                end = -len(form["suffix"]) if form["suffix"] else None
+                body = content[len(form["prefix"]):end].strip()
+                if body:
+                    identity = self.proxy_identity(account_id, str(form["id"]))
+                    if identity:
+                        return identity, body
         for row in rows:
             member = Member(**dict(row))
             if content.startswith(member.prefix) and (not member.suffix or content.endswith(member.suffix)):

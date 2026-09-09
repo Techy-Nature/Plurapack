@@ -131,3 +131,36 @@ def test_form_and_alias_are_scoped_to_an_owned_system(store):
         store.create_form("stranger", "Alexandra North", "Other")
     with pytest.raises(ValueError, match="HTTP or HTTPS"):
         store = store.create_form("owner", "Alexandra North", "Unsafe", "file:///secret")
+
+
+def test_form_proxy_tag_selects_its_presentation_without_switching_front(store):
+    form = store.create_form(
+        "owner", "Alexandra North", "Alex at Sea",
+        "https://example.test/sea.png", prefix="sea:", suffix=":sea",
+    )
+
+    identity, body = store.match_member("owner", "sea: hello :sea")
+
+    assert identity.id == form.member_id
+    assert identity.name == "Alex at Sea"
+    assert identity.avatar == "https://example.test/sea.png"
+    assert body == "hello"
+    assert store.current_front("owner") is None
+
+
+def test_form_proxy_tags_can_be_configured_cleared_and_cannot_collide(store):
+    form = store.create_form("owner", "Alexandra North", "Everyday")
+    configured = store.configure_form_proxy("owner", form.id, "every:", ":every")
+    assert (configured.prefix, configured.suffix) == ("every:", ":every")
+
+    other = store.create_form("owner", "Alexandra North", "Formal")
+    with pytest.raises(ValueError, match="already in use"):
+        store.configure_form_proxy("owner", other.id, "every:", ":every")
+    with pytest.raises(ValueError, match="already in use"):
+        store.configure_form_proxy("owner", other.id, "[alex]", "")
+    with pytest.raises(ValueError, match="requires a proxy prefix"):
+        store.configure_form_proxy("owner", other.id, None, ":formal")
+
+    cleared = store.configure_form_proxy("owner", form.id, None)
+    assert (cleared.prefix, cleared.suffix) == ("", "")
+    assert store.match_member("owner", "every: hello :every") is None
