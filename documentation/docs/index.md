@@ -17,6 +17,7 @@ Plurapack welcomes systems of every origin, as well as people who are questionin
 
 - Keep stable system, member, and form IDs even when display names change.
 - Proxy text using member-specific prefixes and optional suffixes.
+- Optionally proxy untagged messages with autoproxy, or enable autofront to make autoproxy follow the current fronter. Both features start Off.
 - Give members aliases and alternate forms.
 - Share one system between multiple authorized Stoat accounts.
 - Import from PluralKit, Tupperbox, or another Plurapack installation.
@@ -29,6 +30,7 @@ Plurapack welcomes systems of every origin, as well as people who are questionin
 | --- | --- |
 | Use a bot someone else operates | [Create your first system](getting-started/first-system.md) |
 | Host the bot myself | [Install and run](getting-started/install.md) |
+| Proxy without typing tags | [Autoproxy and autofront](guides/proxying.md#autoproxy) |
 | Understand every command | [Command reference](reference/commands.md) |
 | Move from another proxy | [Import and export](guides/import-export.md) |
 | Know what is stored | [Privacy and safety](reference/privacy.md) |
