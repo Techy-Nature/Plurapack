@@ -22,19 +22,40 @@ STOAT_INSTALL_MESSAGE = (
     "dependencies with `python -m pip install -e .`, then try again."
 )
 
-# Every public command has a distinct one- or two-letter shortcut. Keeping the
-# mapping explicit also gives dashboards/help pages one canonical source.
-COMMAND_SHORTCUTS = {
-    "setup": "s", "member": "m", "import": "i", "export": "x",
-    "link": "l", "color": "c", "verify": "v", "voice": "vo",
-    "voiceoff": "of", "voiceformat": "vf", "alias": "a", "form": "f",
-    "front": "fr", "defaultform": "df", "autoproxy": "ap", "autofront": "af",
-    "deletemember": "dm", "deletesystem": "ds", "viewinfo": "vi",
-    "viewmembers": "ml", "viewmember": "vm",
-    "pronouns": "p", "formpronouns": "fp",
-    "formproxy": "ft",
-    "systemtag": "st", "systemtagshow": "ts",
+# This is the canonical public-command catalogue. Command registration, in-chat
+# help, and tests all consume it so adding a command without documenting it is
+# difficult to do accidentally. Values are shortcut, usage suffix, and summary.
+COMMAND_HELP = {
+    "help": ("h", "[COMMAND]", "List every command or show details for one."),
+    "setup": ("s", "[SYSTEM_NAME] [DESCRIPTION]", "Create your system."),
+    "member": ("m", "NAME PREFIX [SUFFIX] [DESCRIPTION]", "Add a member and proxy tag."),
+    "alias": ("a", "MEMBER [ALIAS]", "Set or clear a member selector."),
+    "form": ("f", "MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]", "Create an alternate presentation."),
+    "formproxy": ("ft", "FORM [PREFIX] [SUFFIX]", "Set or clear a form proxy tag."),
+    "defaultform": ("df", "MEMBER [FORM_OR_OFF]", "Set or clear a default form."),
+    "pronouns": ("p", "MEMBER [PRONOUNS]", "Set or clear member pronouns."),
+    "formpronouns": ("fp", "FORM [PRONOUNS]", "Set or inherit form pronouns."),
+    "systemtag": ("st", "[TAG]", "Set or clear the system name tag."),
+    "systemtagshow": ("ts", "SCOPE on|off|default", "Control system tag visibility."),
+    "front": ("fr", "MEMBER_OR_FORM", "Switch the current member and form."),
+    "autoproxy": ("ap", "MEMBER_OR_OFF", "Configure untagged-message proxying."),
+    "autofront": ("af", "on|off", "Make autoproxy follow front switches."),
+    "color": ("c", "MEMBER HEX", "Set a member username color."),
+    "link": ("l", "", "Create a single-use account link code."),
+    "verify": ("v", "CODE", "Connect an account with a link code."),
+    "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
+    "export": ("x", "[FORMAT]", "Export portable system metadata."),
+    "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]", "Show system or member information."),
+    "viewmembers": ("ml", "[SYSTEM]", "Show a system's member cards."),
+    "viewmember": ("vm", "MEMBER", "Show one member card."),
+    "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
+    "deletesystem": ("ds", "", "Start permanent system deletion."),
+    "voice": ("vo", "MEMBER FILE [PLAYBACK] [SETTINGS]", "Configure speech reference audio."),
+    "voiceoff": ("of", "MEMBER", "Disable speech for a member."),
+    "voiceformat": ("vf", "MEMBER on|off [MODE]", "Configure semantic speech formatting."),
 }
+
+COMMAND_SHORTCUTS = {name: details[0] for name, details in COMMAND_HELP.items()}
 
 # Compatibility names people commonly try based on the nouns used by other
 # plural proxy bots and by Plurapack's own UI.
@@ -42,6 +63,38 @@ COMMAND_ALIASES = {"front": ["fronter"], "viewinfo": ["view"]}
 
 PREVIOUS_EMOJI = "⬅️"
 NEXT_EMOJI = "➡️"
+
+
+def _help_pages(prefix: str, selector: str = "", limit: int = 1800) -> list[str]:
+    """Build help from the command catalogue, within conservative chat limits."""
+    selected = selector.casefold().strip()
+    if selected:
+        selected = next(
+            (name for name, details in COMMAND_HELP.items()
+             if selected == name or selected == details[0] or selected in COMMAND_ALIASES.get(name, [])),
+            "",
+        )
+        if not selected:
+            return [f"Unknown command `{selector}`. Use `{prefix}help` to list every command."]
+        shortcut, usage, summary = COMMAND_HELP[selected]
+        invocation = f"{prefix}{selected}{f' {usage}' if usage else ''}"
+        aliases = [shortcut, *COMMAND_ALIASES.get(selected, [])]
+        return [f"**{selected}** — {summary}\nUsage: `{invocation}`\nAliases: "
+                + ", ".join(f"`{prefix}{alias}`" for alias in aliases)]
+
+    heading = f"**Plurapack commands**\nUse `{prefix}help COMMAND` for details.\n"
+    lines = []
+    for name, (shortcut, usage, summary) in COMMAND_HELP.items():
+        invocation = f"{prefix}{name}{f' {usage}' if usage else ''}"
+        lines.append(f"`{invocation}` (`{shortcut}`) — {summary}")
+    pages, page = [], heading
+    for line in lines:
+        if len(page) + len(line) + 1 > limit:
+            pages.append(page.rstrip())
+            page = "**Plurapack commands (continued)**\n"
+        page += line + "\n"
+    pages.append(page.rstrip())
+    return pages
 
 
 def _print_cli_status(message: str) -> None:
@@ -243,6 +296,12 @@ def create_bot(prefix: str, database: str) -> Any:
             )
             for emoji in reactions:
                 await bot.state.http.add_reaction_to_message(posted.channel_id, posted.id, emoji)
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["help"]])
+    async def help(ctx: commands.Context, *, command_name: str = "") -> None:
+        """List all current commands or explain one command in detail."""
+        for page in _help_pages(prefix, command_name):
+            await ctx.send(page)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["setup"]])
     async def setup(ctx: commands.Context, name: str = "My system", *, description: str = "") -> None:

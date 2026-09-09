@@ -6,6 +6,31 @@ from plurapack import bot
 from plurapack.proxy import Incoming
 
 
+def test_help_lists_every_command_with_usage_and_shortcut():
+    pages = bot._help_pages("p;", limit=500)
+    rendered = "\n".join(pages)
+
+    assert len(pages) > 1
+    assert all(len(page) <= 500 for page in pages)
+    for name, (shortcut, usage, summary) in bot.COMMAND_HELP.items():
+        assert f"p;{name}" in rendered
+        assert f"(`{shortcut}`)" in rendered
+        assert summary in rendered
+        if usage:
+            assert usage in rendered
+
+
+def test_help_details_accept_command_shortcuts_and_compatibility_aliases():
+    assert bot._help_pages("!", "m") == [
+        "**member** — Add a member and proxy tag.\n"
+        "Usage: `!member NAME PREFIX [SUFFIX] [DESCRIPTION]`\nAliases: `!m`"
+    ]
+    assert bot._help_pages("p;", "view")[0].startswith("**viewinfo**")
+    assert bot._help_pages("p;", "missing") == [
+        "Unknown command `missing`. Use `p;help` to list every command."
+    ]
+
+
 def test_bot_module_can_be_imported_without_stoat(monkeypatch):
     monkeypatch.setattr(bot.importlib.util, "find_spec", lambda name: None)
 

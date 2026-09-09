@@ -4,11 +4,15 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 
 | Command | Shortcut | Purpose |
 | --- | --- | --- |
+| `help [COMMAND]` | `h` | List every current command, or show usage and aliases for one command. |
 | `setup [SYSTEM_NAME] [DESCRIPTION]` | `s` | Create the account's system, with an optional description. |
 | `member NAME PREFIX [SUFFIX] [DESCRIPTION]` | `m` | Add a member and proxy tag, with an optional description. |
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |
 | `form MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]` | `f` | Create an alternate presentation. |
 | `formproxy FORM [PREFIX] [SUFFIX]` | `ft` | Set a form-specific proxy tag, or clear it by omitting the prefix. |
+| `defaultform MEMBER [FORM_OR_OFF]` | `df` | Set a member's default form, or clear it with `off`. |
+| `pronouns MEMBER [PRONOUNS]` | `p` | Set member pronouns, or clear them by omitting the value. |
+| `formpronouns FORM [PRONOUNS]` | `fp` | Override form pronouns, or restore inheritance by omitting the value. |
 | `systemtag [TAG]` | `st` | Set the tag shown after member and form names, or clear it. |
 | `systemtagshow SCOPE on\|off\|default` | `ts` | Set system visibility or a server/channel override. |
 | `front MEMBER_OR_FORM` | `fr` | Switch the current member and optional form. |
