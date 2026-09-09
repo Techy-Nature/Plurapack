@@ -1,5 +1,17 @@
 # Plurapack
 
+## Responsive dashboard
+
+The repository includes a dependency-free dashboard prototype that can be hosted on GitHub Pages or any static web server. It provides responsive desktop and mobile layouts, independently scrollable member and profile panels on larger screens, member search, profile switching, and an interactive new-member dialog.
+
+Open `index.html` directly, or serve the repository root locally:
+
+```bash
+python -m http.server 8000
+```
+
+Then visit `http://localhost:8000`. The dashboard currently stores its demo data in memory; connect the form actions in `app.js` to your preferred authenticated API before using it for persistent member management.
+
 Plurapack is an early, self-hosted [Stoat](https://stoat.chat) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
 
 ## What works in this initial release
@@ -53,6 +65,9 @@ Initial commands:
 ```text
 p;setup My system
 p;member Alex [alex]            # proxy with: [alex] hello
+p;alias abc12 Al                # short selector; proxies still display the full name
+p;form abc12 "Alex at Sea" https://example/avatar.png Blue fins and a long tail.
+p;front 4f8ac                   # a form ID selects its linked member and form together
 p;member Sam S: :S              # proxy with: S: hello :S
 p;color abc12 7b68ee            # color that member's username (also accepts #7b68ee)
 p;import pluralkit {"name":"...","members":[...]}  # paste a PluralKit JSON export
@@ -65,6 +80,17 @@ React ✏️ / 📝, then send text   # edit one of your system's proxies
 React ❌ / 🗑️                  # delete one of your system's proxies
 Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
 ```
+
+Every command also has a one- or two-letter shortcut: `s` (setup), `m` (member),
+`i` (import), `x` (export), `l` (link), `c` (color), `v` (verify), `vo` (voice),
+`of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), and `fr` (front).
+
+Aliases are short selectors only: the member's full name remains the name shown
+on ordinary proxy messages and member cards. Forms are alternate presentations
+with their own stable five-character IDs, display names, optional picture URLs,
+and soma descriptions. A form ID is permanently connected to its member ID.
+Passing it to `p;front` switches the current member and form atomically; using it
+as a reply selector re-proxies with that form's display name and picture.
 
 Change `PLURAPACK_PREFIX` to change the **command** prefix. Member input prefixes/suffixes are shortcuts, never identity keys.
 Username colors are stored against stable member IDs and used on both new and re-proxied messages. Colors must be six-digit hex RGB values. Stoat requires the bot to have the Manage Roles permission to apply a masquerade color.

@@ -67,7 +67,7 @@ class ProxyService:
 
         if message.reply_to_id and self.store.proxy_owned_by(
                 message.reply_to_id, message.author_id, message.channel_id):
-            member = self.store.member_selected(message.author_id, message.content)
+            member = self.store.proxy_identity(message.author_id, message.content)
             if member:
                 replacement_id = await self.platform.send_reproxy(message, message.reply_to_id, member)
                 if not self.store.replace_proxy(message.reply_to_id, replacement_id, member, message.author_id):
