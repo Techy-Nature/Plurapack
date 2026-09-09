@@ -36,3 +36,18 @@ p;front FORM_ID
 ```
 
 Selecting a member uses their base presentation. Selecting a form switches the member and form together. A form ID can also be used when replying to re-proxy an existing message.
+
+## Make autoproxy follow the front
+
+Autoproxy and autofront are both Off by default. Without autofront, changing
+the current front leaves the independently selected autoproxy member unchanged.
+
+After selecting a front, run `p;autofront on` (or `p;af on`) to make
+autoproxy use that member and follow later front switches. This follows the
+member identity, rather than the selected form's presentation.
+
+`p;autofront off` stops following front changes but keeps the autoproxy
+selection. To disable both features, run `p;autofront off` followed by
+`p;autoproxy off`. These settings are shared across linked system accounts.
+
+See [Autoproxy and autofront](proxying.md#autoproxy) for examples and tag precedence.
