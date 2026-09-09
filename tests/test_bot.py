@@ -21,6 +21,37 @@ def test_main_explains_how_to_install_stoat(monkeypatch):
         bot.main()
 
 
+async def test_cli_reports_connected_and_ready_states(capsys):
+    listeners = {}
+
+    class FakeBot:
+        def listen(self, event_type):
+            def register(callback):
+                listeners[event_type] = callback
+                return callback
+
+            return register
+
+    sdk = SimpleNamespace(AfterConnectEvent=object(), ReadyEvent=object())
+    bot._register_cli_status_listeners(FakeBot(), sdk, "p;")
+
+    await listeners[sdk.AfterConnectEvent](SimpleNamespace())
+    assert capsys.readouterr().out == "[Plurapack] Connected to Stoat.\n"
+
+    await listeners[sdk.ReadyEvent](SimpleNamespace())
+    assert capsys.readouterr().out == "[Plurapack] Ready to use. Command prefix: p;\n"
+
+
+def test_main_reports_that_it_is_connecting(monkeypatch, capsys):
+    running = SimpleNamespace(run=lambda token: None)
+    monkeypatch.setenv("STOAT_BOT_TOKEN", "test-token")
+    monkeypatch.setattr(bot, "create_bot", lambda prefix, database: running)
+
+    bot.main()
+
+    assert capsys.readouterr().out == "[Plurapack] Connecting to Stoat...\n"
+
+
 async def test_stoat_platform_applies_member_color_to_username():
     class Masquerade:
         def __init__(self, **kwargs):
