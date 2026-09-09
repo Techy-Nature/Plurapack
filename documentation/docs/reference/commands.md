@@ -9,6 +9,8 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |
 | `form MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]` | `f` | Create an alternate presentation. |
 | `front MEMBER_OR_FORM` | `fr` | Switch the current member and optional form. |
+| `autoproxy MEMBER_OR_OFF` | `ap` | Proxy untagged messages as a member; Off by default. |
+| `autofront on|off` | `af` | Opt in to making autoproxy follow the first/current fronter. |
 | `color MEMBER HEX` | `c` | Set a six-digit username color. |
 | `link` | `l` | Create a single-use account connection code. |
 | `verify CODE` | `v` | Connect an account using a code. |

@@ -64,6 +64,36 @@ async def test_duplicate_and_commands_are_not_proxied(store):
     assert platform.deleted == ["source-1"]
 
 
+async def test_autoproxy_is_off_by_default_and_proxies_untagged_messages_when_enabled(store):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    assert await service.handle(Incoming("off", "channel", "owner", "hello")) is None
+
+    member = store.member_named("owner", "Alex")
+    store.configure_autoproxy("owner", member.id)
+    assert await service.handle(Incoming("on", "channel", "owner", " hello ")) == "proxy-1"
+    assert platform.sent == [(member.id, "hello")]
+
+
+def test_autofront_is_opt_in_and_tracks_front_without_coupling_by_default(store):
+    alex = store.member_named("owner", "Alex")
+    sam = store.add_member("owner", "Sam", "[sam]")
+    store.configure_autoproxy("owner", alex.id)
+
+    store.switch_front("owner", sam.id)
+    assert store.autoproxy("owner").member.id == alex.id
+    assert store.autoproxy("owner").autofront is False
+
+    state = store.configure_autofront("owner", True)
+    assert state.member.id == sam.id
+    store.switch_front("owner", alex.id)
+    assert store.autoproxy("owner").member.id == alex.id
+
+    store.configure_autofront("owner", False)
+    store.switch_front("owner", sam.id)
+    assert store.autoproxy("owner").member.id == alex.id
+
+
 async def test_failed_replacement_preserves_original(store):
     platform = FakePlatform(fail=True)
     with pytest.raises(RuntimeError):
