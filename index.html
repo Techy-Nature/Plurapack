@@ -117,7 +117,7 @@
       <div class="modal-heading"><div><span class="modal-icon">✦</span><div><h2 id="modalTitle">Create a new member</h2><p>Add someone new to your system.</p></div></div><button id="closeModal" type="button" aria-label="Close">×</button></div>
       <div class="form-grid">
         <label class="full-field"><span>Display name <b>*</b></span><input id="newName" name="name" required maxlength="32" placeholder="e.g. Sol"></label>
-        <label><span>Pronouns</span><input name="pronouns" maxlength="32" placeholder="e.g. they / them"></label>
+        <label><span>Pronouns</span><input name="pronouns" maxlength="64" placeholder="e.g. they / them"></label>
         <label><span>Alias / nickname</span><input name="alias" maxlength="24" placeholder="e.g. Sol"></label>
         <label><span>Proxy prefix</span><input name="proxy" maxlength="12" placeholder="e.g. sol:"></label>
         <label class="full-field"><span>About</span><textarea name="description" maxlength="220" placeholder="A few words about this member..."></textarea></label>
@@ -132,6 +132,7 @@
       <div class="modal-heading"><div><span class="modal-icon">◈</span><div><h2 id="formModalTitle">Create a form</h2><p>Give this member another presentation.</p></div></div><button id="closeFormModal" type="button" aria-label="Close">×</button></div>
       <div class="form-grid">
         <label class="full-field"><span>Display name <b>*</b></span><input name="displayName" required maxlength="80" placeholder="e.g. Nova Solstice"></label>
+        <label class="full-field"><span>Pronouns <small>(optional override)</small></span><input name="pronouns" maxlength="64" placeholder="Leave blank to inherit the member's pronouns"></label>
         <label class="full-field"><span>Picture URL</span><input name="picture" type="url" placeholder="https://example.com/avatar.png"></label>
         <label class="full-field"><span>Soma</span><textarea name="soma" maxlength="1000" placeholder="Describe how this form looks and feels..."></textarea></label>
       </div>

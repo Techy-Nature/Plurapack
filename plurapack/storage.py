@@ -34,6 +34,7 @@ class Member:
     alias: str | None
     default_form_id: str | None
     description: str
+    pronouns: str | None
 
 
 @dataclass(frozen=True)
@@ -52,6 +53,7 @@ class Form:
     display_name: str
     avatar: str | None
     soma: str
+    pronouns: str | None
 
 
 @dataclass(frozen=True)
@@ -106,6 +108,7 @@ class Store:
                     strikethrough_speech TEXT NOT NULL DEFAULT 'normal',
                     default_form_id TEXT REFERENCES forms(id) ON DELETE SET NULL,
                     description TEXT NOT NULL DEFAULT '',
+                    pronouns TEXT,
                     UNIQUE(system_id, name), UNIQUE(system_id, prefix, suffix)
                 );
                 CREATE TABLE IF NOT EXISTS links (
@@ -121,7 +124,7 @@ class Store:
                 CREATE TABLE IF NOT EXISTS forms (
                     id TEXT PRIMARY KEY CHECK(length(id)=5),
                     member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
-                    display_name TEXT NOT NULL, avatar TEXT, soma TEXT NOT NULL DEFAULT '',
+                    display_name TEXT NOT NULL, avatar TEXT, soma TEXT NOT NULL DEFAULT '', pronouns TEXT,
                     UNIQUE(member_id, display_name)
                 );
                 CREATE TABLE IF NOT EXISTS current_fronts (
@@ -148,6 +151,11 @@ class Store:
                 db.execute("ALTER TABLE members ADD COLUMN default_form_id TEXT")
             if "description" not in columns:
                 db.execute("ALTER TABLE members ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+            if "pronouns" not in columns:
+                db.execute("ALTER TABLE members ADD COLUMN pronouns TEXT")
+            form_columns = {row[1] for row in db.execute("PRAGMA table_info(forms)")}
+            if "pronouns" not in form_columns:
+                db.execute("ALTER TABLE forms ADD COLUMN pronouns TEXT")
             system_columns = {row[1] for row in db.execute("PRAGMA table_info(systems)")}
             if "description" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN description TEXT NOT NULL DEFAULT ''")
@@ -269,9 +277,9 @@ class Store:
                 while True:
                     try:
                         db.execute("""INSERT INTO members
-                            (id,system_id,name,prefix,suffix,avatar,color) VALUES (?,?,?,?,?,?,?)""",
+                            (id,system_id,name,prefix,suffix,avatar,color,pronouns) VALUES (?,?,?,?,?,?,?,?)""",
                             (short_hash(5), system_id, member.name, member.prefix, member.suffix,
-                             member.avatar, member.color))
+                             member.avatar, member.color, member.pronouns))
                         break
                     except sqlite3.IntegrityError as error:
                         if "members.id" not in str(error):
@@ -322,13 +330,14 @@ class Store:
         return self.member_selected(account_id, member.id)  # type: ignore[return-value]
 
     def create_form(self, account_id: str, member_selector: str, display_name: str,
-                    avatar: str | None = None, soma: str = "") -> Form:
+                    avatar: str | None = None, soma: str = "", pronouns: str | None = None) -> Form:
         """Create a form whose ID permanently resolves back to its member."""
         member = self.member_selected(account_id, member_selector)
         if member is None:
             raise PermissionError("Member not found or not owned by this account.")
         display_name, soma = display_name.strip(), soma.strip()
         avatar = avatar.strip() if avatar else None
+        pronouns = self._normalize_pronouns(pronouns)
         if not display_name or len(display_name) > 80:
             raise ValueError("Form display name must be 1–80 characters.")
         if avatar and not re.fullmatch(r"https?://\S+", avatar):
@@ -342,8 +351,8 @@ class Store:
                     if db.execute("SELECT 1 FROM members WHERE id=?", (form_id,)).fetchone():
                         continue
                     try:
-                        db.execute("INSERT INTO forms VALUES (?,?,?,?,?)",
-                                   (form_id, member.id, display_name, avatar, soma))
+                        db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns) VALUES (?,?,?,?,?,?)",
+                                   (form_id, member.id, display_name, avatar, soma, pronouns))
                         break
                     except sqlite3.IntegrityError as error:
                         if "forms.id" not in str(error):
@@ -356,7 +365,7 @@ class Store:
         """Resolve an owned form by stable ID or its exact display name."""
         with self.connect() as db:
             rows = db.execute("""SELECT f.id form_id, f.member_id, f.display_name, f.avatar form_avatar,
-                f.soma, m.* FROM forms f JOIN members m ON m.id=f.member_id
+                f.soma, f.pronouns form_pronouns, m.* FROM forms f JOIN members m ON m.id=f.member_id
                 JOIN owners o ON o.system_id=m.system_id
                 WHERE o.account_id=? AND (f.id=? OR f.display_name=?)
                 ORDER BY CASE WHEN f.id=? THEN 0 ELSE 1 END""",
@@ -368,7 +377,7 @@ class Store:
         row = rows[0]
         values = dict(row)
         form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
-                    values.pop("form_avatar"), values.pop("soma"))
+                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"))
         values.pop("member_id")
         return form, Member(**values)
 
@@ -378,7 +387,8 @@ class Store:
         if selected_form:
             form, member = selected_form
             return replace(member, name=form.display_name,
-                           avatar=form.avatar if form.avatar is not None else member.avatar)
+                           avatar=form.avatar if form.avatar is not None else member.avatar,
+                           pronouns=form.pronouns if form.pronouns is not None else member.pronouns)
         return self.member_selected(account_id, selector)
 
     def switch_front(self, account_id: str, selector: str) -> Front:
@@ -486,6 +496,36 @@ class Store:
         with self.connect() as db:
             db.execute("UPDATE members SET color=? WHERE id=?", (f"#{normalized}", member.id))
         return self.member_selected(account_id, member.id)  # type: ignore[return-value]
+
+    @staticmethod
+    def _normalize_pronouns(pronouns: str | None) -> str | None:
+        normalized = pronouns.strip() if pronouns else None
+        if normalized and len(normalized) > 64:
+            raise ValueError("Pronouns must be no more than 64 characters.")
+        return normalized
+
+    def configure_pronouns(self, account_id: str, member_selector: str,
+                           pronouns: str | None) -> Member:
+        """Set or clear the pronouns shown for an owned member."""
+        member = self.member_selected(account_id, member_selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        normalized = self._normalize_pronouns(pronouns)
+        with self.connect() as db:
+            db.execute("UPDATE members SET pronouns=? WHERE id=?", (normalized, member.id))
+        return self.member_selected(account_id, member.id)  # type: ignore[return-value]
+
+    def configure_form_pronouns(self, account_id: str, form_selector: str,
+                                pronouns: str | None) -> Form:
+        """Set or clear a form override; cleared forms inherit member pronouns."""
+        selected = self.form_selected(account_id, form_selector)
+        if selected is None:
+            raise PermissionError("Form not found or not owned by this account.")
+        form, _ = selected
+        normalized = self._normalize_pronouns(pronouns)
+        with self.connect() as db:
+            db.execute("UPDATE forms SET pronouns=? WHERE id=?", (normalized, form.id))
+        return self.form_selected(account_id, form.id)[0]  # type: ignore[index]
 
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
                         voice_settings: str = "{}", playback: str = "send") -> Member:

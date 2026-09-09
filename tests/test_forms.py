@@ -44,6 +44,27 @@ def test_form_id_resolves_member_and_switches_presentation_together(store):
     assert store.current_front("owner") == switched
 
 
+def test_member_and_form_pronouns_can_be_set_independently(store):
+    member = store.configure_pronouns("owner", "Alexandra North", "they / them")
+    inherited = store.create_form("owner", member.id, "Everyday")
+    specific = store.create_form("owner", member.id, "Formal", pronouns="she / her")
+
+    assert store.proxy_identity("owner", inherited.id).pronouns == "they / them"
+    assert store.proxy_identity("owner", specific.id).pronouns == "she / her"
+
+    cleared = store.configure_form_pronouns("owner", specific.id, None)
+    assert cleared.pronouns is None
+    assert store.proxy_identity("owner", specific.id).pronouns == "they / them"
+
+
+def test_pronouns_are_validated_and_scoped_to_owners(store):
+    with pytest.raises(ValueError, match="64 characters"):
+        store.configure_pronouns("owner", "Alexandra North", "x" * 65)
+    form = store.create_form("owner", "Alexandra North", "Formal")
+    with pytest.raises(PermissionError):
+        store.configure_form_pronouns("stranger", form.id, "she / her")
+
+
 def test_member_switch_uses_configurable_default_form(store):
     member = store.member_selected("owner", "Alexandra North")
     form = store.create_form("owner", member.id, "Alex at Sea")
