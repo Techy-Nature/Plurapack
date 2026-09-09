@@ -42,3 +42,35 @@ async def test_stoat_platform_applies_member_color_to_username():
     member = SimpleNamespace(name="Alex", avatar=None, color="#7b68ee")
 
     assert await platform.send_proxy(incoming, member, "hello") == "proxy-id"
+
+
+async def test_stoat_platform_applies_form_name_and_avatar_to_masquerade():
+    captured = None
+
+    class Masquerade:
+        def __init__(self, **kwargs):
+            nonlocal captured
+            captured = kwargs
+
+    class Channel:
+        async def send(self, content, *, masquerade):
+            return SimpleNamespace(id="proxy-id")
+
+    platform = bot.StoatPlatform(
+        {"source-id": SimpleNamespace(get_channel=lambda: Channel())},
+        SimpleNamespace(),
+        SimpleNamespace(MessageMasquerade=Masquerade),
+    )
+    form_identity = SimpleNamespace(
+        name="Alex at Sea", avatar="https://example.test/sea.png", color="#123456"
+    )
+
+    await platform.send_proxy(
+        Incoming("source-id", "channel-id", "owner-id", "hello"), form_identity, "hello"
+    )
+
+    assert captured == {
+        "name": "Alex at Sea",
+        "avatar": "https://example.test/sea.png",
+        "color": "#123456",
+    }

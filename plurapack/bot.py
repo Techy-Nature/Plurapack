@@ -34,6 +34,10 @@ COMMAND_SHORTCUTS = {
     "pronouns": "p", "formpronouns": "fp",
 }
 
+# Compatibility names people commonly try based on the nouns used by other
+# plural proxy bots and by Plurapack's own UI.
+COMMAND_ALIASES = {"front": ["fronter"], "viewinfo": ["view"]}
+
 PREVIOUS_EMOJI = "⬅️"
 NEXT_EMOJI = "➡️"
 
@@ -156,6 +160,23 @@ def _plurapack_bot_class(commands: Any) -> type:
             self._speech_tasks.clear()
             await super().close(**kwargs)
 
+        async def on_command_error(self, event: Any, /) -> None:
+            """Turn ordinary command mistakes into useful chat responses."""
+            error = event.error
+            ctx = event.context
+            if isinstance(error, commands.MissingRequiredArgument):
+                await ctx.send(
+                    f"Missing required argument `{error.parameter.name}`. "
+                    f"Use `{self.command_prefix}help {ctx.command.qualified_name}` for usage."
+                )
+                return
+            if isinstance(error, commands.CommandNotFound):
+                await ctx.send(
+                    f"Command not found. Use `{self.command_prefix}help` to see available commands."
+                )
+                return
+            await super().on_command_error(event)
+
     return PlurapackBot
 
 
@@ -246,7 +267,7 @@ def create_bot(prefix: str, database: str) -> Any:
         value = selector or store.system_for(account_id)
         return store.system_info(value) if value else None
 
-    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"]])
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"], *COMMAND_ALIASES["viewinfo"]])
     async def viewinfo(ctx: commands.Context, *, selector: str = "") -> None:
         try:
             system = selected_system(ctx.author.id, selector or None)
@@ -458,7 +479,7 @@ def create_bot(prefix: str, database: str) -> Any:
             f"Use `{prefix}front {created.id}` to switch both member and form."
         )
 
-    @bot.command(aliases=[COMMAND_SHORTCUTS["front"]])
+    @bot.command(aliases=[COMMAND_SHORTCUTS["front"], *COMMAND_ALIASES["front"]])
     async def front(ctx: commands.Context, selector: str) -> None:
         """Switch by member selector or form ID, resolving forms to their member."""
         try:

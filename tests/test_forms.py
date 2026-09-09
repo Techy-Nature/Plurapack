@@ -88,6 +88,34 @@ def test_explicit_form_overrides_member_default(store):
     assert switched.form == requested
 
 
+def test_member_proxy_identity_uses_default_form_presentation(store):
+    member = store.member_selected("owner", "Alexandra North")
+    form = store.create_form(
+        "owner", member.id, "Alex at Sea", "https://example.test/sea.png"
+    )
+    store.configure_default_form("owner", member.id, form.id)
+
+    identity = store.proxy_identity("owner", member.id)
+
+    assert identity.id == member.id
+    assert identity.name == "Alex at Sea"
+    assert identity.avatar == "https://example.test/sea.png"
+
+
+def test_proxy_tag_uses_default_form_presentation(store):
+    member = store.member_selected("owner", "Alexandra North")
+    form = store.create_form(
+        "owner", member.id, "Alex at Sea", "https://example.test/sea.png"
+    )
+    store.configure_default_form("owner", member.id, form.id)
+
+    identity, content = store.match_member("owner", "[alex] hello")
+
+    assert identity.name == "Alex at Sea"
+    assert identity.avatar == "https://example.test/sea.png"
+    assert content == "hello"
+
+
 def test_default_form_must_belong_to_selected_member(store):
     other = store.add_member("owner", "Jamie", "[jamie]")
     other_form = store.create_form("owner", other.id, "Jamie's form")

@@ -62,9 +62,10 @@ The shortcut is `p;af on`. The current fronter becomes the autoproxy member,
 and later front switches update it. If no front is selected yet, enabling
 autofront keeps any existing autoproxy selection until a front is chosen.
 
-Autofront follows the member identity. A form ID passed to `p;front` selects
-its linked member for autoproxy; to apply a form's presentation to an existing
-proxy, reply to that proxy with the form ID.
+Autofront follows the member identity and presentation. A form ID passed to
+`p;front` selects its linked member for autoproxy and applies the form's display
+name and picture to new untagged proxies. To apply a form's presentation to an
+existing proxy, reply to that proxy with the form ID.
 
 ## Turn automatic proxying off
 
