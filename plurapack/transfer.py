@@ -23,6 +23,7 @@ class ImportedMember:
     suffix: str = ""
     avatar: str | None = None
     color: str | None = None
+    pronouns: str | None = None
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,7 @@ def _text(value: Any, default: str = "") -> str:
 
 
 def _member(name: Any, prefix: Any, suffix: Any = "", avatar: Any = None,
-            color: Any = None) -> ImportedMember:
+            color: Any = None, pronouns: Any = None) -> ImportedMember:
     clean_name = _text(name)
     clean_prefix, clean_suffix = _text(prefix), _text(suffix)
     if not clean_name:
@@ -55,7 +56,7 @@ def _member(name: Any, prefix: Any, suffix: Any = "", avatar: Any = None,
     if clean_color and (len(clean_color) != 6 or any(c not in "0123456789abcdef" for c in clean_color)):
         clean_color = None
     return ImportedMember(clean_name, clean_prefix, clean_suffix, _text(avatar) or None,
-                          f"#{clean_color}" if clean_color else None)
+                          f"#{clean_color}" if clean_color else None, _text(pronouns) or None)
 
 
 def _members(value: Any, label: str) -> list[dict[str, Any]]:
@@ -81,7 +82,7 @@ def parse_import(source: str, document: str) -> ImportedSystem:
             tag = _object(tags[0], "PluralKit proxy tag") if tags else {}
             imported.append(_member(record.get("display_name") or record.get("name"),
                                     tag.get("prefix"), tag.get("suffix"),
-                                    record.get("avatar_url"), record.get("color")))
+                                    record.get("avatar_url"), record.get("color"), record.get("pronouns")))
         system_name = _text(root.get("name"), "Imported PluralKit system")
     elif source in {"tupperbox", "tupper"}:
         records = _members(root.get("tuppers", root.get("members")), "Tupperbox tuppers")
@@ -92,13 +93,13 @@ def parse_import(source: str, document: str) -> ImportedSystem:
             imported.append(_member(record.get("name"), brackets[0] if brackets else "",
                                     brackets[1] if len(brackets) == 2 else "",
                                     record.get("avatar_url") or record.get("avatar"),
-                                    record.get("color")))
+                                    record.get("color"), record.get("pronouns")))
         system_name = _text(root.get("name"), "Imported Tupperbox system")
     elif source == "plurapack":
         records = _members(root.get("members"), "Plurapack members")
         for record in records:
             imported.append(_member(record.get("name"), record.get("prefix"), record.get("suffix"),
-                                    record.get("avatar"), record.get("color")))
+                                    record.get("avatar"), record.get("color"), record.get("pronouns")))
         system_name = _text(root.get("name"), "Imported Plurapack system")
     else:
         raise TransferError("Source must be pluralkit, tupperbox, or plurapack.")
@@ -115,16 +116,17 @@ def export_document(format_name: str, system_name: str, members: Iterable[Member
         body = {"name": system_name, "members": [
             {"name": m.name, "display_name": None, "avatar_url": m.avatar,
              "color": m.color.removeprefix("#") if m.color else None,
+             "pronouns": m.pronouns,
              "proxy_tags": [{"prefix": m.prefix, "suffix": m.suffix}]}
             for m in values]}
     elif format_name in {"tupperbox", "tupper"}:
         body = {"name": system_name, "tuppers": [
             {"name": m.name, "brackets": [m.prefix, m.suffix], "avatar_url": m.avatar,
-             "color": m.color} for m in values]}
+             "color": m.color, "pronouns": m.pronouns} for m in values]}
     elif format_name == "plurapack":
         body = {"format": "plurapack", "version": 1, "name": system_name, "members": [
             {"name": m.name, "prefix": m.prefix, "suffix": m.suffix,
-             "avatar": m.avatar, "color": m.color} for m in values]}
+             "avatar": m.avatar, "color": m.color, "pronouns": m.pronouns} for m in values]}
     else:
         raise TransferError("Format must be pluralkit, tupperbox, or plurapack.")
     return (json.dumps(body, ensure_ascii=False, indent=2) + "\n").encode()

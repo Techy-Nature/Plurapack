@@ -18,6 +18,25 @@ p;alias MEMBER
 
 Aliases are unique within a system and may contain 1–24 characters without spaces or colons.
 
+## Set pronouns
+
+Give a member the pronouns displayed on their profile and previews:
+
+```text
+p;pronouns MEMBER they / them
+```
+
+Omit the value to clear it. A form inherits its member's pronouns unless it has
+an override of its own:
+
+```text
+p;formpronouns FORM_ID she / her
+p;formpronouns FORM_ID
+```
+
+The second command clears the override and restores inheritance. Pronouns are
+profile metadata only and do not affect proxy matching.
+
 ## Add a form
 
 A form changes presentation without creating a separate member:

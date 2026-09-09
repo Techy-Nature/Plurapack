@@ -1,5 +1,5 @@
 const members = [
-  { name: "Nova Everlight", alias: "Nova", pronouns: "they / them", color: "#9B87F5", time: "Now", fronting: true, proxy: "nv:", id: "nv-2841", defaultFormId: "f7a2c", description: "The spark behind new ideas. Usually around during creative projects and late-night conversations. Loves astronomy, warm tea, and collecting tiny things.", tags: ["Creative", "Night owl", "Stargazer"], forms: [{ id: "f7a2c", displayName: "Nova Solstice", picture: "", soma: "Starlit hair, silver eyes, and a constellation of freckles." }] },
+  { name: "Nova Everlight", alias: "Nova", pronouns: "they / them", color: "#9B87F5", time: "Now", fronting: true, proxy: "nv:", id: "nv-2841", defaultFormId: "f7a2c", description: "The spark behind new ideas. Usually around during creative projects and late-night conversations. Loves astronomy, warm tea, and collecting tiny things.", tags: ["Creative", "Night owl", "Stargazer"], forms: [{ id: "f7a2c", displayName: "Nova Solstice", pronouns: "star / stars", picture: "", soma: "Starlit hair, silver eyes, and a constellation of freckles." }] },
   { name: "Milo", pronouns: "he / him", color: "#F0A981", time: "Now", fronting: true, proxy: "mi:", id: "mi-1093", tags: ["Baker", "Optimist"] },
   { name: "Echo", pronouns: "she / they", color: "#79D6C4", time: "2h", proxy: "ec:", id: "ec-7530", tags: ["Music", "Quiet"] },
   { name: "Sage", pronouns: "they / she", color: "#A9C780", time: "1d", proxy: "sg:", id: "sg-6612", tags: ["Nature", "Reader"] },
@@ -46,7 +46,7 @@ function renderList(query = "") {
   list.innerHTML = filtered.length ? filtered.map(member => `
     <button class="member-item ${member === activeMember ? "active" : ""}" type="button" data-id="${member.id}">
       <span class="avatar member-avatar ${member.fronting ? "fronting" : ""}" style="--member-color:${member.color}">${escapeHTML(initials(member.name))}</span>
-      <span class="member-copy"><strong>${escapeHTML(member.name)}</strong><span>${escapeHTML(member.pronouns)}</span></span><time>${escapeHTML(member.time)}</time>
+      <span class="member-copy"><strong>${escapeHTML(member.name)}</strong><span>${escapeHTML(member.pronouns || "Pronouns not set")}</span></span><time>${escapeHTML(member.time || "")}</time>
     </button>`).join("") : '<div class="empty-state">No members found.</div>';
 }
 function showMember(member) {
@@ -55,17 +55,17 @@ function showMember(member) {
   $("#detailAvatar").style.background = `linear-gradient(145deg, ${member.color}, #544980)`;
   $("#detailName").textContent = member.name;
   $("#detailAlias").textContent = member.alias || member.name;
-  $("#detailPronouns").textContent = member.pronouns;
+  $("#detailPronouns").textContent = member.pronouns || "Pronouns not set";
   $("#frontingBadge").hidden = !member.fronting;
   $("#detailDescription").textContent = member.description || `${member.name} is part of the Lumen System. Their profile is ready for more details, notes, and the things they love.`;
-  $("#detailTags").innerHTML = member.tags.map(tag => `<span>${tag}</span>`).join("");
+  $("#detailTags").innerHTML = (member.tags || []).map(tag => `<span>${escapeHTML(tag)}</span>`).join("");
   $("#proxyTag").textContent = `${member.proxy}text`;
   $("#proxyName").textContent = member.name;
   $("#colorCode").textContent = member.color;
   $("#colorSwatch").style.background = member.color;
   $("#memberId").textContent = member.id;
   $("#formMemberName").textContent = member.name;
-  $("#formList").innerHTML = (member.forms || []).length ? member.forms.map(form => `<div class="form-row ${member.defaultFormId === form.id ? "default" : ""}" data-form-id="${form.id}"><button class="form-preview" type="button"><span class="form-picture">${escapeHTML(initials(form.displayName))}</span><span><strong>${escapeHTML(form.displayName)}</strong><small>${escapeHTML(form.soma || "No soma description")}</small></span><code>${form.id}</code></button><button class="default-form-button" type="button" aria-label="${member.defaultFormId === form.id ? "Clear" : "Set"} ${escapeHTML(form.displayName)} as default" title="${member.defaultFormId === form.id ? "Clear default" : "Set as default"}">${member.defaultFormId === form.id ? "★ Default" : "☆ Default"}</button></div>`).join("") : '<p class="empty-forms">No forms yet. The member profile is currently used.</p>';
+  $("#formList").innerHTML = (member.forms || []).length ? member.forms.map(form => `<div class="form-row ${member.defaultFormId === form.id ? "default" : ""}" data-form-id="${form.id}"><button class="form-preview" type="button"><span class="form-picture">${escapeHTML(initials(form.displayName))}</span><span><strong>${escapeHTML(form.displayName)}</strong><small>${escapeHTML(form.pronouns || member.pronouns || "Pronouns not set")} · ${escapeHTML(form.soma || "No soma description")}</small></span><code>${form.id}</code></button><button class="default-form-button" type="button" aria-label="${member.defaultFormId === form.id ? "Clear" : "Set"} ${escapeHTML(form.displayName)} as default" title="${member.defaultFormId === form.id ? "Clear default" : "Set as default"}">${member.defaultFormId === form.id ? "★ Default" : "☆ Default"}</button></div>`).join("") : '<p class="empty-forms">No forms yet. The member profile is currently used.</p>';
   renderList($("#memberSearch").value);
 }
 list.addEventListener("click", event => { const item = event.target.closest(".member-item"); if (item) showMember(members.find(member => member.id === item.dataset.id)); });
@@ -103,11 +103,11 @@ $("#formForm").addEventListener("submit", async event => {
   const picture = data.get("picture").trim(); if (picture && !/^https?:\/\//i.test(picture)) return showToast("Picture must be an HTTP or HTTPS URL.", true);
   try {
     setBusy(formElement, true);
-    const form = await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}/forms`, { method: "POST", body: JSON.stringify({ displayName, picture: picture || null, soma: data.get("soma").trim() }) });
+    const form = await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}/forms`, { method: "POST", body: JSON.stringify({ displayName, pronouns: data.get("pronouns").trim() || null, picture: picture || null, soma: data.get("soma").trim() }) });
     (activeMember.forms ||= []).push(form); closeFormModal(); showMember(activeMember); showToast(`Form ${form.id} connected to ${activeMember.name}`);
   } catch (error) { if (error.status !== 401) showToast(error.message, true); } finally { setBusy(formElement, false); }
 });
-$("#formList").addEventListener("click", async event => { const row = event.target.closest(".form-row"); if (!row) return; const form = activeMember.forms.find(item => item.id === row.dataset.formId); if (event.target.closest(".default-form-button")) { const defaultFormId = activeMember.defaultFormId === form.id ? null : form.id; try { await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}`, { method: "PATCH", body: JSON.stringify({ defaultFormId }) }); activeMember.defaultFormId = defaultFormId; showMember(activeMember); showToast(defaultFormId ? `${form.displayName} is now the default form` : "Default form cleared"); } catch (error) { if (error.status !== 401) showToast(error.message, true); } return; } $("#detailName").textContent = form.displayName; if (form.soma) $("#detailDescription").textContent = form.soma; if (form.picture) { $("#detailAvatar").style.backgroundImage = `url("${encodeURI(form.picture)}")`; $("#detailAvatar").style.backgroundSize = "cover"; } showToast(`Front switched using ${form.id}`); });
+$("#formList").addEventListener("click", async event => { const row = event.target.closest(".form-row"); if (!row) return; const form = activeMember.forms.find(item => item.id === row.dataset.formId); if (event.target.closest(".default-form-button")) { const defaultFormId = activeMember.defaultFormId === form.id ? null : form.id; try { await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}`, { method: "PATCH", body: JSON.stringify({ defaultFormId }) }); activeMember.defaultFormId = defaultFormId; showMember(activeMember); showToast(defaultFormId ? `${form.displayName} is now the default form` : "Default form cleared"); } catch (error) { if (error.status !== 401) showToast(error.message, true); } return; } $("#detailName").textContent = form.displayName; $("#detailPronouns").textContent = form.pronouns || activeMember.pronouns || "Pronouns not set"; if (form.soma) $("#detailDescription").textContent = form.soma; if (form.picture) { $("#detailAvatar").style.backgroundImage = `url("${encodeURI(form.picture)}")`; $("#detailAvatar").style.backgroundSize = "cover"; } showToast(`Previewing ${form.displayName}`); });
 async function loadDashboard() {
   try {
     currentAccount = await api("/api/account");

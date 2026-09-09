@@ -31,6 +31,7 @@ COMMAND_SHORTCUTS = {
     "front": "fr", "defaultform": "df", "autoproxy": "ap", "autofront": "af",
     "deletemember": "dm", "deletesystem": "ds", "viewinfo": "vi",
     "viewmembers": "ml", "viewmember": "vm",
+    "pronouns": "p", "formpronouns": "fp",
 }
 
 PREVIOUS_EMOJI = "⬅️"
@@ -46,10 +47,13 @@ def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
     for form in forms:
         marker = " ★ default" if form.id == member.default_form_id else ""
         preview = f"[▣]({form.avatar} \"{form.display_name} preview\") " if form.avatar else ""
-        form_lines.append(f"{preview}**{form.display_name}** (`{form.id}`){marker}")
+        form_pronouns = form.pronouns if form.pronouns is not None else member.pronouns
+        pronoun_note = f" — {form_pronouns}" if form_pronouns else ""
+        form_lines.append(f"{preview}**{form.display_name}** (`{form.id}`){pronoun_note}{marker}")
     description = member.description or "No member description provided."
     description += (
         f"\n\n**ID:** `{member.id}`\n**Color:** `{member.color or 'default'}`"
+        f"\n**Pronouns:** {member.pronouns or 'Not set'}"
         f"\n**Default form:** {default.display_name if default else 'Member profile'}"
         f"\n**Forms:**\n" + ("\n".join(form_lines) if form_lines else "None")
     )
@@ -344,6 +348,27 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send(str(error))
             return
         await ctx.send(f"Username color for **{configured.name}** (`{configured.id}`) is `{configured.color}`.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["pronouns"]])
+    async def pronouns(ctx: commands.Context, selector: str, *, value: str = "") -> None:
+        """Set member pronouns, or omit the value to clear them."""
+        try:
+            configured = store.configure_pronouns(ctx.author.id, selector, value or None)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"Pronouns for **{configured.name}** are {configured.pronouns or 'now cleared'}.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["formpronouns"]])
+    async def formpronouns(ctx: commands.Context, selector: str, *, value: str = "") -> None:
+        """Set a form-specific override, or clear it to inherit member pronouns."""
+        try:
+            configured = store.configure_form_pronouns(ctx.author.id, selector, value or None)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        result = configured.pronouns or "inherit from the member"
+        await ctx.send(f"Pronouns for form **{configured.display_name}** now {result}.")
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["verify"]])
     async def verify(ctx: commands.Context, token: str) -> None:

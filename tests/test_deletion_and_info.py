@@ -82,6 +82,8 @@ def test_info_embeds_include_profiles_default_form_and_preview(tmp_path):
     member = store.add_member("owner", "Alex", "A:")
     form = store.create_form("owner", member.id, "Sea", "https://example.test/sea.png")
     member = store.configure_default_form("owner", member.id, form.id)
+    member = store.configure_pronouns("owner", member.id, "they / them")
+    store.configure_form_pronouns("owner", form.id, "sea / seas")
 
     member_card = _member_embed(SDK, store, member)
     system_card = _system_embed(SDK, store.system_info(system_id), 1)
@@ -91,5 +93,7 @@ def test_info_embeds_include_profiles_default_form_and_preview(tmp_path):
     assert "**ID:**" in member_card.description
     assert "[▣](https://example.test/sea.png" in member_card.description
     assert "★ default" in member_card.description
+    assert "**Pronouns:** they / them" in member_card.description
+    assert "sea / seas" in member_card.description
     assert system_card.title == "Crew"
     assert system_id in system_card.description
