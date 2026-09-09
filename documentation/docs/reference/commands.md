@@ -9,6 +9,8 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |
 | `form MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]` | `f` | Create an alternate presentation. |
 | `formproxy FORM [PREFIX] [SUFFIX]` | `ft` | Set a form-specific proxy tag, or clear it by omitting the prefix. |
+| `systemtag [TAG]` | `st` | Set the tag shown after member and form names, or clear it. |
+| `systemtagshow SCOPE on\|off\|default` | `ts` | Set system visibility or a server/channel override. |
 | `front MEMBER_OR_FORM` | `fr` | Switch the current member and optional form. |
 | `autoproxy MEMBER_OR_OFF` | `ap` | Proxy untagged messages as a member; Off by default. |
 | `autofront on\|off` | `af` | Opt in to making autoproxy follow the first/current fronter. |
