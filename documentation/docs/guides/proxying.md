@@ -32,22 +32,53 @@ Plurapack posts and records a replacement before deleting the source. If posting
 
 ## Autoproxy
 
-Autoproxy is Off by default. Select a member to proxy all your non-command,
-untagged messages as that member, or disable it again:
+Autoproxy and autofront are implemented, optional, and Off by default.
+Their settings are shared across all linked accounts in the same system.
+
+Select a member to proxy untagged, non-command messages as that member:
 
 ```text
 p;autoproxy MEMBER
-p;autoproxy off
 ```
 
-Autoproxy is separate from fronting: changing the current front does not change
-the autoproxy member. To connect them explicitly, turn on autofront:
+Replace `MEMBER` with a member ID, full name, alias, or proxy prefix.
+The shortcut is `p;ap MEMBER`. Explicit proxy tags still select the tagged
+member for that message. Commands and bot messages are not automatically proxied.
+
+With autofront Off, changing the current front does not change the autoproxy
+member. You can choose each independently.
+
+## Autofront
+
+Autofront makes autoproxy follow the first/current fronter. Select a front,
+then enable it:
 
 ```text
+p;front MEMBER
 p;autofront on
 ```
 
-When enabled, the first/current fronter becomes the autoproxy member, and later
-front switches update it. `p;autofront off` disconnects them without disabling
-or changing the selected autoproxy member. Explicit proxy tags still select the
-tagged member for that message.
+The shortcut is `p;af on`. The current fronter becomes the autoproxy member,
+and later front switches update it. If no front is selected yet, enabling
+autofront keeps any existing autoproxy selection until a front is chosen.
+
+Autofront follows the member identity. A form ID passed to `p;front` selects
+its linked member for autoproxy; to apply a form's presentation to an existing
+proxy, reply to that proxy with the form ID.
+
+## Turn automatic proxying off
+
+`p;autofront off` disconnects fronting from autoproxy without disabling or
+changing the selected autoproxy member.
+
+`p;autoproxy off` clears the autoproxy selection without disabling autofront.
+If autofront remains On, a later front switch can enable autoproxy again.
+
+To stop both automatic proxying and front following:
+
+```text
+p;autofront off
+p;autoproxy off
+```
+
+Explicit proxy tags continue to work when both features are Off.
