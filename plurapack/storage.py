@@ -7,7 +7,7 @@ import secrets
 import sqlite3
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
@@ -31,6 +31,23 @@ class Member:
     playback: str
     speech_formatting: int
     strikethrough_speech: str
+    alias: str | None
+
+
+@dataclass(frozen=True)
+class Form:
+    """An alternate presentation connected to one permanent member ID."""
+    id: str
+    member_id: str
+    display_name: str
+    avatar: str | None
+    soma: str
+
+
+@dataclass(frozen=True)
+class Front:
+    member: Member
+    form: Form | None
 
 
 class Store:
@@ -81,6 +98,17 @@ class Store:
                     owner_account_id TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()),
                     deleted_at INTEGER, FOREIGN KEY(member_id) REFERENCES members(id)
                 );
+                CREATE TABLE IF NOT EXISTS forms (
+                    id TEXT PRIMARY KEY CHECK(length(id)=5),
+                    member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                    display_name TEXT NOT NULL, avatar TEXT, soma TEXT NOT NULL DEFAULT '',
+                    UNIQUE(member_id, display_name)
+                );
+                CREATE TABLE IF NOT EXISTS current_fronts (
+                    system_id TEXT PRIMARY KEY REFERENCES systems(id) ON DELETE CASCADE,
+                    member_id TEXT NOT NULL REFERENCES members(id),
+                    form_id TEXT REFERENCES forms(id)
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
             if "color" not in columns:
@@ -89,6 +117,9 @@ class Store:
                 db.execute("ALTER TABLE members ADD COLUMN speech_formatting INTEGER NOT NULL DEFAULT 0")
             if "strikethrough_speech" not in columns:
                 db.execute("ALTER TABLE members ADD COLUMN strikethrough_speech TEXT NOT NULL DEFAULT 'normal'")
+            if "alias" not in columns:
+                db.execute("ALTER TABLE members ADD COLUMN alias TEXT")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
 
     def create_system(self, account_id: str, name: str) -> str:
         with self.connect() as db:
@@ -165,13 +196,110 @@ class Store:
             return Member(**dict(row)) if row else None
 
     def member_selected(self, account_id: str, selector: str) -> Member | None:
-        """Resolve a reply selector as a stable ID, display name, or member prefix."""
+        """Resolve a member's stable ID, full name, short alias, or proxy prefix."""
         selector = selector.strip()
         with self.connect() as db:
             row = db.execute("""SELECT m.* FROM members m JOIN owners o ON o.system_id=m.system_id
-                WHERE o.account_id=? AND (m.id=? OR m.name=? OR m.prefix=?)""",
-                (account_id, selector, selector, selector)).fetchone()
+                WHERE o.account_id=? AND (m.id=? OR m.name=? OR m.alias=? OR m.prefix=?)""",
+                (account_id, selector, selector, selector, selector)).fetchone()
             return Member(**dict(row)) if row else None
+
+    def configure_alias(self, account_id: str, member_selector: str, alias: str | None) -> Member:
+        """Set a short lookup name without changing the member's full display name."""
+        member = self.member_selected(account_id, member_selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        normalized = alias.strip() if alias else None
+        if normalized and (len(normalized) > 24 or not re.fullmatch(r"[^\s:]{1,24}", normalized)):
+            raise ValueError("Alias must be 1–24 characters without spaces or colons.")
+        try:
+            with self.connect() as db:
+                db.execute("UPDATE members SET alias=? WHERE id=?", (normalized, member.id))
+        except sqlite3.IntegrityError as error:
+            raise ValueError("That alias is already used by another member.") from error
+        return self.member_selected(account_id, member.id)  # type: ignore[return-value]
+
+    def create_form(self, account_id: str, member_selector: str, display_name: str,
+                    avatar: str | None = None, soma: str = "") -> Form:
+        """Create a form whose ID permanently resolves back to its member."""
+        member = self.member_selected(account_id, member_selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        display_name, soma = display_name.strip(), soma.strip()
+        avatar = avatar.strip() if avatar else None
+        if not display_name or len(display_name) > 80:
+            raise ValueError("Form display name must be 1–80 characters.")
+        if avatar and not re.fullmatch(r"https?://\S+", avatar):
+            raise ValueError("Form picture must be an HTTP or HTTPS URL.")
+        if len(soma) > 1000:
+            raise ValueError("Form soma must be no more than 1000 characters.")
+        try:
+            with self.connect() as db:
+                while True:
+                    form_id = short_hash(5)
+                    if db.execute("SELECT 1 FROM members WHERE id=?", (form_id,)).fetchone():
+                        continue
+                    try:
+                        db.execute("INSERT INTO forms VALUES (?,?,?,?,?)",
+                                   (form_id, member.id, display_name, avatar, soma))
+                        break
+                    except sqlite3.IntegrityError as error:
+                        if "forms.id" not in str(error):
+                            raise
+        except sqlite3.IntegrityError as error:
+            raise ValueError("That member already has a form with this display name.") from error
+        return self.form_selected(account_id, form_id)[0]  # type: ignore[index]
+
+    def form_selected(self, account_id: str, form_id: str) -> tuple[Form, Member] | None:
+        with self.connect() as db:
+            row = db.execute("""SELECT f.id form_id, f.member_id, f.display_name, f.avatar form_avatar,
+                f.soma, m.* FROM forms f JOIN members m ON m.id=f.member_id
+                JOIN owners o ON o.system_id=m.system_id WHERE o.account_id=? AND f.id=?""",
+                (account_id, form_id.strip())).fetchone()
+        if not row:
+            return None
+        values = dict(row)
+        form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
+                    values.pop("form_avatar"), values.pop("soma"))
+        values.pop("member_id")
+        return form, Member(**values)
+
+    def proxy_identity(self, account_id: str, selector: str) -> Member | None:
+        """Resolve either member selectors or a form ID to its proxy presentation."""
+        selected_form = self.form_selected(account_id, selector)
+        if selected_form:
+            form, member = selected_form
+            return replace(member, name=form.display_name,
+                           avatar=form.avatar if form.avatar is not None else member.avatar)
+        return self.member_selected(account_id, selector)
+
+    def switch_front(self, account_id: str, selector: str) -> Front:
+        """Persist a current front; form IDs atomically select their linked member and form."""
+        selected_form = self.form_selected(account_id, selector)
+        if selected_form:
+            form, member = selected_form
+        else:
+            member = self.member_selected(account_id, selector)
+            form = None
+        if member is None:
+            raise PermissionError("Member or form not found or not owned by this account.")
+        with self.connect() as db:
+            db.execute("""INSERT INTO current_fronts(system_id,member_id,form_id) VALUES (?,?,?)
+                ON CONFLICT(system_id) DO UPDATE SET member_id=excluded.member_id, form_id=excluded.form_id""",
+                (member.system_id, member.id, form.id if form else None))
+        return Front(member, form)
+
+    def current_front(self, account_id: str) -> Front | None:
+        system_id = self.system_for(account_id)
+        if not system_id:
+            return None
+        with self.connect() as db:
+            row = db.execute("SELECT member_id,form_id FROM current_fronts WHERE system_id=?", (system_id,)).fetchone()
+        if not row:
+            return None
+        member = self.member_selected(account_id, str(row["member_id"]))
+        form = self.form_selected(account_id, str(row["form_id"]))[0] if row["form_id"] else None
+        return Front(member, form) if member else None
 
     def configure_color(self, account_id: str, member_selector: str, color: str) -> Member:
         """Set the username color for an owned member using a six-digit RGB value."""

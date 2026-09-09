@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#090b14">
+  <meta name="description" content="A self-hostable, responsive Plurapack system dashboard.">
+  <title>Plurapack — Lumen System</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="Plurapack home">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span>plura<span>pack</span></span>
+      </a>
+      <div class="topbar-actions">
+        <button class="icon-button" type="button" aria-label="Notifications">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+          <span class="notification-dot"></span>
+        </button>
+        <button class="account-button" type="button">
+          <span class="avatar avatar-account">M</span>
+          <span class="account-copy"><strong>Morgan</strong><small>System admin</small></span>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <main class="dashboard">
+      <section class="system-hero">
+        <div class="system-heading">
+          <div class="system-glyph" aria-hidden="true">✦</div>
+          <div>
+            <div class="eyebrow"><span class="status-dot"></span> SYSTEM ONLINE</div>
+            <h1>The Lumen System</h1>
+            <p>A shared space for every part of you.</p>
+          </div>
+        </div>
+        <div class="system-stats" aria-label="System statistics">
+          <div><strong id="memberCount">8</strong><span>Members</span></div>
+          <i></i>
+          <div><strong>2</strong><span>Fronters</span></div>
+          <i></i>
+          <div><strong>12d</strong><span>Uptime</span></div>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="member-panel" aria-label="Member list">
+          <div class="panel-heading">
+            <div><h2>Members</h2><span class="count-pill" id="memberPill">8</span></div>
+            <button class="add-button" id="openModal" type="button" aria-label="Add new member">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+          </div>
+          <label class="search-box">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></svg>
+            <input id="memberSearch" type="search" placeholder="Search members..." autocomplete="off">
+            <kbd>⌘ K</kbd>
+          </label>
+          <div class="member-list" id="memberList" tabindex="0" aria-label="Scrollable members"></div>
+          <div class="panel-foot"><span><i></i> All systems operational</span><button type="button" aria-label="Settings">⚙</button></div>
+        </aside>
+
+        <article class="member-detail" id="memberDetail" tabindex="0" aria-label="Scrollable member details">
+          <div class="detail-cover"><span class="cover-orb orb-one"></span><span class="cover-orb orb-two"></span></div>
+          <div class="detail-content">
+            <div class="profile-row">
+              <div class="avatar profile-avatar" id="detailAvatar">N</div>
+              <div class="profile-title"><div class="name-line"><h2 id="detailName">Nova Everlight</h2><span class="fronting-badge" id="frontingBadge"><i></i> Fronting</span></div><p><span id="detailAlias">Nova</span> · <span id="detailPronouns">they / them</span></p></div>
+              <button class="more-button" type="button" aria-label="More member options"><span></span><span></span><span></span></button>
+            </div>
+
+            <div class="detail-grid">
+              <section class="content-card about-card">
+                <div class="card-heading"><h3>About</h3><button type="button">Edit</button></div>
+                <p id="detailDescription">The spark behind new ideas. Usually around during creative projects and late-night conversations. Loves astronomy, warm tea, and collecting tiny things.</p>
+                <div class="tag-list" id="detailTags"><span>Creative</span><span>Night owl</span><span>Stargazer</span></div>
+              </section>
+
+              <section class="content-card proxy-card">
+                <div class="card-heading"><h3>Proxy tags</h3><button type="button">Manage</button></div>
+                <div class="proxy-example"><code id="proxyTag">nv:text</code><span>→</span><div><strong id="proxyName">Nova</strong><p>text</p></div></div>
+              </section>
+
+              <section class="content-card color-card">
+                <div class="card-heading"><h3>Member color</h3><button type="button">Change</button></div>
+                <div class="color-value"><span id="colorSwatch"></span><strong id="colorCode">#9B87F5</strong><button id="copyColor" type="button" aria-label="Copy color"><svg viewBox="0 0 24 24"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg></button></div>
+              </section>
+
+              <section class="content-card forms-card">
+                <div class="card-heading"><h3>Forms</h3><button id="openFormModal" type="button">+ New form</button></div>
+                <div id="formList" class="form-list"></div>
+              </section>
+
+              <section class="content-card activity-card">
+                <div class="card-heading"><h3>Recent activity</h3><button type="button">View all</button></div>
+                <div class="activity-item"><span class="activity-icon">↗</span><div><strong>Started fronting</strong><p>Today at 9:42 PM</p></div></div>
+                <div class="activity-item"><span class="activity-icon">✎</span><div><strong>Updated their profile</strong><p>Yesterday at 6:18 PM</p></div></div>
+              </section>
+            </div>
+            <footer class="detail-footer"><span>Member ID: <code id="memberId">nv-2841</code></span><span>Joined January 14, 2025</span></footer>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <dialog class="member-modal" id="memberModal" aria-labelledby="modalTitle">
+    <form id="memberForm" method="dialog">
+      <div class="modal-heading"><div><span class="modal-icon">✦</span><div><h2 id="modalTitle">Create a new member</h2><p>Add someone new to your system.</p></div></div><button id="closeModal" type="button" aria-label="Close">×</button></div>
+      <div class="form-grid">
+        <label class="full-field"><span>Display name <b>*</b></span><input id="newName" name="name" required maxlength="32" placeholder="e.g. Sol"></label>
+        <label><span>Pronouns</span><input name="pronouns" maxlength="32" placeholder="e.g. they / them"></label>
+        <label><span>Alias / nickname</span><input name="alias" maxlength="24" placeholder="e.g. Sol"></label>
+        <label><span>Proxy prefix</span><input name="proxy" maxlength="12" placeholder="e.g. sol:"></label>
+        <label class="full-field"><span>About</span><textarea name="description" maxlength="220" placeholder="A few words about this member..."></textarea></label>
+        <label class="color-field"><span>Member color</span><div><input name="color" type="color" value="#79d6c4"><input name="colorText" value="#79D6C4" maxlength="7" aria-label="Color hex value"></div></label>
+      </div>
+      <div class="modal-actions"><button class="secondary-button" id="cancelModal" type="button">Cancel</button><button class="primary-button" type="submit">Create member <span>→</span></button></div>
+    </form>
+  </dialog>
+
+  <dialog class="member-modal" id="formModal" aria-labelledby="formModalTitle">
+    <form id="formForm" method="dialog">
+      <div class="modal-heading"><div><span class="modal-icon">◈</span><div><h2 id="formModalTitle">Create a form</h2><p>Give this member another presentation.</p></div></div><button id="closeFormModal" type="button" aria-label="Close">×</button></div>
+      <div class="form-grid">
+        <label class="full-field"><span>Display name <b>*</b></span><input name="displayName" required maxlength="80" placeholder="e.g. Nova Solstice"></label>
+        <label class="full-field"><span>Picture URL</span><input name="picture" type="url" placeholder="https://example.com/avatar.png"></label>
+        <label class="full-field"><span>Soma</span><textarea name="soma" maxlength="1000" placeholder="Describe how this form looks and feels..."></textarea></label>
+      </div>
+      <p class="form-id-note">A unique form ID will be connected to <strong id="formMemberName">this member</strong>.</p>
+      <div class="modal-actions"><button class="secondary-button" id="cancelFormModal" type="button">Cancel</button><button class="primary-button" type="submit">Create form <span>→</span></button></div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite">Member created</div>
+  <script src="app.js"></script>
+</body>
+</html>

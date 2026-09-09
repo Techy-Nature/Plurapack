@@ -22,6 +22,15 @@ STOAT_INSTALL_MESSAGE = (
     "dependencies with `python -m pip install -e .`, then try again."
 )
 
+# Every public command has a distinct one- or two-letter shortcut. Keeping the
+# mapping explicit also gives dashboards/help pages one canonical source.
+COMMAND_SHORTCUTS = {
+    "setup": "s", "member": "m", "import": "i", "export": "x",
+    "link": "l", "color": "c", "verify": "v", "voice": "vo",
+    "voiceoff": "of", "voiceformat": "vf", "alias": "a", "form": "f",
+    "front": "fr",
+}
+
 
 class StoatDependencyError(RuntimeError):
     """Raised when the bot is launched without the Stoat SDK installed."""
@@ -142,7 +151,7 @@ def create_bot(prefix: str, database: str) -> Any:
         bot.speech_queue = speech_queue
     service = ProxyService(store, platform, prefix, speech_queue)
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["setup"]])
     async def setup(ctx: commands.Context, *, name: str = "My system") -> None:
         system_id = store.create_system(ctx.author.id, name)
         await ctx.send(
@@ -150,7 +159,7 @@ def create_bot(prefix: str, database: str) -> Any:
             f"Voice playback defaults to Off. Add a member with `{prefix}member Name [text]`."
         )
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["member"]])
     async def member(ctx: commands.Context, name: str, member_prefix: str, suffix: str = "") -> None:
         try:
             created = store.add_member(ctx.author.id, name, member_prefix, suffix)
@@ -159,7 +168,7 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(f"Added **{created.name}** (`{created.id}`); voice is Off.")
 
-    @bot.command(name="import")
+    @bot.command(name="import", aliases=[COMMAND_SHORTCUTS["import"]])
     async def import_system(ctx: commands.Context, source: str, *, document: str) -> None:
         """Import pasted JSON from PluralKit, Tupperbox, or Plurapack."""
         document = document.strip()
@@ -178,7 +187,7 @@ def create_bot(prefix: str, database: str) -> Any:
             "External IDs and private message history were not copied."
         )
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["export"]])
     async def export(ctx: commands.Context, format_name: str = "plurapack") -> None:
         """Export portable member metadata, excluding owners and message history."""
         try:
@@ -193,7 +202,7 @@ def create_bot(prefix: str, database: str) -> Any:
             attachments=[(f"plurapack-{safe_format}-export.json", document)],
         )
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["link"]])
     async def link(ctx: commands.Context) -> None:
         """Create a short-lived, single-use account connection code."""
         try:
@@ -203,7 +212,7 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(f"Single-use code: `{token}` (expires in 15 minutes). Send it privately to the other owner.")
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["color"]])
     async def color(ctx: commands.Context, member_id: str, value: str) -> None:
         """Associate a hex username color with an owned member ID."""
         try:
@@ -213,7 +222,7 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(f"Username color for **{configured.name}** (`{configured.id}`) is `{configured.color}`.")
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["verify"]])
     async def verify(ctx: commands.Context, token: str) -> None:
         try:
             system_id = store.redeem_link(ctx.author.id, token)
@@ -222,7 +231,7 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(f"Account connected to system `{system_id}`.")
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["voice"]])
     async def voice(ctx: commands.Context, selector: str, reference: str, playback: str = "send", *,
                     settings: str = "{}") -> None:
         """Use an operator-installed reference filename; chat uploads are intentionally unsupported."""
@@ -249,7 +258,7 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(f"Voice for **{configured.name}** is configured for `{configured.playback}` playback.")
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["voiceoff"]])
     async def voiceoff(ctx: commands.Context, selector: str) -> None:
         try:
             configured = store.configure_voice(ctx.author.id, selector, None, "{}", "off")
@@ -258,7 +267,7 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(f"Voice for **{configured.name}** is Off.")
 
-    @bot.command()
+    @bot.command(aliases=[COMMAND_SHORTCUTS["voiceformat"]])
     async def voiceformat(ctx: commands.Context, selector: str, enabled: str = "on",
                           strikethrough: str = "normal") -> None:
         """Opt into semantic Markdown speech and choose crossed-out delivery."""
@@ -275,6 +284,47 @@ def create_bot(prefix: str, database: str) -> Any:
         state = "On" if configured.speech_formatting else "Off"
         await ctx.send(f"Speech formatting for **{configured.name}** is {state}; crossed-out text is "
                        f"`{configured.strikethrough_speech}`.")
+
+    @bot.command(name="alias", aliases=[COMMAND_SHORTCUTS["alias"]])
+    async def member_alias(ctx: commands.Context, selector: str, alias: str = "") -> None:
+        """Set a short selector while retaining the member's full display name."""
+        try:
+            configured = store.configure_alias(ctx.author.id, selector, alias or None)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        status = f"`{configured.alias}`" if configured.alias else "cleared"
+        await ctx.send(f"Alias for **{configured.name}** is {status}; their full name remains on proxies.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["form"]])
+    async def form(ctx: commands.Context, selector: str, display_name: str, picture: str = "", *,
+                   soma: str = "") -> None:
+        """Add a form: ``form MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]``."""
+        try:
+            created = store.create_form(ctx.author.id, selector, display_name, picture or None, soma)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(
+            f"Created form **{created.display_name}** (`{created.id}`) for member `{created.member_id}`. "
+            f"Use `{prefix}front {created.id}` to switch both member and form."
+        )
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["front"]])
+    async def front(ctx: commands.Context, selector: str) -> None:
+        """Switch by member selector or form ID, resolving forms to their member."""
+        try:
+            selected = store.switch_front(ctx.author.id, selector)
+        except PermissionError as error:
+            await ctx.send(str(error))
+            return
+        if selected.form:
+            await ctx.send(
+                f"Front switched to **{selected.member.name}** as **{selected.form.display_name}** "
+                f"(form `{selected.form.id}`, member `{selected.member.id}`)."
+            )
+        else:
+            await ctx.send(f"Front switched to **{selected.member.name}** (`{selected.member.id}`).")
 
     @bot.listen(stoat.MessageCreateEvent)
     async def proxy_listener(event: stoat.MessageCreateEvent) -> None:
