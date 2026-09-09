@@ -382,14 +382,22 @@ class Store:
         return form, Member(**values)
 
     def proxy_identity(self, account_id: str, selector: str) -> Member | None:
-        """Resolve either member selectors or a form ID to its proxy presentation."""
+        """Resolve a selector to the presentation that should appear on a proxy.
+
+        An explicit form always wins.  Selecting a member uses that member's
+        configured default form, when present, rather than silently falling
+        back to the base avatar and name.
+        """
         selected_form = self.form_selected(account_id, selector)
         if selected_form:
             form, member = selected_form
             return replace(member, name=form.display_name,
                            avatar=form.avatar if form.avatar is not None else member.avatar,
                            pronouns=form.pronouns if form.pronouns is not None else member.pronouns)
-        return self.member_selected(account_id, selector)
+        member = self.member_selected(account_id, selector)
+        if member and member.default_form_id:
+            return self.proxy_identity(account_id, member.default_form_id)
+        return member
 
     def switch_front(self, account_id: str, selector: str) -> Front:
         """Persist a front, using a member's default unless a form was explicit."""
@@ -574,7 +582,9 @@ class Store:
                 end = -len(member.suffix) if member.suffix else None
                 body = content[len(member.prefix):end].strip()
                 if body:
-                    return member, body
+                    # Proxy tags select the stable member, but presentation is
+                    # allowed to come from their configured default form.
+                    return self.proxy_identity(account_id, member.id) or member, body
         return None
 
     def record_proxy(self, source_id: str, proxy_id: str, channel_id: str, member: Member, owner: str) -> bool:

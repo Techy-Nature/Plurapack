@@ -9,9 +9,11 @@ class FakePlatform:
     def __init__(self, fail=False):
         self.sent, self.deleted, self.fail = [], [], fail
         self.edited, self.deleted_proxies, self.reproxied = [], [], []
+        self.presentations = []
 
     async def send_proxy(self, incoming, member, content):
         self.sent.append((member.id, content))
+        self.presentations.append(member)
         if self.fail:
             raise RuntimeError("network")
         return "proxy-1"
@@ -73,6 +75,23 @@ async def test_autoproxy_is_off_by_default_and_proxies_untagged_messages_when_en
     store.configure_autoproxy("owner", member.id)
     assert await service.handle(Incoming("on", "channel", "owner", " hello ")) == "proxy-1"
     assert platform.sent == [(member.id, "hello")]
+
+
+async def test_autofront_proxies_with_selected_form_name_and_image(store):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    member = store.member_named("owner", "Alex")
+    form = store.create_form(
+        "owner", member.id, "Alex at Sea", "https://example.test/sea.png"
+    )
+    store.switch_front("owner", form.id)
+    store.configure_autofront("owner", True)
+
+    await service.handle(Incoming("on", "channel", "owner", "hello"))
+
+    assert platform.sent == [(member.id, "hello")]
+    assert platform.presentations[0].name == "Alex at Sea"
+    assert platform.presentations[0].avatar == "https://example.test/sea.png"
 
 
 def test_autofront_is_opt_in_and_tracks_front_without_coupling_by_default(store):

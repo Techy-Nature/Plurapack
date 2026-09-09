@@ -83,7 +83,12 @@ class ProxyService:
             autoproxy = self.store.autoproxy(message.author_id)
             if autoproxy.member is None or not message.content.strip():
                 return None
-            member, body = autoproxy.member, message.content.strip()
+            member = self.store.proxy_identity(message.author_id, autoproxy.member.id) or autoproxy.member
+            if autoproxy.autofront:
+                front = self.store.current_front(message.author_id)
+                if front and front.member.id == autoproxy.member.id and front.form:
+                    member = self.store.proxy_identity(message.author_id, front.form.id) or member
+            body = message.content.strip()
         self._inflight.add(message.id)
         try:
             proxy_id = await self.platform.send_proxy(message, member, body)

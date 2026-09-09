@@ -46,6 +46,11 @@ See [Proxy messages](../guides/proxying.md#autoproxy) for a walkthrough.
 
 Where a command accepts `MEMBER`, use a stable member ID, full display name, alias, or proxy prefix. Where it accepts `MEMBER_OR_FORM`, a form ID is also valid.
 
+`view` is accepted as a compatibility alias for `viewinfo`, and `fronter` is
+accepted as a compatibility alias for `front`. Missing command arguments are
+reported in chat with the missing argument and a pointer to the command's help
+instead of only producing an operator-side traceback.
+
 ## Viewing and deleting data
 
 `viewinfo` without an argument uses the system connected to your account. A

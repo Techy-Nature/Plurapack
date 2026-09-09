@@ -54,7 +54,11 @@ p;front MEMBER
 p;front FORM_ID
 ```
 
-Selecting a member uses their base presentation. Selecting a form switches the member and form together. A form ID can also be used when replying to re-proxy an existing message.
+Selecting a member uses their configured default form, when one exists, and
+otherwise uses their base presentation. Selecting a form switches the member
+and form together. When autofront is enabled, untagged proxies use the selected
+form's display name and picture. A form ID can also be used when replying to
+re-proxy an existing message.
 
 ## Make autoproxy follow the front
 
