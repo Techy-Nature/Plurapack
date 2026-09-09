@@ -29,3 +29,25 @@ Reply to an existing proxy with only a member's full name, stable member ID, ali
 ## Failure behavior
 
 Plurapack posts and records a replacement before deleting the source. If posting fails, the original message is preserved. If source deletion is not permitted, the new proxy remains posted and the source remains visible; ask the operator to check channel permissions.
+
+## Autoproxy
+
+Autoproxy is Off by default. Select a member to proxy all your non-command,
+untagged messages as that member, or disable it again:
+
+```text
+p;autoproxy MEMBER
+p;autoproxy off
+```
+
+Autoproxy is separate from fronting: changing the current front does not change
+the autoproxy member. To connect them explicitly, turn on autofront:
+
+```text
+p;autofront on
+```
+
+When enabled, the first/current fronter becomes the autoproxy member, and later
+front switches update it. `p;autofront off` disconnects them without disabling
+or changing the selected autoproxy member. Explicit proxy tags still select the
+tagged member for that message.

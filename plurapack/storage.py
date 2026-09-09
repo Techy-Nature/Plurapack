@@ -50,6 +50,13 @@ class Front:
     form: Form | None
 
 
+@dataclass(frozen=True)
+class Autoproxy:
+    """A system's independent autoproxy selection and front-following preference."""
+    member: Member | None
+    autofront: bool
+
+
 class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -108,6 +115,11 @@ class Store:
                     system_id TEXT PRIMARY KEY REFERENCES systems(id) ON DELETE CASCADE,
                     member_id TEXT NOT NULL REFERENCES members(id),
                     form_id TEXT REFERENCES forms(id)
+                );
+                CREATE TABLE IF NOT EXISTS autoproxy_settings (
+                    system_id TEXT PRIMARY KEY REFERENCES systems(id) ON DELETE CASCADE,
+                    member_id TEXT REFERENCES members(id) ON DELETE SET NULL,
+                    autofront INTEGER NOT NULL DEFAULT 0 CHECK(autofront IN (0,1))
                 );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
@@ -287,6 +299,10 @@ class Store:
             db.execute("""INSERT INTO current_fronts(system_id,member_id,form_id) VALUES (?,?,?)
                 ON CONFLICT(system_id) DO UPDATE SET member_id=excluded.member_id, form_id=excluded.form_id""",
                 (member.system_id, member.id, form.id if form else None))
+            # Fronting and autoproxy remain independent unless the system has
+            # explicitly opted into autofront.
+            db.execute("""UPDATE autoproxy_settings SET member_id=?
+                WHERE system_id=? AND autofront=1""", (member.id, member.system_id))
         return Front(member, form)
 
     def current_front(self, account_id: str) -> Front | None:
@@ -300,6 +316,48 @@ class Store:
         member = self.member_selected(account_id, str(row["member_id"]))
         form = self.form_selected(account_id, str(row["form_id"]))[0] if row["form_id"] else None
         return Front(member, form) if member else None
+
+    def configure_autoproxy(self, account_id: str, selector: str | None) -> Autoproxy:
+        """Select an autoproxy member, or disable autoproxy without changing the front."""
+        system_id = self.system_for(account_id)
+        if not system_id:
+            raise PermissionError("Create a system first.")
+        member = None if selector is None else self.member_selected(account_id, selector)
+        if selector is not None and member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        with self.connect() as db:
+            db.execute("""INSERT INTO autoproxy_settings(system_id,member_id) VALUES (?,?)
+                ON CONFLICT(system_id) DO UPDATE SET member_id=excluded.member_id""",
+                (system_id, member.id if member else None))
+        return self.autoproxy(account_id)
+
+    def configure_autofront(self, account_id: str, enabled: bool) -> Autoproxy:
+        """Optionally make autoproxy follow the first (currently selected) fronter."""
+        system_id = self.system_for(account_id)
+        if not system_id:
+            raise PermissionError("Create a system first.")
+        front = self.current_front(account_id) if enabled else None
+        with self.connect() as db:
+            db.execute("""INSERT INTO autoproxy_settings(system_id,member_id,autofront) VALUES (?,?,?)
+                ON CONFLICT(system_id) DO UPDATE SET
+                    member_id=CASE WHEN excluded.autofront=1 AND excluded.member_id IS NOT NULL
+                        THEN excluded.member_id ELSE autoproxy_settings.member_id END,
+                    autofront=excluded.autofront""",
+                (system_id, front.member.id if front else None, int(enabled)))
+        return self.autoproxy(account_id)
+
+    def autoproxy(self, account_id: str) -> Autoproxy:
+        """Return settings; absent rows mean both features are off by default."""
+        system_id = self.system_for(account_id)
+        if not system_id:
+            return Autoproxy(None, False)
+        with self.connect() as db:
+            row = db.execute("SELECT member_id,autofront FROM autoproxy_settings WHERE system_id=?",
+                             (system_id,)).fetchone()
+        if not row:
+            return Autoproxy(None, False)
+        member = self.member_selected(account_id, str(row["member_id"])) if row["member_id"] else None
+        return Autoproxy(member, bool(row["autofront"]))
 
     def configure_color(self, account_id: str, member_selector: str, color: str) -> Member:
         """Set the username color for an owned member using a six-digit RGB value."""

@@ -77,9 +77,13 @@ class ProxyService:
                 await self.platform.delete_source(message)
                 return replacement_id
         match = self.store.match_member(message.author_id, message.content)
-        if not match:
-            return None
-        member, body = match
+        if match:
+            member, body = match
+        else:
+            autoproxy = self.store.autoproxy(message.author_id)
+            if autoproxy.member is None or not message.content.strip():
+                return None
+            member, body = autoproxy.member, message.content.strip()
         self._inflight.add(message.id)
         try:
             proxy_id = await self.platform.send_proxy(message, member, body)

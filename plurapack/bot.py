@@ -28,7 +28,7 @@ COMMAND_SHORTCUTS = {
     "setup": "s", "member": "m", "import": "i", "export": "x",
     "link": "l", "color": "c", "verify": "v", "voice": "vo",
     "voiceoff": "of", "voiceformat": "vf", "alias": "a", "form": "f",
-    "front": "fr",
+    "front": "fr", "autoproxy": "ap", "autofront": "af",
 }
 
 
@@ -325,6 +325,35 @@ def create_bot(prefix: str, database: str) -> Any:
             )
         else:
             await ctx.send(f"Front switched to **{selected.member.name}** (`{selected.member.id}`).")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["autoproxy"]])
+    async def autoproxy(ctx: commands.Context, selector: str) -> None:
+        """Set an independent untagged-message proxy member, or turn it off."""
+        try:
+            configured = store.configure_autoproxy(
+                ctx.author.id, None if selector.casefold() == "off" else selector
+            )
+        except PermissionError as error:
+            await ctx.send(str(error))
+            return
+        if configured.member:
+            await ctx.send(f"Autoproxy is On for **{configured.member.name}** (`{configured.member.id}`).")
+        else:
+            await ctx.send("Autoproxy is Off.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["autofront"]])
+    async def autofront(ctx: commands.Context, enabled: str) -> None:
+        """Opt in to updating autoproxy from the first/current fronter."""
+        if enabled.casefold() not in {"on", "off"}:
+            await ctx.send("Autofront must be on or off.")
+            return
+        try:
+            configured = store.configure_autofront(ctx.author.id, enabled.casefold() == "on")
+        except PermissionError as error:
+            await ctx.send(str(error))
+            return
+        detail = f" Autoproxy is now **{configured.member.name}**." if configured.member else ""
+        await ctx.send(f"Autofront is {'On' if configured.autofront else 'Off'}.{detail}")
 
     @bot.listen(stoat.MessageCreateEvent)
     async def proxy_listener(event: stoat.MessageCreateEvent) -> None:
