@@ -9,7 +9,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterable, Iterator
 
 
 def short_hash(length: int) -> str:
@@ -45,6 +45,10 @@ class Store:
         db.execute("PRAGMA foreign_keys = ON")
         try:
             yield db
+        except BaseException:
+            db.rollback()
+            raise
+        else:
             db.commit()
         finally:
             db.close()
@@ -120,6 +124,39 @@ class Store:
                     if "members.id" not in str(error):
                         raise
         return self.member_named(account_id, name)  # type: ignore[return-value]
+
+    def import_members(self, account_id: str, members: Iterable[Any]) -> int:
+        """Atomically add normalized transfer members to an existing system."""
+        system_id = self.system_for(account_id)
+        if not system_id:
+            raise PermissionError("Create a system first.")
+        values = list(members)
+        with self.connect() as db:
+            for member in values:
+                while True:
+                    try:
+                        db.execute("""INSERT INTO members
+                            (id,system_id,name,prefix,suffix,avatar,color) VALUES (?,?,?,?,?,?,?)""",
+                            (short_hash(5), system_id, member.name, member.prefix, member.suffix,
+                             member.avatar, member.color))
+                        break
+                    except sqlite3.IntegrityError as error:
+                        if "members.id" not in str(error):
+                            raise ValueError(
+                                f"Member {member.name!r} conflicts with an existing name or proxy tag. "
+                                "Nothing was imported."
+                            ) from error
+        return len(values)
+
+    def export_system(self, account_id: str) -> tuple[str, list[Member]]:
+        """Return the owned system name and members without account or message data."""
+        with self.connect() as db:
+            system = db.execute("""SELECT s.id, s.display_name FROM systems s JOIN owners o
+                ON o.system_id=s.id WHERE o.account_id=?""", (account_id,)).fetchone()
+            if not system:
+                raise PermissionError("Create a system first.")
+            rows = db.execute("SELECT * FROM members WHERE system_id=? ORDER BY name", (system["id"],)).fetchall()
+        return str(system["display_name"]), [Member(**dict(row)) for row in rows]
 
     def member_named(self, account_id: str, name: str) -> Member | None:
         with self.connect() as db:

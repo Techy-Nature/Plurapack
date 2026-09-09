@@ -14,6 +14,7 @@ from .proxy import Incoming, ProxyService
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .storage import Member, Store
+from .transfer import TransferError, export_document, parse_import
 
 
 STOAT_INSTALL_MESSAGE = (
@@ -157,6 +158,40 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send(str(error))
             return
         await ctx.send(f"Added **{created.name}** (`{created.id}`); voice is Off.")
+
+    @bot.command(name="import")
+    async def import_system(ctx: commands.Context, source: str, *, document: str) -> None:
+        """Import pasted JSON from PluralKit, Tupperbox, or Plurapack."""
+        document = document.strip()
+        if document.startswith("```") and document.endswith("```"):
+            document = document[3:-3].removeprefix("json").lstrip()
+        try:
+            transfer = parse_import(source, document)
+            if store.system_for(ctx.author.id) is None:
+                store.create_system(ctx.author.id, transfer.name)
+            count = store.import_members(ctx.author.id, transfer.members)
+        except (PermissionError, TransferError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(
+            f"Imported {count} member{'s' if count != 1 else ''} from {source}. "
+            "External IDs and private message history were not copied."
+        )
+
+    @bot.command()
+    async def export(ctx: commands.Context, format_name: str = "plurapack") -> None:
+        """Export portable member metadata, excluding owners and message history."""
+        try:
+            system_name, members = store.export_system(ctx.author.id)
+            document = export_document(format_name, system_name, members)
+        except (PermissionError, TransferError) as error:
+            await ctx.send(str(error))
+            return
+        safe_format = format_name.casefold().replace("-", "")
+        await ctx.send(
+            "Export ready. This file contains member names and proxy metadata; store it privately.",
+            attachments=[(f"plurapack-{safe_format}-export.json", document)],
+        )
 
     @bot.command()
     async def link(ctx: commands.Context) -> None:
