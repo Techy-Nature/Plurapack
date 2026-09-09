@@ -12,6 +12,32 @@ const members = [
 const $ = (selector) => document.querySelector(selector);
 const list = $("#memberList");
 let activeMember = members[0];
+let currentAccount;
+let currentSystem;
+
+class ApiError extends Error {
+  constructor(response, message) { super(message); this.status = response.status; }
+}
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: "same-origin", ...options,
+    headers: { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers }
+  });
+  if (response.status === 401) {
+    const returnTo = `${location.pathname}${location.search}${location.hash}`;
+    location.assign(`/login?returnTo=${encodeURIComponent(returnTo)}`);
+    throw new ApiError(response, "Your session has expired.");
+  }
+  if (response.status === 403) throw new ApiError(response, "You do not have access to this system.");
+  if (!response.ok) {
+    let message = `The server returned ${response.status}.`;
+    try { message = (await response.json()).message || message; } catch { /* The error body may not be JSON. */ }
+    throw new ApiError(response, message);
+  }
+  return response.status === 204 ? null : response.json();
+}
+function showToast(message, error = false) { const toast = $("#toast"); toast.textContent = message; toast.classList.toggle("error", error); toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 2400); }
+function setBusy(form, busy) { form.querySelectorAll("button,input,textarea").forEach(control => { control.disabled = busy; }); form.setAttribute("aria-busy", String(busy)); }
 
 function initials(name) { return name.trim().split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase(); }
 function escapeHTML(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
@@ -56,24 +82,51 @@ const colorPicker = $("input[name=color]");
 const colorText = $("input[name=colorText]");
 colorPicker.addEventListener("input", () => { colorText.value = colorPicker.value.toUpperCase(); });
 colorText.addEventListener("input", () => { if (/^#[0-9A-Fa-f]{6}$/.test(colorText.value)) colorPicker.value = colorText.value; });
-$("#memberForm").addEventListener("submit", event => {
-  event.preventDefault(); const data = new FormData(event.currentTarget); const name = data.get("name").trim(); if (!name) return;
-  const member = { name, alias: data.get("alias").trim() || name.split(" ")[0], pronouns: data.get("pronouns").trim() || "pronouns unset", color: /^#[0-9A-Fa-f]{6}$/.test(data.get("colorText")) ? data.get("colorText").toUpperCase() : data.get("color").toUpperCase(), time: "New", proxy: data.get("proxy").trim() || `${name.slice(0, 2).toLowerCase()}:`, id: `${name.slice(0, 2).toLowerCase()}-${Math.floor(1000 + Math.random() * 9000)}`, description: data.get("description").trim() || undefined, tags: ["New member"], forms: [] };
-  members.unshift(member); $("#memberCount").textContent = members.length; $("#memberPill").textContent = members.length; closeModal(); showMember(member);
-  const toast = $("#toast"); toast.textContent = `${name} was added`; toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 2200);
+$("#memberForm").addEventListener("submit", async event => {
+  event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const name = data.get("name").trim(); if (!name) return;
+  const payload = { name, alias: data.get("alias").trim() || null, pronouns: data.get("pronouns").trim() || null, color: /^#[0-9A-Fa-f]{6}$/.test(data.get("colorText")) ? data.get("colorText").toUpperCase() : data.get("color").toUpperCase(), proxy: data.get("proxy").trim() || null, description: data.get("description").trim() || null };
+  try {
+    setBusy(form, true);
+    const member = await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members`, { method: "POST", body: JSON.stringify(payload) });
+    member.forms ||= []; member.tags ||= []; members.unshift(member); closeModal();
+    $("#memberCount").textContent = members.length; $("#memberPill").textContent = members.length; showMember(member); showToast(`${member.name} was added`);
+  } catch (error) { if (error.status !== 401) showToast(error.message, true); } finally { setBusy(form, false); }
 });
-$("#copyColor").addEventListener("click", async () => { await navigator.clipboard?.writeText($("#colorCode").textContent); const toast = $("#toast"); toast.textContent = "Color copied"; toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 1800); });
+$("#copyColor").addEventListener("click", async () => { await navigator.clipboard?.writeText($("#colorCode").textContent); showToast("Color copied"); });
 const formModal = $("#formModal");
 $("#openFormModal").addEventListener("click", () => formModal.showModal());
 function closeFormModal() { formModal.close(); $("#formForm").reset(); }
 $("#closeFormModal").addEventListener("click", closeFormModal);
 $("#cancelFormModal").addEventListener("click", closeFormModal);
-$("#formForm").addEventListener("submit", event => {
-  event.preventDefault(); const data = new FormData(event.currentTarget); const displayName = data.get("displayName").trim(); if (!displayName) return;
-  const picture = data.get("picture").trim(); if (picture && !/^https?:\/\//i.test(picture)) return;
-  const form = { id: `f${Math.random().toString(16).slice(2, 6)}`, displayName, picture, soma: data.get("soma").trim() };
-  (activeMember.forms ||= []).push(form); closeFormModal(); showMember(activeMember);
-  const toast = $("#toast"); toast.textContent = `Form ${form.id} connected to ${activeMember.name}`; toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 2200);
+$("#formForm").addEventListener("submit", async event => {
+  event.preventDefault(); const formElement = event.currentTarget; const data = new FormData(formElement); const displayName = data.get("displayName").trim(); if (!displayName) return;
+  const picture = data.get("picture").trim(); if (picture && !/^https?:\/\//i.test(picture)) return showToast("Picture must be an HTTP or HTTPS URL.", true);
+  try {
+    setBusy(formElement, true);
+    const form = await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}/forms`, { method: "POST", body: JSON.stringify({ displayName, picture: picture || null, soma: data.get("soma").trim() }) });
+    (activeMember.forms ||= []).push(form); closeFormModal(); showMember(activeMember); showToast(`Form ${form.id} connected to ${activeMember.name}`);
+  } catch (error) { if (error.status !== 401) showToast(error.message, true); } finally { setBusy(formElement, false); }
 });
 $("#formList").addEventListener("click", event => { const row = event.target.closest(".form-row"); if (!row) return; const form = activeMember.forms.find(item => item.id === row.dataset.formId); $("#detailName").textContent = form.displayName; if (form.soma) $("#detailDescription").textContent = form.soma; if (form.picture) { $("#detailAvatar").style.backgroundImage = `url("${encodeURI(form.picture)}")`; $("#detailAvatar").style.backgroundSize = "cover"; } const toast = $("#toast"); toast.textContent = `Front switched using ${form.id}`; toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 1800); });
+async function loadDashboard() {
+  try {
+    currentAccount = await api("/api/account");
+    const requestedId = new URLSearchParams(location.search).get("system") || currentAccount.systemId || currentAccount.system?.id;
+    if (!requestedId) throw new Error("Your account is not connected to a system yet.");
+    currentSystem = await api(`/api/systems/${encodeURIComponent(requestedId)}`);
+    currentSystem.id ||= requestedId;
+    if (Array.isArray(currentSystem.members) && currentSystem.members.length) members.splice(0, members.length, ...currentSystem.members);
+    const accountName = currentAccount.displayName || currentAccount.name || currentAccount.username;
+    $("#accountName").textContent = accountName; $("#accountAvatar").textContent = initials(accountName); $("#accountRole").textContent = currentAccount.role || "System admin";
+    const systemName = currentSystem.displayName || currentSystem.name; $("#systemName").textContent = systemName; document.title = `Plurapack — ${systemName}`;
+    $("#memberCount").textContent = members.length; $("#memberPill").textContent = members.length; $("#fronterCount").textContent = members.filter(member => member.fronting).length;
+    showMember(members[0]);
+  } catch (error) {
+    if (error.status === 401) return;
+    $("#dashboard").hidden = true; const state = $("#accessState"); state.hidden = false;
+    state.querySelector("h1").textContent = error.status === 403 ? "This system is private" : "Dashboard unavailable";
+    state.querySelector("p").textContent = error.status === 403 ? "You’re signed in, but this system doesn’t belong to your account." : error.message;
+  }
+}
 renderList();
+loadDashboard();

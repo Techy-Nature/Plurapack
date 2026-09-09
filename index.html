@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#090b14">
+  <meta name="theme-color" content="#071117">
   <meta name="description" content="A self-hostable, responsive Plurapack system dashboard.">
   <title>Plurapack — Lumen System</title>
   <link rel="stylesheet" href="styles.css">
@@ -24,27 +24,27 @@
           <span class="notification-dot"></span>
         </button>
         <button class="account-button" type="button">
-          <span class="avatar avatar-account">M</span>
-          <span class="account-copy"><strong>Morgan</strong><small>System admin</small></span>
+          <span class="avatar avatar-account" id="accountAvatar">…</span>
+          <span class="account-copy"><strong id="accountName">Loading…</strong><small id="accountRole">Account</small></span>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 10 4 4 4-4"/></svg>
         </button>
       </div>
     </header>
 
-    <main class="dashboard">
+    <main class="dashboard" id="dashboard">
       <section class="system-hero">
         <div class="system-heading">
           <div class="system-glyph" aria-hidden="true">✦</div>
           <div>
             <div class="eyebrow"><span class="status-dot"></span> SYSTEM ONLINE</div>
-            <h1>The Lumen System</h1>
+            <h1 id="systemName">Loading system…</h1>
             <p>A shared space for every part of you.</p>
           </div>
         </div>
         <div class="system-stats" aria-label="System statistics">
           <div><strong id="memberCount">8</strong><span>Members</span></div>
           <i></i>
-          <div><strong>2</strong><span>Fronters</span></div>
+          <div><strong id="fronterCount">—</strong><span>Fronters</span></div>
           <i></i>
           <div><strong>12d</strong><span>Uptime</span></div>
         </div>
@@ -109,6 +109,7 @@
         </article>
       </section>
     </main>
+    <main class="access-state" id="accessState" hidden><div class="system-glyph">✦</div><h1>Loading your dashboard</h1><p>Connecting securely to Plurapack…</p><a href="/">Return home</a></main>
   </div>
 
   <dialog class="member-modal" id="memberModal" aria-labelledby="modalTitle">
