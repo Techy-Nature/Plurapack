@@ -44,6 +44,37 @@ def test_form_id_resolves_member_and_switches_presentation_together(store):
     assert store.current_front("owner") == switched
 
 
+def test_member_switch_uses_configurable_default_form(store):
+    member = store.member_selected("owner", "Alexandra North")
+    form = store.create_form("owner", member.id, "Alex at Sea")
+
+    configured = store.configure_default_form("owner", member.id, "Alex at Sea")
+    assert configured.default_form_id == form.id
+    assert store.switch_front("owner", member.id).form == form
+
+    cleared = store.configure_default_form("owner", member.id, None)
+    assert cleared.default_form_id is None
+    assert store.switch_front("owner", member.id).form is None
+
+
+def test_explicit_form_overrides_member_default(store):
+    member = store.member_selected("owner", "Alexandra North")
+    default = store.create_form("owner", member.id, "Everyday")
+    requested = store.create_form("owner", member.id, "Formal")
+    store.configure_default_form("owner", member.id, default.id)
+
+    switched = store.switch_front("owner", "Formal")
+    assert switched.form == requested
+
+
+def test_default_form_must_belong_to_selected_member(store):
+    other = store.add_member("owner", "Jamie", "[jamie]")
+    other_form = store.create_form("owner", other.id, "Jamie's form")
+
+    with pytest.raises(ValueError, match="must belong"):
+        store.configure_default_form("owner", "Alexandra North", other_form.id)
+
+
 def test_form_and_alias_are_scoped_to_an_owned_system(store):
     with pytest.raises(PermissionError):
         store.configure_alias("stranger", "Alexandra North", "Alex")
@@ -51,4 +82,3 @@ def test_form_and_alias_are_scoped_to_an_owned_system(store):
         store.create_form("stranger", "Alexandra North", "Other")
     with pytest.raises(ValueError, match="HTTP or HTTPS"):
         store = store.create_form("owner", "Alexandra North", "Unsafe", "file:///secret")
-

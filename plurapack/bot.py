@@ -28,7 +28,7 @@ COMMAND_SHORTCUTS = {
     "setup": "s", "member": "m", "import": "i", "export": "x",
     "link": "l", "color": "c", "verify": "v", "voice": "vo",
     "voiceoff": "of", "voiceformat": "vf", "alias": "a", "form": "f",
-    "front": "fr", "autoproxy": "ap", "autofront": "af",
+    "front": "fr", "defaultform": "df", "autoproxy": "ap", "autofront": "af",
 }
 
 
@@ -315,7 +315,7 @@ def create_bot(prefix: str, database: str) -> Any:
         """Switch by member selector or form ID, resolving forms to their member."""
         try:
             selected = store.switch_front(ctx.author.id, selector)
-        except PermissionError as error:
+        except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return
         if selected.form:
@@ -325,6 +325,27 @@ def create_bot(prefix: str, database: str) -> Any:
             )
         else:
             await ctx.send(f"Front switched to **{selected.member.name}** (`{selected.member.id}`).")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["defaultform"]])
+    async def defaultform(ctx: commands.Context, member_selector: str,
+                          form_selector: str = "off") -> None:
+        """Set a member's default form by name/ID, or clear it with ``off``."""
+        try:
+            configured = store.configure_default_form(
+                ctx.author.id, member_selector,
+                None if form_selector.casefold() in {"off", "none"} else form_selector,
+            )
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        if configured.default_form_id:
+            selected = store.form_selected(ctx.author.id, configured.default_form_id)
+            await ctx.send(
+                f"Default form for **{configured.name}** is **{selected[0].display_name}** "
+                f"(`{configured.default_form_id}`)."
+            )
+        else:
+            await ctx.send(f"Default form for **{configured.name}** is cleared.")
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["autoproxy"]])
     async def autoproxy(ctx: commands.Context, selector: str) -> None:

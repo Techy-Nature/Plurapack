@@ -32,6 +32,7 @@ class Member:
     speech_formatting: int
     strikethrough_speech: str
     alias: str | None
+    default_form_id: str | None
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ class Store:
                     playback TEXT NOT NULL DEFAULT 'off' CHECK(playback IN ('off','local','send','both')),
                     speech_formatting INTEGER NOT NULL DEFAULT 0,
                     strikethrough_speech TEXT NOT NULL DEFAULT 'normal',
+                    default_form_id TEXT REFERENCES forms(id) ON DELETE SET NULL,
                     UNIQUE(system_id, name), UNIQUE(system_id, prefix, suffix)
                 );
                 CREATE TABLE IF NOT EXISTS links (
@@ -131,6 +133,8 @@ class Store:
                 db.execute("ALTER TABLE members ADD COLUMN strikethrough_speech TEXT NOT NULL DEFAULT 'normal'")
             if "alias" not in columns:
                 db.execute("ALTER TABLE members ADD COLUMN alias TEXT")
+            if "default_form_id" not in columns:
+                db.execute("ALTER TABLE members ADD COLUMN default_form_id TEXT")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
 
     def create_system(self, account_id: str, name: str) -> str:
@@ -262,14 +266,20 @@ class Store:
             raise ValueError("That member already has a form with this display name.") from error
         return self.form_selected(account_id, form_id)[0]  # type: ignore[index]
 
-    def form_selected(self, account_id: str, form_id: str) -> tuple[Form, Member] | None:
+    def form_selected(self, account_id: str, selector: str) -> tuple[Form, Member] | None:
+        """Resolve an owned form by stable ID or its exact display name."""
         with self.connect() as db:
-            row = db.execute("""SELECT f.id form_id, f.member_id, f.display_name, f.avatar form_avatar,
+            rows = db.execute("""SELECT f.id form_id, f.member_id, f.display_name, f.avatar form_avatar,
                 f.soma, m.* FROM forms f JOIN members m ON m.id=f.member_id
-                JOIN owners o ON o.system_id=m.system_id WHERE o.account_id=? AND f.id=?""",
-                (account_id, form_id.strip())).fetchone()
-        if not row:
+                JOIN owners o ON o.system_id=m.system_id
+                WHERE o.account_id=? AND (f.id=? OR f.display_name=?)
+                ORDER BY CASE WHEN f.id=? THEN 0 ELSE 1 END""",
+                (account_id, selector.strip(), selector.strip(), selector.strip())).fetchall()
+        if not rows:
             return None
+        if len(rows) > 1 and rows[0]["form_id"] != selector.strip():
+            raise ValueError("More than one form has that name; use the form ID instead.")
+        row = rows[0]
         values = dict(row)
         form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
                     values.pop("form_avatar"), values.pop("soma"))
@@ -286,13 +296,14 @@ class Store:
         return self.member_selected(account_id, selector)
 
     def switch_front(self, account_id: str, selector: str) -> Front:
-        """Persist a current front; form IDs atomically select their linked member and form."""
+        """Persist a front, using a member's default unless a form was explicit."""
         selected_form = self.form_selected(account_id, selector)
         if selected_form:
             form, member = selected_form
         else:
             member = self.member_selected(account_id, selector)
-            form = None
+            form = (self.form_selected(account_id, member.default_form_id)[0]
+                    if member and member.default_form_id else None)
         if member is None:
             raise PermissionError("Member or form not found or not owned by this account.")
         with self.connect() as db:
@@ -304,6 +315,25 @@ class Store:
             db.execute("""UPDATE autoproxy_settings SET member_id=?
                 WHERE system_id=? AND autofront=1""", (member.id, member.system_id))
         return Front(member, form)
+
+    def configure_default_form(self, account_id: str, member_selector: str,
+                               form_selector: str | None) -> Member:
+        """Choose the form used when a member, rather than a form, is selected."""
+        member = self.member_selected(account_id, member_selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        form = None
+        if form_selector is not None:
+            selected = self.form_selected(account_id, form_selector)
+            if selected is None:
+                raise PermissionError("Form not found or not owned by this account.")
+            form = selected[0]
+            if form.member_id != member.id:
+                raise ValueError("The default form must belong to that member.")
+        with self.connect() as db:
+            db.execute("UPDATE members SET default_form_id=? WHERE id=?",
+                       (form.id if form else None, member.id))
+        return self.member_selected(account_id, member.id)  # type: ignore[return-value]
 
     def current_front(self, account_id: str) -> Front | None:
         system_id = self.system_for(account_id)
