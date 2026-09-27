@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from plurapack.login import LoginError, LoginService, normalize_code
+from plurapack.login import LoginError, LoginService, LoginStartLimiter, normalize_code
 from plurapack.storage import Store
 
 
@@ -57,3 +57,12 @@ def test_start_removes_attempts_expired_more_than_a_day_ago(tmp_path):
     login.start()
     with store.connect() as db:
         assert db.execute("SELECT 1 FROM login_attempts WHERE id=?", (old.id,)).fetchone() is None
+
+
+def test_login_start_limiter_expires_entries_and_drops_client_history():
+    limiter = LoginStartLimiter(2, window=60)
+    assert limiter.allow("client", now=100)
+    assert limiter.allow("client", now=101)
+    assert not limiter.allow("client", now=102)
+    assert limiter.allow("client", now=161)
+    assert list(limiter._requests) == ["client"]

@@ -90,6 +90,29 @@ async def test_bot_verified_login_session_and_logout(api):
 
 
 @pytest.mark.asyncio
+async def test_login_start_rate_limit_ignores_untrusted_forwarded_addresses(tmp_path, monkeypatch):
+    monkeypatch.setenv("PLURAPACK_LOGIN_START_LIMIT", "3")
+    store = Store(tmp_path / "limited.sqlite3")
+    transport = httpx.ASGITransport(app=create_app(store, static_root=None),
+                                    client=("198.51.100.7", 1234))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        for index in range(3):
+            response = await client.post(
+                "/api/auth/login/start",
+                headers={"X-Forwarded-For": f"203.0.113.{index}"},
+            )
+            assert response.status_code == 200
+        limited = await client.post(
+            "/api/auth/login/start", headers={"X-Forwarded-For": "203.0.113.99"}
+        )
+        assert limited.status_code == 429
+        assert limited.headers["retry-after"] == "60"
+        assert set(limited.json()) == {"message"}
+    with store.connect() as db:
+        assert db.execute("SELECT count(*) FROM login_attempts").fetchone()[0] == 3
+
+
+@pytest.mark.asyncio
 async def test_system_authorization_and_patch(api):
     _, system_id, other_id, transport = api
     async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:

@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from .storage import Form, Front, Member, Store, System
-from .login import LoginError, LoginService
+from .login import LOGIN_START_WINDOW, LoginError, LoginService, LoginStartLimiter
 from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
                        create_session_cookie, require_authenticated_user)
 from .web_models import FormCreate, FormPatch, FrontUpdate, MemberCreate, MemberPatch, SystemPatch
@@ -69,6 +69,9 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
     app = FastAPI(title="Plurapack Web API", version="1")
     app.state.store = store or Store(os.getenv("PLURAPACK_DATABASE", "plurapack.sqlite3"))
     app.state.login_service = LoginService(app.state.store)
+    app.state.login_start_limiter = LoginStartLimiter(
+        int(os.getenv("PLURAPACK_LOGIN_START_LIMIT", "10"))
+    )
 
     @app.exception_handler(HTTPException)
     async def api_http_error(request: Request, exc: HTTPException) -> Response:
@@ -122,6 +125,12 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
 
     @app.post("/api/auth/login/start")
     async def start_login(request: Request) -> dict[str, Any]:
+        # Deliberately use the directly connected peer. Forwarded headers are
+        # attacker-controlled unless proxy trust is configured outside the app.
+        client = request.client.host if request.client else "unknown"
+        if not request.app.state.login_start_limiter.allow(client):
+            raise HTTPException(429, "Too many login attempts; try again shortly",
+                                headers={"Retry-After": str(LOGIN_START_WINDOW)})
         attempt = await asyncio.to_thread(request.app.state.login_service.start)
         return {"attemptId": attempt.id, "code": attempt.code,
                 "browserSecret": attempt.browser_secret, "expiresIn": attempt.expires_in,

@@ -46,6 +46,11 @@ defaults to `true`, as required for production HTTPS. For local HTTP development
 only, explicitly set `PLURAPACK_COOKIE_SECURE=false`; never use that setting on a
 public deployment. No Stoat token, password, account ID, login code, browser
 secret, or session value should be entered into the dashboard or written to logs.
+Login creation is limited to 10 attempts per directly connected client per
+minute per web process by default; change `PLURAPACK_LOGIN_START_LIMIT` if needed.
+This small in-memory limit does not retain permanent IP history and intentionally ignores
+`X-Forwarded-For`, so deployments behind a reverse proxy should enforce any
+client-aware rate limit at that trusted proxy.
 
 The existing frontend contract is: `GET /api/account` initializes account and
 system identity; `GET /api/systems/:systemId` loads members; `POST

@@ -5,7 +5,9 @@ import hashlib
 import re
 import secrets
 import sqlite3
+import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 
 from .storage import Store
@@ -14,11 +16,42 @@ from .web_auth import WebUser
 CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
 CODE_LENGTH = 8
 LOGIN_LIFETIME = 300
+LOGIN_START_WINDOW = 60
 _CODE_PATTERN = re.compile(r"^[23456789ABCDEFGHJKLMNPQRSTUVWXYZ]{8}$")
 
 
 class LoginError(ValueError):
     """A deliberately non-specific login failure safe to show to a client."""
+
+
+class LoginStartLimiter:
+    """Small, process-local sliding-window limiter that retains no durable IP history."""
+
+    def __init__(self, limit: int, window: int = LOGIN_START_WINDOW):
+        if limit < 1:
+            raise ValueError("The login start limit must be positive.")
+        self.limit = limit
+        self.window = window
+        self._requests: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, client: str, now: float | None = None) -> bool:
+        current = time.monotonic() if now is None else now
+        cutoff = current - self.window
+        with self._lock:
+            # Discard inactive clients on every request so addresses are only
+            # retained for the short rate-limit window.
+            for address in list(self._requests):
+                requests = self._requests[address]
+                while requests and requests[0] <= cutoff:
+                    requests.popleft()
+                if not requests:
+                    del self._requests[address]
+            requests = self._requests.setdefault(client, deque())
+            if len(requests) >= self.limit:
+                return False
+            requests.append(current)
+            return True
 
 
 @dataclass(frozen=True)
