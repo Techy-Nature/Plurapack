@@ -56,6 +56,11 @@ def test_semantic_speech_formatting_is_opt_in(voice_store):
     ]
 
 
+def test_store_rejects_settings_chatterbox_does_not_support(voice_store):
+    with pytest.raises(ValueError, match="unsupported fields: arbitrary"):
+        voice_store.configure_voice("owner", "Alex", "alex.wav", '{"arbitrary":true}', "send")
+
+
 @pytest.mark.parametrize("mode,expected", [
     ("normal", [("keep this", "normal")]),
     ("mumble", [("keep this", "mumble")]),

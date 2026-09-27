@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import secrets
 import sqlite3
@@ -10,6 +9,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+
+from .voice import normalize_voice_settings
 
 
 def short_hash(length: int) -> str:
@@ -80,9 +81,10 @@ class Store:
 
     @contextmanager
     def connect(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path)
+        db = sqlite3.connect(self.path, timeout=5)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys = ON")
+        db.execute("PRAGMA busy_timeout = 5000")
         try:
             yield db
         except BaseException:
@@ -95,6 +97,9 @@ class Store:
 
     def _initialize(self) -> None:
         with self.connect() as db:
+            # WAL lets the bot and short-lived web requests read concurrently
+            # while retaining SQLite's single-writer safety.
+            db.execute("PRAGMA journal_mode = WAL")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS systems (
                     id TEXT PRIMARY KEY CHECK(length(id)=10), display_name TEXT NOT NULL,
@@ -184,6 +189,80 @@ class Store:
             if "show_system_tag" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN show_system_tag INTEGER NOT NULL DEFAULT 1")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
+
+    def systems_for_account(self, account_id: str) -> list[System]:
+        """Return the account's linked system as a list (the schema permits at most one)."""
+        with self.connect() as db:
+            rows = db.execute("""SELECT s.* FROM systems s JOIN owners o ON o.system_id=s.id
+                WHERE o.account_id=? ORDER BY s.display_name""", (account_id,)).fetchall()
+        return [System(**dict(row)) for row in rows]
+
+    def account_has_system(self, account_id: str, system_id: str) -> bool:
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM owners WHERE account_id=? AND system_id=?",
+                              (account_id, system_id)).fetchone() is not None
+
+    def update_system(self, account_id: str, system_id: str, **changes: Any) -> System:
+        if not self.account_has_system(account_id, system_id):
+            raise PermissionError("System not owned by this account.")
+        allowed = {"display_name", "description", "logo", "system_tag", "show_system_tag"}
+        if not changes or not set(changes) <= allowed:
+            raise ValueError("No supported system fields were supplied.")
+        with self.connect() as db:
+            db.execute(f"UPDATE systems SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
+                       (*changes.values(), system_id))
+        return self.system_info(system_id)  # type: ignore[return-value]
+
+    def update_member(self, account_id: str, member_id: str, **changes: Any) -> Member:
+        member = self.member_selected(account_id, member_id)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        allowed = {"name", "prefix", "suffix", "avatar", "color", "alias", "description",
+                   "pronouns", "default_form_id"}
+        if not changes or not set(changes) <= allowed:
+            raise ValueError("No supported member fields were supplied.")
+        if "prefix" in changes or "suffix" in changes:
+            self._validate_proxy_tag(changes.get("prefix", member.prefix), changes.get("suffix", member.suffix))
+        try:
+            with self.connect() as db:
+                db.execute(f"UPDATE members SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
+                           (*changes.values(), member.id))
+        except sqlite3.IntegrityError as error:
+            raise ValueError("The member name, alias, or proxy tag is already in use.") from error
+        return self.member_selected(account_id, member.id)  # type: ignore[return-value]
+
+    def update_form(self, account_id: str, form_id: str, **changes: Any) -> Form:
+        selected = self.form_selected(account_id, form_id)
+        if selected is None:
+            raise PermissionError("Form not found or not owned by this account.")
+        allowed = {"display_name", "avatar", "soma", "pronouns", "prefix", "suffix"}
+        if not changes or not set(changes) <= allowed:
+            raise ValueError("No supported form fields were supplied.")
+        form, _ = selected
+        try:
+            with self.connect() as db:
+                db.execute(f"UPDATE forms SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
+                           (*changes.values(), form.id))
+        except sqlite3.IntegrityError as error:
+            raise ValueError("That form name or proxy tag is already in use.") from error
+        return self.form_selected(account_id, form.id)[0]  # type: ignore[index]
+
+    def delete_form(self, account_id: str, form_id: str) -> Form:
+        selected = self.form_selected(account_id, form_id)
+        if selected is None:
+            raise PermissionError("Form not found or not owned by this account.")
+        form, _ = selected
+        with self.connect() as db:
+            db.execute("UPDATE members SET default_form_id=NULL WHERE default_form_id=?", (form.id,))
+            db.execute("UPDATE current_fronts SET form_id=NULL WHERE form_id=?", (form.id,))
+            db.execute("DELETE FROM forms WHERE id=?", (form.id,))
+        return form
+
+    def clear_front(self, account_id: str) -> None:
+        system_id = self.system_for(account_id)
+        if system_id:
+            with self.connect() as db:
+                db.execute("DELETE FROM current_fronts WHERE system_id=?", (system_id,))
 
     def create_system(self, account_id: str, name: str, description: str = "") -> str:
         description = description.strip()
@@ -346,7 +425,9 @@ class Store:
         return system_id
 
     def add_member(self, account_id: str, name: str, prefix: str, suffix: str = "",
-                   description: str = "") -> Member:
+                   description: str = "", *, alias: str | None = None,
+                   pronouns: str | None = None, color: str | None = None,
+                   avatar: str | None = None) -> Member:
         system_id = self.system_for(account_id)
         if not system_id:
             raise PermissionError("Create a system first.")
@@ -358,9 +439,11 @@ class Store:
                 member_id = short_hash(5)
                 try:
                     db.execute(
-                        """INSERT INTO members(id,system_id,name,prefix,suffix,description)
-                        VALUES (?,?,?,?,?,?)""",
-                        (member_id, system_id, name, prefix, suffix, description),
+                        """INSERT INTO members
+                        (id,system_id,name,prefix,suffix,description,alias,pronouns,color,avatar)
+                        VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                        (member_id, system_id, name, prefix, suffix, description,
+                         alias, pronouns, color, avatar),
                     )
                     break
                 except sqlite3.IntegrityError as error:
@@ -684,24 +767,18 @@ class Store:
         return self.form_selected(account_id, form.id)[0]  # type: ignore[index]
 
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
-                        voice_settings: str = "{}", playback: str = "send") -> Member:
+                        voice_settings: str | dict[str, Any] = "{}", playback: str = "send") -> Member:
         """Configure an owned member. Only ``send`` has output in this server-only release."""
         if playback not in {"off", "local", "send", "both"}:
             raise ValueError("Playback must be off, local, send, or both.")
         if playback in {"local", "both"}:
             raise ValueError("Local playback is not implemented; use off or send.")
-        try:
-            settings = json.loads(voice_settings)
-        except json.JSONDecodeError as error:
-            raise ValueError("Voice settings must be a JSON object.") from error
-        if not isinstance(settings, dict):
-            raise ValueError("Voice settings must be a JSON object.")
+        normalized = normalize_voice_settings(voice_settings)
         member = self.member_selected(account_id, member_selector)
         if member is None:
             raise PermissionError("Member not found or not owned by this account.")
         if playback == "send" and not voice_reference:
             raise ValueError("Send playback requires a voice reference.")
-        normalized = json.dumps(settings, separators=(",", ":"), sort_keys=True)
         with self.connect() as db:
             db.execute("UPDATE members SET voice_reference=?, voice_settings=?, playback=? WHERE id=?",
                        (voice_reference, normalized, playback, member.id))

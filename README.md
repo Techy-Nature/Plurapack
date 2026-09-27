@@ -2,17 +2,46 @@
 
 New to Plurapack? The text-only, website-ready user guide lives in [`documentation/`](documentation/README.md), with onboarding, everyday workflows, configuration, privacy, and troubleshooting documentation.
 
-## Responsive dashboard
+## Dashboard and Web API
 
 The repository includes a dependency-free dashboard prototype that can be hosted on GitHub Pages or any static web server. It provides responsive desktop and mobile layouts, independently scrollable member and profile panels on larger screens, member search, profile switching, and an interactive new-member dialog.
 
-Open `index.html` directly, or serve the repository root locally:
+The dashboard is backed by a FastAPI server that uses the same `Store` and
+`PLURAPACK_DATABASE` SQLite file as the bot. Start it with:
 
 ```bash
-python -m http.server 8000
+export PLURAPACK_SESSION_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(48))')"
+python -m plurapack.web
+# equivalently, after installation: plurapack-web
 ```
 
-Then visit `http://localhost:8000`. The member array in `app.js` remains preview data for an empty example system, while account and system identity are loaded from the authenticated API. The dashboard expects `GET /api/account` and `GET /api/systems/:systemId`, and posts new records to `POST /api/systems/:systemId/members` and `POST /api/systems/:systemId/members/:memberId/forms`. JSON responses use the same camel-case fields shown in the example member objects. Requests include same-origin credentials; a `401` redirects to `/login`, while a `403` displays a private-system state without leaking system data.
+Then visit `http://127.0.0.1:8000`. Set `PLURAPACK_WEB_HOST` and
+`PLURAPACK_WEB_PORT` to change the bind address. Run the bot and Web API in two
+terminals with the same `PLURAPACK_DATABASE` to run both. SQLite WAL mode and
+short per-operation connections allow safe concurrent access. The existing
+`owners.account_id` primary key intentionally limits each account to one linked
+system; the account response uses a `systems` list only as a stable API shape.
+
+The API provides `/api/account`, authorized system/member/form CRUD, front
+retrieval and switching, and `/api/health`; interactive OpenAPI documentation is
+at `/docs`. Requests use a signed, HttpOnly-ready `plurapack_session` cookie.
+**Stoat OAuth login/callback routes are intentionally not implemented yet**
+because this repository has no OAuth specification or credentials. Consequently,
+the dashboard will return `401` until a trusted OAuth callback issues a cookie;
+never treat a user-controlled account ID as authentication. The session secret
+must be at least 32 characters and should be stable, random, and private.
+
+The existing frontend contract is: `GET /api/account` initializes account and
+system identity; `GET /api/systems/:systemId` loads members; `POST
+/api/systems/:systemId/members` accepts the new-member fields; `POST
+/api/systems/:systemId/members/:memberId/forms` accepts the new-form fields; and
+`PATCH /api/systems/:systemId/members/:memberId` currently changes a default
+form. Member creation requires an explicit proxy prefix, matching the bot's
+`member` command; the API does not derive one from the member name. Successful
+creates return the new object, patches return the updated
+object, deletes return `204`, validation errors return `422`, unauthenticated
+requests return `401`, unauthorized systems return `403`, and missing or
+mismatched nested resources return `404`.
 
 Plurapack is an early, self-hosted [Stoat](https://stoat.chat) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
 
