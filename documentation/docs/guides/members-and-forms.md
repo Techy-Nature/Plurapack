@@ -55,8 +55,12 @@ p;formproxy FORM_ID sea: :sea
 sea: This message uses the sea form. :sea
 ```
 
-Run `p;formproxy FORM_ID` with no prefix to clear the form's proxy tag. Form
-tags must be unique within the system and cannot duplicate a member tag.
+Run `p;memberproxy MEMBER PREFIX [SUFFIX]` or `p;formproxy FORM_ID PREFIX
+[SUFFIX]` again to add another tag. Every configured tag selects the same
+member or form, and each identity can have up to 100 tags. Omitting the prefix
+lists all configured tags. Use `p;memberproxy-clear MEMBER` or
+`p;formproxy-clear FORM_ID` to clear the complete list. Tags must be unique
+within the system.
 
 ## Switch the current front
 

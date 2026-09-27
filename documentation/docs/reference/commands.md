@@ -7,9 +7,12 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `help [COMMAND]` | `h` | List every current command, or show usage and aliases for one command. |
 | `setup [SYSTEM_NAME] [DESCRIPTION]` | `s` | Create the account's system, with an optional description. |
 | `member NAME PREFIX [SUFFIX] [DESCRIPTION]` | `m` | Add a member and proxy tag, with an optional description. |
+| `memberproxy MEMBER [PREFIX] [SUFFIX]` | `mt` | Add a member tag, or list tags by omitting the prefix. |
+| `memberproxy-clear MEMBER` | `mc` | Clear all proxy tags from a member. |
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |
 | `form MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]` | `f` | Create an alternate presentation. |
-| `formproxy FORM [PREFIX] [SUFFIX]` | `ft` | Set a form-specific proxy tag, or clear it by omitting the prefix. |
+| `formproxy FORM [PREFIX] [SUFFIX]` | `ft` | Add a form-specific proxy tag, or list tags by omitting the prefix. |
+| `formproxy-clear FORM` | `fc` | Clear all proxy tags from a form. |
 | `defaultform MEMBER [FORM_OR_OFF]` | `df` | Set a member's default form, or clear it with `off`. |
 | `pronouns MEMBER [PRONOUNS]` | `p` | Set member pronouns, or clear them by omitting the value. |
 | `formpronouns FORM [PRONOUNS]` | `fp` | Override form pronouns, or restore inheritance by omitting the value. |
