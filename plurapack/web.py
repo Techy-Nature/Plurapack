@@ -31,7 +31,7 @@ class LoginCompletion(BaseModel):
 def form_json(form: Form) -> dict[str, Any]:
     return {"id": form.id, "memberId": form.member_id, "displayName": form.display_name,
             "picture": form.avatar, "soma": form.soma, "pronouns": form.pronouns,
-            "prefix": form.prefix, "suffix": form.suffix}
+            "prefix": form.prefix, "suffix": form.suffix, "banner": form.banner}
 
 
 def member_json(store: Store, member: Member, front: Front | None = None) -> dict[str, Any]:
@@ -39,6 +39,7 @@ def member_json(store: Store, member: Member, front: Front | None = None) -> dic
             "alias": member.alias, "pronouns": member.pronouns, "color": member.color or "#7765A8",
             "avatar": member.avatar, "description": member.description,
             "prefix": member.prefix, "suffix": member.suffix, "proxy": f"{member.prefix}{member.suffix}",
+            "banner": member.banner,
             "defaultFormId": member.default_form_id,
             "fronting": bool(front and front.member.id == member.id),
             "forms": [form_json(form) for form in store.forms_for_member(member.id)],
@@ -52,7 +53,7 @@ def member_json(store: Store, member: Member, front: Front | None = None) -> dic
 def system_json(store: Store, account_id: str, system: System) -> dict[str, Any]:
     front, autoproxy = store.current_front(account_id), store.autoproxy(account_id)
     return {"id": system.id, "displayName": system.display_name, "name": system.display_name,
-            "description": system.description, "logo": system.logo, "tag": system.system_tag,
+            "description": system.description, "logo": system.logo, "banner": system.banner, "tag": system.system_tag,
             "showSystemTag": bool(system.show_system_tag),
             "members": [member_json(store, member, front) for member in store.members_for_system(system.id)],
             "front": front_json(front),
@@ -191,7 +192,7 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
                            store: Store = Depends(db)) -> dict[str, Any]:
         await authorized(system_id, user, store)
         changes = body.model_dump(exclude_unset=True)
-        changes = {key: str(value) if key == "logo" and value else int(value) if key == "show_system_tag" else value
+        changes = {key: str(value) if key in {"logo", "banner"} and value else int(value) if key == "show_system_tag" else value
                    for key, value in changes.items()}
         updated = await run(store.update_system, user.id, system_id, **changes)
         return await run(system_json, store, user.id, updated)
@@ -248,7 +249,7 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
                 voice_settings if voice_settings is not None else member.voice_settings,
                 playback if playback is not None else member.playback,
             )
-        changes = {key: str(value) if key == "avatar" and value else value for key, value in changes.items()}
+        changes = {key: str(value) if key in {"avatar", "banner"} and value else value for key, value in changes.items()}
         if changes:
             member = await run(store.update_member, user.id, member.id, **changes)
         return await run(member_json, store, member, await run(store.current_front, user.id))
@@ -275,7 +276,7 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
         await owned_member(system_id, member_id, user, store)
         form = await run(store.create_form, user.id, member_id, body.display_name,
                          str(body.picture) if body.picture else None, body.soma, body.pronouns,
-                         body.prefix, body.suffix)
+                         body.prefix, body.suffix, str(body.banner) if body.banner else None)
         return form_json(form)
 
     @app.get("/api/systems/{system_id}/members/{member_id}/forms/{form_id}")
@@ -292,6 +293,8 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
         changes = body.model_dump(exclude_unset=True)
         if "picture" in changes:
             changes["avatar"] = str(changes.pop("picture")) if changes["picture"] else None
+        if "banner" in changes and changes["banner"]:
+            changes["banner"] = str(changes["banner"])
         return form_json(await run(store.update_form, user.id, form_id, **changes))
 
     @app.delete("/api/systems/{system_id}/members/{member_id}/forms/{form_id}", status_code=204)
@@ -336,6 +339,10 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
         @app.get("/app.js", include_in_schema=False)
         async def javascript() -> FileResponse:
             return FileResponse(static_root / "app.js", media_type="text/javascript")
+
+        @app.get("/dashboard_helpers.js", include_in_schema=False)
+        async def dashboard_helpers() -> FileResponse:
+            return FileResponse(static_root / "dashboard_helpers.js", media_type="text/javascript")
 
         @app.get("/styles.css", include_in_schema=False)
         async def stylesheet() -> FileResponse:

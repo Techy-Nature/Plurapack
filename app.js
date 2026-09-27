@@ -1,132 +1,25 @@
-const members = [
-  { name: "Nova Everlight", alias: "Nova", pronouns: "they / them", color: "#9B87F5", time: "Now", fronting: true, proxy: "nv:", id: "nv-2841", defaultFormId: "f7a2c", description: "The spark behind new ideas. Usually around during creative projects and late-night conversations. Loves astronomy, warm tea, and collecting tiny things.", tags: ["Creative", "Night owl", "Stargazer"], forms: [{ id: "f7a2c", displayName: "Nova Solstice", pronouns: "star / stars", picture: "", soma: "Starlit hair, silver eyes, and a constellation of freckles." }] },
-  { name: "Milo", pronouns: "he / him", color: "#F0A981", time: "Now", fronting: true, proxy: "mi:", id: "mi-1093", tags: ["Baker", "Optimist"] },
-  { name: "Echo", pronouns: "she / they", color: "#79D6C4", time: "2h", proxy: "ec:", id: "ec-7530", tags: ["Music", "Quiet"] },
-  { name: "Sage", pronouns: "they / she", color: "#A9C780", time: "1d", proxy: "sg:", id: "sg-6612", tags: ["Nature", "Reader"] },
-  { name: "Atlas", pronouns: "he / they", color: "#78AEEB", time: "3d", proxy: "at:", id: "at-4820", tags: ["Maps", "Calm"] },
-  { name: "Wren", pronouns: "she / her", color: "#E89AB3", time: "5d", proxy: "wr:", id: "wr-2284", tags: ["Writer", "Dreamer"] },
-  { name: "Rowan", pronouns: "he / him", color: "#D3926B", time: "1w", proxy: "ro:", id: "ro-5028", tags: ["Hiking", "Coffee"] },
-  { name: "Lumi", pronouns: "they / them", color: "#D6CB79", time: "2w", proxy: "lu:", id: "lu-7719", tags: ["Sunshine", "Crafts"] }
-];
+const $=s=>document.querySelector(s);
+const Dashboard=globalThis.PlurapackDashboard;
+let account,system,view=Dashboard.initialView(),editing=false,draft=null;
+class ApiError extends Error{constructor(r,m){super(m);this.status=r.status}}
+async function api(path,options={}){const r=await fetch(path,{credentials:"same-origin",...options,headers:{Accept:"application/json",...(options.body?{"Content-Type":"application/json"}:{}),...options.headers}});if(r.status===401){location.assign(`/login?returnTo=${encodeURIComponent(location.pathname)}`);throw new ApiError(r,"Session expired")};if(!r.ok){let m="Something went wrong.";try{m=(await r.json()).message||m}catch{}throw new ApiError(r,m)}return r.status===204?null:r.json()}
+const esc=v=>{const n=document.createElement("span");n.textContent=v??"";return n.innerHTML}; const initials=n=>(n||"?").split(/\s+/).map(x=>x[0]).join("").slice(0,2).toUpperCase();
+function toast(m,bad=false){const t=$("#toast");t.textContent=m;t.className=bad?"show error":"show";setTimeout(()=>t.className="",3000)}
+async function refresh(){system=await api(`/api/systems/${account.systemId}`);renderSidebar();render()}
+function renderSidebar(){ $("#systemName").textContent=system.displayName; const a=$("#systemAvatar");a.innerHTML=system.logo?`<img src="${esc(system.logo)}" alt="">`:"✦";const q=$("#memberSearch").value.toLowerCase();$("#memberList").innerHTML=system.members.filter(m=>m.name.toLowerCase().includes(q)).map(m=>`<button data-member="${m.id}" class="member-item ${view.memberId===m.id?"selected":""}">${m.avatar?`<img class="avatar" src="${esc(m.avatar)}" alt="">`:`<span class="avatar" style="--color:${m.color}">${esc(initials(m.name))}</span>`}<span><strong>${esc(m.name)}</strong><small>${esc(m.pronouns||"Pronouns not set")}</small></span></button>`).join("")||"<p>No members yet.</p>"}
+function field(label,name,value,type="text",help=""){return `<label class="field"><span>${label}</span>${editing?(type==="textarea"?`<textarea name="${name}">${esc(value)}</textarea>`:`<input name="${name}" type="${type}" value="${esc(value)}">`):`<output>${esc(value)||"Not set"}</output>`}${help?`<small>${help}</small>`:""}</label>`}
+function imageField(label,name,url,help){return `<section class="field image-field"><span>${label}</span><button type="button" ${editing?`data-image="${name}"`:"disabled"} aria-label="${editing?`Change ${label}`:label}">${url?`<img src="${esc(url)}" alt="${label}">`:`<span class="image-empty">No image</span>`}</button>${help?`<small>${help}</small>`:""}</section>`}
+function editButton(){return `<button id="editApply" class="primary">${editing?"✅ Apply changes":"📝 Edit"}</button>`}
+function renderSystem(){const d=draft||system;$("#content").innerHTML=`<header class="page-head"><div><p class="eyebrow">SYSTEM INFORMATION</p><h1>${esc(system.displayName)}</h1></div>${editButton()}</header><form id="profileForm" class="profile-grid">${imageField("System logo","logo",d.logo)}${field("System name","displayName",d.displayName)}${field("Description","description",d.description,"textarea")}${field("System tag","tag",d.tag)}${editing?`<label class="check"><input type="checkbox" name="showSystemTag" ${d.showSystemTag?"checked":""}> Show system tag</label>`:`<div class="field"><span>Show system tag</span><output>${d.showSystemTag?"Yes":"No"}</output></div>`}${imageField("System banner","banner",d.banner,"Landscape images around 6:4 work best.")}</form><p id="saveError" class="error-message"></p>`}
 
-const $ = (selector) => document.querySelector(selector);
-const list = $("#memberList");
-let activeMember = members[0];
-let currentAccount;
-let currentSystem;
-
-class ApiError extends Error {
-  constructor(response, message) { super(message); this.status = response.status; }
-}
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "same-origin", ...options,
-    headers: { Accept: "application/json", ...(options.body ? { "Content-Type": "application/json" } : {}), ...options.headers }
-  });
-  if (response.status === 401) {
-    const returnTo = `${location.pathname}${location.search}${location.hash}`;
-    location.assign(`/login?returnTo=${encodeURIComponent(returnTo)}`);
-    throw new ApiError(response, "Your session has expired.");
-  }
-  if (response.status === 403) throw new ApiError(response, "You do not have access to this system.");
-  if (!response.ok) {
-    let message = `The server returned ${response.status}.`;
-    try { message = (await response.json()).message || message; } catch { /* The error body may not be JSON. */ }
-    throw new ApiError(response, message);
-  }
-  return response.status === 204 ? null : response.json();
-}
-function showToast(message, error = false) { const toast = $("#toast"); toast.textContent = message; toast.classList.toggle("error", error); toast.classList.add("show"); setTimeout(() => toast.classList.remove("show"), 2400); }
-function setBusy(form, busy) { form.querySelectorAll("button,input,textarea").forEach(control => { control.disabled = busy; }); form.setAttribute("aria-busy", String(busy)); }
-
-function initials(name) { return name.trim().split(/\s+/).map(part => part[0]).join("").slice(0, 2).toUpperCase(); }
-function escapeHTML(value) { const node = document.createElement("span"); node.textContent = value; return node.innerHTML; }
-function renderList(query = "") {
-  const filtered = members.filter(member => `${member.name} ${member.alias || ""}`.toLowerCase().includes(query.toLowerCase()));
-  list.innerHTML = filtered.length ? filtered.map(member => `
-    <button class="member-item ${member === activeMember ? "active" : ""}" type="button" data-id="${member.id}">
-      <span class="avatar member-avatar ${member.fronting ? "fronting" : ""}" style="--member-color:${member.color}">${escapeHTML(initials(member.name))}</span>
-      <span class="member-copy"><strong>${escapeHTML(member.name)}</strong><span>${escapeHTML(member.pronouns || "Pronouns not set")}</span></span><time>${escapeHTML(member.time || "")}</time>
-    </button>`).join("") : '<div class="empty-state">No members found.</div>';
-}
-function showMember(member) {
-  activeMember = member;
-  $("#detailAvatar").textContent = initials(member.name);
-  $("#detailAvatar").style.background = `linear-gradient(145deg, ${member.color}, #544980)`;
-  $("#detailName").textContent = member.name;
-  $("#detailAlias").textContent = member.alias || member.name;
-  $("#detailPronouns").textContent = member.pronouns || "Pronouns not set";
-  $("#frontingBadge").hidden = !member.fronting;
-  $("#detailDescription").textContent = member.description || `${member.name} is part of the Lumen System. Their profile is ready for more details, notes, and the things they love.`;
-  $("#detailTags").innerHTML = (member.tags || []).map(tag => `<span>${escapeHTML(tag)}</span>`).join("");
-  $("#proxyTag").textContent = `${member.proxy}text`;
-  $("#proxyName").textContent = member.name;
-  $("#colorCode").textContent = member.color;
-  $("#colorSwatch").style.background = member.color;
-  $("#memberId").textContent = member.id;
-  $("#formMemberName").textContent = member.name;
-  $("#formList").innerHTML = (member.forms || []).length ? member.forms.map(form => `<div class="form-row ${member.defaultFormId === form.id ? "default" : ""}" data-form-id="${form.id}"><button class="form-preview" type="button"><span class="form-picture">${escapeHTML(initials(form.displayName))}</span><span><strong>${escapeHTML(form.displayName)}</strong><small>${escapeHTML(form.pronouns || member.pronouns || "Pronouns not set")} · ${escapeHTML(form.soma || "No soma description")}</small></span><code>${form.id}</code></button><button class="default-form-button" type="button" aria-label="${member.defaultFormId === form.id ? "Clear" : "Set"} ${escapeHTML(form.displayName)} as default" title="${member.defaultFormId === form.id ? "Clear default" : "Set as default"}">${member.defaultFormId === form.id ? "★ Default" : "☆ Default"}</button></div>`).join("") : '<p class="empty-forms">No forms yet. The member profile is currently used.</p>';
-  renderList($("#memberSearch").value);
-}
-list.addEventListener("click", event => { const item = event.target.closest(".member-item"); if (item) showMember(members.find(member => member.id === item.dataset.id)); });
-$("#memberSearch").addEventListener("input", event => renderList(event.target.value));
-document.addEventListener("keydown", event => { if ((event.metaKey || event.ctrlKey) && event.key === "k") { event.preventDefault(); $("#memberSearch").focus(); } });
-
-const modal = $("#memberModal");
-$("#openModal").addEventListener("click", () => { modal.showModal(); setTimeout(() => $("#newName").focus(), 50); });
-function closeModal() { modal.close(); $("#memberForm").reset(); }
-$("#closeModal").addEventListener("click", closeModal);
-$("#cancelModal").addEventListener("click", closeModal);
-modal.addEventListener("click", event => { if (event.target === modal) closeModal(); });
-const colorPicker = $("input[name=color]");
-const colorText = $("input[name=colorText]");
-colorPicker.addEventListener("input", () => { colorText.value = colorPicker.value.toUpperCase(); });
-colorText.addEventListener("input", () => { if (/^#[0-9A-Fa-f]{6}$/.test(colorText.value)) colorPicker.value = colorText.value; });
-$("#memberForm").addEventListener("submit", async event => {
-  event.preventDefault(); const form = event.currentTarget; const data = new FormData(form); const name = data.get("name").trim(); if (!name) return;
-  const payload = { name, alias: data.get("alias").trim() || null, pronouns: data.get("pronouns").trim() || null, color: /^#[0-9A-Fa-f]{6}$/.test(data.get("colorText")) ? data.get("colorText").toUpperCase() : data.get("color").toUpperCase(), proxy: data.get("proxy").trim() || null, description: data.get("description").trim() || null };
-  try {
-    setBusy(form, true);
-    const member = await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members`, { method: "POST", body: JSON.stringify(payload) });
-    member.forms ||= []; member.tags ||= []; members.unshift(member); closeModal();
-    $("#memberCount").textContent = members.length; $("#memberPill").textContent = members.length; showMember(member); showToast(`${member.name} was added`);
-  } catch (error) { if (error.status !== 401) showToast(error.message, true); } finally { setBusy(form, false); }
-});
-$("#copyColor").addEventListener("click", async () => { await navigator.clipboard?.writeText($("#colorCode").textContent); showToast("Color copied"); });
-const formModal = $("#formModal");
-$("#openFormModal").addEventListener("click", () => formModal.showModal());
-function closeFormModal() { formModal.close(); $("#formForm").reset(); }
-$("#closeFormModal").addEventListener("click", closeFormModal);
-$("#cancelFormModal").addEventListener("click", closeFormModal);
-$("#formForm").addEventListener("submit", async event => {
-  event.preventDefault(); const formElement = event.currentTarget; const data = new FormData(formElement); const displayName = data.get("displayName").trim(); if (!displayName) return;
-  const picture = data.get("picture").trim(); if (picture && !/^https?:\/\//i.test(picture)) return showToast("Picture must be an HTTP or HTTPS URL.", true);
-  try {
-    setBusy(formElement, true);
-    const form = await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}/forms`, { method: "POST", body: JSON.stringify({ displayName, pronouns: data.get("pronouns").trim() || null, picture: picture || null, soma: data.get("soma").trim(), prefix: data.get("prefix").trim(), suffix: data.get("suffix").trim() }) });
-    (activeMember.forms ||= []).push(form); closeFormModal(); showMember(activeMember); showToast(`Form ${form.id} connected to ${activeMember.name}`);
-  } catch (error) { if (error.status !== 401) showToast(error.message, true); } finally { setBusy(formElement, false); }
-});
-$("#formList").addEventListener("click", async event => { const row = event.target.closest(".form-row"); if (!row) return; const form = activeMember.forms.find(item => item.id === row.dataset.formId); if (event.target.closest(".default-form-button")) { const defaultFormId = activeMember.defaultFormId === form.id ? null : form.id; try { await api(`/api/systems/${encodeURIComponent(currentSystem.id)}/members/${encodeURIComponent(activeMember.id)}`, { method: "PATCH", body: JSON.stringify({ defaultFormId }) }); activeMember.defaultFormId = defaultFormId; showMember(activeMember); showToast(defaultFormId ? `${form.displayName} is now the default form` : "Default form cleared"); } catch (error) { if (error.status !== 401) showToast(error.message, true); } return; } $("#detailName").textContent = form.displayName; $("#detailPronouns").textContent = form.pronouns || activeMember.pronouns || "Pronouns not set"; if (form.soma) $("#detailDescription").textContent = form.soma; if (form.picture) { $("#detailAvatar").style.backgroundImage = `url("${encodeURI(form.picture)}")`; $("#detailAvatar").style.backgroundSize = "cover"; } showToast(`Previewing ${form.displayName}`); });
-async function loadDashboard() {
-  try {
-    currentAccount = await api("/api/account");
-    const requestedId = new URLSearchParams(location.search).get("system") || currentAccount.systemId || currentAccount.system?.id;
-    if (!requestedId) throw new Error("Your account is not connected to a system yet.");
-    currentSystem = await api(`/api/systems/${encodeURIComponent(requestedId)}`);
-    currentSystem.id ||= requestedId;
-    if (Array.isArray(currentSystem.members) && currentSystem.members.length) members.splice(0, members.length, ...currentSystem.members);
-    const accountName = currentAccount.displayName || currentAccount.name || currentAccount.username;
-    $("#accountName").textContent = accountName; $("#accountAvatar").textContent = initials(accountName); $("#accountRole").textContent = currentAccount.role || "System admin";
-    const systemName = currentSystem.displayName || currentSystem.name; $("#systemName").textContent = systemName; document.title = `Plurapack — ${systemName}`;
-    $("#memberCount").textContent = members.length; $("#memberPill").textContent = members.length; $("#fronterCount").textContent = members.filter(member => member.fronting).length;
-    showMember(members[0]);
-  } catch (error) {
-    if (error.status === 401) return;
-    $("#dashboard").hidden = true; const state = $("#accessState"); state.hidden = false;
-    state.querySelector("h1").textContent = error.status === 403 ? "This system is private" : "Dashboard unavailable";
-    state.querySelector("p").textContent = error.status === 403 ? "You’re signed in, but this system doesn’t belong to your account." : error.message;
-  }
-}
-renderList();
-loadDashboard();
+function formStrip(m,selected){return `<div class="strip"><fieldset><legend>Voice playback</legend>${[["🔈","Off","off"],["💽","Send","send"]].map(x=>`<button data-playback="${x[2]}" class="${m.voice.playback===x[2]?"selected":""}" aria-label="${x[1]} voice playback"><b>${x[0]}</b>${x[1]}</button>`).join("")}<button disabled aria-label="Browser playback coming soon"><b>🖥️</b>Browser<small>Coming soon</small></button><button disabled aria-label="Both playback coming soon"><b>🔊</b>Both<small>Coming soon</small></button><details><summary>Voice settings</summary><p>Replace and delete voice are unavailable until voice management is supported.</p></details></fieldset><fieldset><legend>Forms / somas</legend><div class="forms">${m.forms.map(f=>`<span class="form-chip ${selected?.id===f.id?"selected":""}"><button data-form="${f.id}">${esc(f.displayName)}${m.defaultFormId===f.id?" ★ Default":""}</button><button data-delete-form="${f.id}" aria-label="Delete form ${esc(f.displayName)}">❌</button></span>`).join("")}<button id="addForm">➕ Add another form…</button></div></fieldset></div>`}
+function renderMember(){const m=system.members.find(x=>x.id===view.memberId);if(!m){view=Dashboard.selectSystem();return renderSystem()}const selected=m.forms.find(f=>f.id===view.formId)||m.forms.find(f=>f.id===m.defaultFormId)||m.forms[0];view.formId=selected?.id;const d=draft||m;$("#content").innerHTML=`${formStrip(m,selected)}<header class="page-head"><h1>${esc(m.name)}</h1><div class="actions">${editButton()}<button id="deleteMember" class="danger">❌ Delete member</button></div></header><form id="profileForm"><section class="profile-grid">${imageField("Picture / Avatar","avatar",d.avatar)}${field("Member name","name",d.name)}${field("Color","color",d.color,"color")}${field("Pronouns","pronouns",d.pronouns)}${field("Description","description",d.description,"textarea")}${field("Aliases","alias",d.alias,"text","A short optional name used to find this member.")}${field("Proxy prefix","prefix",d.prefix)}${field("Proxy suffix","suffix",d.suffix)}${imageField("Member banner","banner",d.banner,"Landscape images around 6:4 work best.")}</section>${selected?formSection(selected):"<section class='form-profile'><h2>No forms yet</h2><p>Add a form above when this member needs another presentation.</p></section>"}</form><p id="saveError" class="error-message"></p>`}
+function formSection(f){const d=(draft&&draft.form)||f;return `<section class="form-profile"><div class="section-head"><div><p class="eyebrow">SELECTED FORM</p><h2>${esc(f.displayName)}</h2></div>${editing?"<span class='editing'>Editing with member</span>":""}</div><div class="profile-grid">${imageField("Form picture","form.picture",d.picture)}${field("Form name","form.displayName",d.displayName)}${field("Pronouns","form.pronouns",d.pronouns)}${field("Description / Soma","form.soma",d.soma,"textarea")}${field("Form proxy prefix","form.prefix",d.prefix)}${field("Form proxy suffix","form.suffix",d.suffix)}${imageField("Form banner","form.banner",d.banner,"Portrait images around 4:8 work best.")}</div></section>`}
+function render(){editing=false;draft=null;view.kind==="system"?renderSystem():renderMember();renderSidebar();$("#content").focus({preventScroll:true})}
+function values(){const fd=new FormData($("#profileForm")),o={};for(const [k,v] of fd){if(k.startsWith("form.")){(o.form??={})[k.slice(5)]=v||null}else o[k]=v||null}if(view.kind==="system")o.showSystemTag=fd.has("showSystemTag");return o}
+async function save(){const o=values(),m=system.members.find(x=>x.id===view.memberId);draft={...draft,...o,form:o.form?{...(draft?.form||{}),...o.form}:draft?.form};try{if(view.kind==="system")await api(`/api/systems/${system.id}`,{method:"PATCH",body:JSON.stringify(o)});else{delete o.form;await api(`/api/systems/${system.id}/members/${m.id}`,{method:"PATCH",body:JSON.stringify(o)});if(draft.form&&view.formId)await api(`/api/systems/${system.id}/members/${m.id}/forms/${view.formId}`,{method:"PATCH",body:JSON.stringify(draft.form)})}await refresh();toast("Changes applied") }catch(e){const state=Dashboard.failedSave({editing,draft},"Couldn't save those changes. Your edits are still here.");editing=state.editing;draft=state.draft;$("#saveError").textContent=state.error;toast("Couldn't save. Your edits are still here.",true);console.error(e)}}
+function confirmDelete(title,text,label){return new Promise(resolve=>{const d=$("#confirmDialog");$("#confirmTitle").textContent=title;$("#confirmText").textContent=text;$("#confirmDelete").textContent=label;d.showModal();d.onclose=()=>resolve(d.returnValue==="confirm")})}
+document.addEventListener("click",async e=>{const member=e.target.closest("[data-member]");if(member){view=Dashboard.selectMember(member.dataset.member);render();return}if(e.target.closest("#systemButton")){view=Dashboard.selectSystem();render();return}if(e.target.closest("#editApply")){if(!editing){const m=system.members.find(x=>x.id===view.memberId),form=m?.forms.find(f=>f.id===view.formId);const state=Dashboard.enterEdit(view.kind,view.kind==="system"?system:m,form);editing=state.editing;draft=state.draft;view.kind==="system"?renderSystem():renderMember()}else save();return}const img=e.target.closest("[data-image]");if(img){const key=img.dataset.image,cur=key.startsWith("form.")?draft.form[key.slice(5)]:draft[key];$("#imageUrl").value=cur||"";$("#imagePreview").src=cur||"";$("#imageDialog").dataset.key=key;$("#imageDialog").showModal();return}const fs=e.target.closest("[data-form]");if(fs){view=Dashboard.selectForm(view,fs.dataset.form);editing=false;draft=null;renderMember();return}const del=e.target.closest("[data-delete-form]");if(del){const m=system.members.find(x=>x.id===view.memberId),f=m.forms.find(x=>x.id===del.dataset.deleteForm);if(await confirmDelete(`Delete the form “${f.displayName}”?`,"The member will not be deleted.","Delete form")){const request=Dashboard.deletionRequest("form",{systemId:system.id,memberId:m.id,formId:f.id});await api(request.path,{method:request.method});await refresh()}return}if(e.target.closest("#deleteMember")){const m=system.members.find(x=>x.id===view.memberId);if(await confirmDelete(`Delete member “${m.name}”?`,"This MEMBER and all associated forms will be permanently removed.","Delete member")){const request=Dashboard.deletionRequest("member",{systemId:system.id,memberId:m.id});await api(request.path,{method:request.method});view=Dashboard.selectSystem();await refresh()}return}if(e.target.closest("#addForm")){const m=system.members.find(x=>x.id===view.memberId),f=await api(`/api/systems/${system.id}/members/${m.id}/forms`,{method:"POST",body:JSON.stringify({displayName:Dashboard.nextFormName(m.forms)})});await refresh();view=Dashboard.selectForm(Dashboard.selectMember(m.id),f.id);editing=true;draft={...system.members.find(x=>x.id===m.id),form:f};renderMember();return}const pb=e.target.closest("[data-playback]");if(pb){const m=system.members.find(x=>x.id===view.memberId);await api(`/api/systems/${system.id}/members/${m.id}`,{method:"PATCH",body:JSON.stringify({playback:pb.dataset.playback})});await refresh();toast(`Voice playback set to ${pb.textContent.trim()}`)}});
+$("#imageUrl").addEventListener("input",e=>$("#imagePreview").src=e.target.value);$("#imageApply").addEventListener("click",()=>{const key=$("#imageDialog").dataset.key,v=$("#imageUrl").value||null;if(key.startsWith("form."))draft.form[key.slice(5)]=v;else draft[key]=v;setTimeout(()=>view.kind==="system"?renderSystem():renderMember())});
+$("#addMember").onclick=async()=>{const proxy=prompt("Choose a proxy prefix for the new member (required):");if(!proxy)return;try{const m=await api(`/api/systems/${system.id}/members`,{method:"POST",body:JSON.stringify({name:"New member",proxy})});await refresh();view=Dashboard.selectMember(m.id);editing=true;draft=structuredClone(system.members.find(x=>x.id===m.id));renderMember()}catch(e){toast(e.message,true)}};$("#memberSearch").oninput=renderSidebar;$("#logout").onclick=async()=>{await api("/api/auth/logout",{method:"POST"});location.assign("/login")};
+(async()=>{try{account=await api("/api/account");if(!account.systemId)throw Error("No system is linked to this account.");await refresh();$("#loading").hidden=true;$("#app").hidden=false}catch(e){if(e.status!==401){$("#loading").innerHTML=`<h1>Dashboard unavailable</h1><p>${esc(e.message)}</p>`}}})();

@@ -16,6 +16,7 @@ class SystemPatch(APIModel):
     logo: HttpUrl | None = None
     system_tag: str | None = Field(None, alias="tag", max_length=32)
     show_system_tag: bool | None = Field(None, alias="showSystemTag")
+    banner: HttpUrl | None = None
 
 
 class MemberCreate(APIModel):
@@ -53,6 +54,7 @@ class MemberPatch(APIModel):
     color: str | None = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
     avatar: HttpUrl | None = None
     description: str | None = Field(None, max_length=1000)
+    banner: HttpUrl | None = None
     default_form_id: str | None = Field(None, alias="defaultFormId", pattern=r"^[0-9a-f]{5}$")
     playback: Literal["off", "local", "send", "both"] | None = None
     voice_settings: dict[str, Any] | None = Field(None, alias="voiceSettings")
@@ -65,6 +67,7 @@ class FormCreate(APIModel):
     pronouns: str | None = Field(None, max_length=64)
     prefix: str = Field("", max_length=32)
     suffix: str = Field("", max_length=32)
+    banner: HttpUrl | None = None
 
 
 class FormPatch(APIModel):
@@ -74,6 +77,7 @@ class FormPatch(APIModel):
     pronouns: str | None = Field(None, max_length=64)
     prefix: str | None = Field(None, max_length=32)
     suffix: str | None = Field(None, max_length=32)
+    banner: HttpUrl | None = None
 
 
 class FrontUpdate(APIModel):

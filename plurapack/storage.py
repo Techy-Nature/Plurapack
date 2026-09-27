@@ -36,6 +36,7 @@ class Member:
     default_form_id: str | None
     description: str
     pronouns: str | None
+    banner: str | None
 
 
 @dataclass(frozen=True)
@@ -46,6 +47,7 @@ class System:
     logo: str | None
     system_tag: str | None
     show_system_tag: int
+    banner: str | None
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,7 @@ class Form:
     pronouns: str | None
     prefix: str
     suffix: str
+    banner: str | None
 
 
 @dataclass(frozen=True)
@@ -104,7 +107,8 @@ class Store:
                 CREATE TABLE IF NOT EXISTS systems (
                     id TEXT PRIMARY KEY CHECK(length(id)=10), display_name TEXT NOT NULL,
                     description TEXT NOT NULL DEFAULT '', logo TEXT,
-                    system_tag TEXT, show_system_tag INTEGER NOT NULL DEFAULT 1
+                    system_tag TEXT, show_system_tag INTEGER NOT NULL DEFAULT 1,
+                    banner TEXT,
                         CHECK(show_system_tag IN (0,1))
                 );
                 CREATE TABLE IF NOT EXISTS owners (
@@ -120,6 +124,7 @@ class Store:
                     default_form_id TEXT REFERENCES forms(id) ON DELETE SET NULL,
                     description TEXT NOT NULL DEFAULT '',
                     pronouns TEXT,
+                    banner TEXT,
                     UNIQUE(system_id, name), UNIQUE(system_id, prefix, suffix)
                 );
                 CREATE TABLE IF NOT EXISTS links (
@@ -145,7 +150,7 @@ class Store:
                     id TEXT PRIMARY KEY CHECK(length(id)=5),
                     member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
                     display_name TEXT NOT NULL, avatar TEXT, soma TEXT NOT NULL DEFAULT '', pronouns TEXT,
-                    prefix TEXT NOT NULL DEFAULT '', suffix TEXT NOT NULL DEFAULT '',
+                    prefix TEXT NOT NULL DEFAULT '', suffix TEXT NOT NULL DEFAULT '', banner TEXT,
                     UNIQUE(member_id, display_name)
                 );
                 CREATE TABLE IF NOT EXISTS current_fronts (
@@ -181,6 +186,8 @@ class Store:
                 db.execute("ALTER TABLE members ADD COLUMN description TEXT NOT NULL DEFAULT ''")
             if "pronouns" not in columns:
                 db.execute("ALTER TABLE members ADD COLUMN pronouns TEXT")
+            if "banner" not in columns:
+                db.execute("ALTER TABLE members ADD COLUMN banner TEXT")
             form_columns = {row[1] for row in db.execute("PRAGMA table_info(forms)")}
             if "pronouns" not in form_columns:
                 db.execute("ALTER TABLE forms ADD COLUMN pronouns TEXT")
@@ -188,6 +195,8 @@ class Store:
                 db.execute("ALTER TABLE forms ADD COLUMN prefix TEXT NOT NULL DEFAULT ''")
             if "suffix" not in form_columns:
                 db.execute("ALTER TABLE forms ADD COLUMN suffix TEXT NOT NULL DEFAULT ''")
+            if "banner" not in form_columns:
+                db.execute("ALTER TABLE forms ADD COLUMN banner TEXT")
             system_columns = {row[1] for row in db.execute("PRAGMA table_info(systems)")}
             if "description" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN description TEXT NOT NULL DEFAULT ''")
@@ -197,6 +206,8 @@ class Store:
                 db.execute("ALTER TABLE systems ADD COLUMN system_tag TEXT")
             if "show_system_tag" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN show_system_tag INTEGER NOT NULL DEFAULT 1")
+            if "banner" not in system_columns:
+                db.execute("ALTER TABLE systems ADD COLUMN banner TEXT")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
 
     def systems_for_account(self, account_id: str) -> list[System]:
@@ -214,7 +225,7 @@ class Store:
     def update_system(self, account_id: str, system_id: str, **changes: Any) -> System:
         if not self.account_has_system(account_id, system_id):
             raise PermissionError("System not owned by this account.")
-        allowed = {"display_name", "description", "logo", "system_tag", "show_system_tag"}
+        allowed = {"display_name", "description", "logo", "system_tag", "show_system_tag", "banner"}
         if not changes or not set(changes) <= allowed:
             raise ValueError("No supported system fields were supplied.")
         with self.connect() as db:
@@ -227,7 +238,7 @@ class Store:
         if member is None:
             raise PermissionError("Member not found or not owned by this account.")
         allowed = {"name", "prefix", "suffix", "avatar", "color", "alias", "description",
-                   "pronouns", "default_form_id"}
+                   "pronouns", "default_form_id", "banner"}
         if not changes or not set(changes) <= allowed:
             raise ValueError("No supported member fields were supplied.")
         if "prefix" in changes or "suffix" in changes:
@@ -244,7 +255,7 @@ class Store:
         selected = self.form_selected(account_id, form_id)
         if selected is None:
             raise PermissionError("Form not found or not owned by this account.")
-        allowed = {"display_name", "avatar", "soma", "pronouns", "prefix", "suffix"}
+        allowed = {"display_name", "avatar", "soma", "pronouns", "prefix", "suffix", "banner"}
         if not changes or not set(changes) <= allowed:
             raise ValueError("No supported form fields were supplied.")
         form, _ = selected
@@ -525,7 +536,7 @@ class Store:
 
     def create_form(self, account_id: str, member_selector: str, display_name: str,
                     avatar: str | None = None, soma: str = "", pronouns: str | None = None,
-                    prefix: str = "", suffix: str = "") -> Form:
+                    prefix: str = "", suffix: str = "", banner: str | None = None) -> Form:
         """Create a form whose ID permanently resolves back to its member."""
         member = self.member_selected(account_id, member_selector)
         if member is None:
@@ -557,9 +568,9 @@ class Store:
                         continue
                     try:
                         db.execute("""INSERT INTO forms
-                            (id,member_id,display_name,avatar,soma,pronouns,prefix,suffix)
-                            VALUES (?,?,?,?,?,?,?,?)""",
-                            (form_id, member.id, display_name, avatar, soma, pronouns, prefix, suffix))
+                            (id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner)
+                            VALUES (?,?,?,?,?,?,?,?,?)""",
+                            (form_id, member.id, display_name, avatar, soma, pronouns, prefix, suffix, banner))
                         break
                     except sqlite3.IntegrityError as error:
                         if "forms.id" not in str(error):
@@ -573,6 +584,7 @@ class Store:
         with self.connect() as db:
             rows = db.execute("""SELECT f.id form_id, f.member_id, f.display_name, f.avatar form_avatar,
                 f.soma, f.pronouns form_pronouns, f.prefix form_prefix, f.suffix form_suffix,
+                f.banner form_banner,
                 m.* FROM forms f JOIN members m ON m.id=f.member_id
                 JOIN owners o ON o.system_id=m.system_id
                 WHERE o.account_id=? AND (f.id=? OR f.display_name=?)
@@ -586,7 +598,7 @@ class Store:
         values = dict(row)
         form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
                     values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
-                    values.pop("form_prefix"), values.pop("form_suffix"))
+                    values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"))
         values.pop("member_id")
         return form, Member(**values)
 

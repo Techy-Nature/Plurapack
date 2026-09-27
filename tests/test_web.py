@@ -119,8 +119,11 @@ async def test_system_authorization_and_patch(api):
         assert (await client.get(f"/api/systems/{system_id}")).status_code == 200
         assert (await client.get(f"/api/systems/{other_id}")).status_code == 403
         assert (await client.get("/api/systems/0000000000")).status_code == 404
-        updated = await client.patch(f"/api/systems/{system_id}", json={"tag": "[Test]"})
+        updated = await client.patch(f"/api/systems/{system_id}", json={
+            "tag": "[Test]", "banner": "https://example.com/system.jpg"
+        })
         assert updated.json()["tag"] == "[Test]"
+        assert updated.json()["banner"] == "https://example.com/system.jpg"
 
 
 @pytest.mark.asyncio
@@ -133,10 +136,13 @@ async def test_member_crud_patch_preserves_fields_and_validation(api):
         assert created.status_code == 201
         member = created.json()
         edited = await client.patch(f"/api/systems/{system_id}/members/{member['id']}",
-                                    json={"name": "Alexis"})
+                                    json={"name": "Alexis", "avatar": "https://example.com/a.png",
+                                          "banner": "https://example.com/member.jpg"})
         assert edited.status_code == 200
         assert edited.json()["description"] == "Original"
         assert edited.json()["pronouns"] == "they/them"
+        assert edited.json()["avatar"] == "https://example.com/a.png"
+        assert edited.json()["banner"] == "https://example.com/member.jpg"
         assert (await client.post(f"/api/systems/{system_id}/members",
                                   json={"name": "", "unexpected": True})).status_code == 422
         no_proxy = await client.post(f"/api/systems/{system_id}/members", json={"name": "No Proxy"})
@@ -153,14 +159,18 @@ async def test_forms_relationships_crud_and_front(api):
     second = store.add_member("owner", "Second", "s:")
     async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
         response = await client.post(f"/api/systems/{system_id}/members/{first.id}/forms",
-                                     json={"displayName": "Formal", "soma": "A form"})
+                                     json={"displayName": "Formal", "soma": "A form",
+                                           "banner": "https://example.com/form.jpg"})
         assert response.status_code == 201
         form = response.json()
+        assert form["banner"] == "https://example.com/form.jpg"
         wrong = f"/api/systems/{system_id}/members/{second.id}/forms/{form['id']}"
         assert (await client.get(wrong)).status_code == 404
         path = f"/api/systems/{system_id}/members/{first.id}/forms/{form['id']}"
-        edited = await client.patch(path, json={"displayName": "Ceremonial"})
+        edited = await client.patch(path, json={"displayName": "Ceremonial",
+                                                "picture": "https://example.com/form.png"})
         assert edited.json()["soma"] == "A form"
+        assert edited.json()["picture"] == "https://example.com/form.png"
         front_path = f"/api/systems/{system_id}/front"
         selected = await client.put(front_path, json={"memberId": first.id, "formId": form["id"]})
         assert selected.json() == {"memberId": first.id, "formId": form["id"]}
