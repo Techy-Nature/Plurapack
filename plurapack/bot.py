@@ -14,6 +14,7 @@ from .proxy import Incoming, ProxyService
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .storage import Member, Store, System
+from .login import LoginError, LoginService
 from .transfer import TransferError, export_document, parse_import
 
 
@@ -27,6 +28,7 @@ STOAT_INSTALL_MESSAGE = (
 # difficult to do accidentally. Values are shortcut, usage suffix, and summary.
 COMMAND_HELP = {
     "help": ("h", "[COMMAND]", "List every command or show details for one."),
+    "login": ("lg", "CODE", "Approve a one-time dashboard login."),
     "setup": ("s", "[SYSTEM_NAME] [DESCRIPTION]", "Create your system."),
     "member": ("m", "NAME PREFIX [SUFFIX] [DESCRIPTION]", "Add a member and proxy tag."),
     "alias": ("a", "MEMBER [ALIAS]", "Set or clear a member selector."),
@@ -280,6 +282,7 @@ def create_bot(prefix: str, database: str) -> Any:
                                        job.channel_id, job.proxy_message_id, audio), queue_limit)
         bot.speech_queue = speech_queue
     service = ProxyService(store, platform, prefix, speech_queue)
+    login_service = LoginService(store)
     _register_cli_status_listeners(bot, stoat, prefix)
     # These controls are intentionally ephemeral: restarting the bot closes old
     # pagers and invalidates outstanding destructive confirmations.
@@ -302,6 +305,20 @@ def create_bot(prefix: str, database: str) -> Any:
         """List all current commands or explain one command in detail."""
         for page in _help_pages(prefix, command_name):
             await ctx.send(page)
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["login"]])
+    async def login(ctx: commands.Context, code: str) -> None:
+        """Prove dashboard identity using the authenticated message author."""
+        username = (getattr(ctx.author, "display_name", None)
+                    or getattr(ctx.author, "name", None)
+                    or getattr(ctx.author, "username", None)
+                    or str(ctx.author.id))
+        try:
+            login_service.verify(code, str(ctx.author.id), str(username))
+        except LoginError as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send("Dashboard login approved. You can return to your browser.")
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["setup"]])
     async def setup(ctx: commands.Context, name: str = "My system", *, description: str = "") -> None:

@@ -9,6 +9,7 @@ from plurapack.web_auth import COOKIE_NAME, WebUser, create_session_cookie
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     monkeypatch.setenv("PLURAPACK_SESSION_SECRET", "test-secret-that-is-longer-than-thirty-two-bytes")
+    monkeypatch.setenv("PLURAPACK_COOKIE_SECURE", "false")
     store = Store(tmp_path / "web.sqlite3")
     system_id = store.create_system("owner", "Test System", "Private")
     other_id = store.create_system("other", "Other System")
@@ -32,6 +33,83 @@ async def test_health_and_authentication(api):
         assert account.status_code == 200
         assert account.json()["systemId"] == system_id
         assert [system["id"] for system in account.json()["systems"]] == [system_id]
+
+
+@pytest.mark.asyncio
+async def test_bot_verified_login_session_and_logout(api):
+    store, system_id, other_id, transport = api
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        started = await client.post("/api/auth/login/start")
+        assert started.status_code == 200
+        login = started.json()
+        assert len(login["attemptId"]) >= 24
+        assert len(login["browserSecret"]) >= 32
+        assert login["expiresIn"] == 300
+        assert login["code"][4] == "-"
+
+        with store.connect() as db:
+            row = db.execute("SELECT * FROM login_attempts WHERE id=?", (login["attemptId"],)).fetchone()
+        assert login["code"] not in tuple(str(value) for value in row)
+        assert login["browserSecret"] not in tuple(str(value) for value in row)
+
+        path = f"/api/auth/login/{login['attemptId']}"
+        assert (await client.get(path)).json() == {"status": "pending"}
+        assert (await client.post(path + "/complete", json={
+            "browser_secret": login["browserSecret"]
+        })).status_code == 400
+
+        # This call represents the bot command; identity comes from its authenticated author.
+        client._transport.app.state.login_service.verify(login["code"], "owner", "Owner Name")
+        status_response = await client.get(path)
+        assert status_response.json() == {"status": "verified"}
+        assert "owner" not in status_response.text
+
+        assert (await client.post(path + "/complete", json={})).status_code == 422
+        assert (await client.post(path + "/complete", json={"browser_secret": "wrong"})).status_code == 400
+        assert (await client.post(path + "/complete", json={
+            "browser_secret": login["browserSecret"], "account_id": "other"
+        })).status_code == 422
+        completed = await client.post(path + "/complete", json={
+            "browser_secret": login["browserSecret"]
+        })
+        assert completed.status_code == 200
+        cookie_header = completed.headers["set-cookie"]
+        assert "plurapack_session=" in cookie_header
+        assert "HttpOnly" in cookie_header and "SameSite=lax" in cookie_header and "Path=/" in cookie_header
+        account = await client.get("/api/account")
+        assert account.status_code == 200
+        assert account.json()["id"] == "owner"
+        assert account.json()["systemId"] == system_id
+        assert other_id not in [item["id"] for item in account.json()["systems"]]
+        assert (await client.post(path + "/complete", json={
+            "browser_secret": login["browserSecret"]
+        })).status_code == 400
+
+        assert (await client.post("/api/auth/logout")).status_code == 204
+        assert (await client.get("/api/account")).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_login_start_rate_limit_ignores_untrusted_forwarded_addresses(tmp_path, monkeypatch):
+    monkeypatch.setenv("PLURAPACK_LOGIN_START_LIMIT", "3")
+    store = Store(tmp_path / "limited.sqlite3")
+    transport = httpx.ASGITransport(app=create_app(store, static_root=None),
+                                    client=("198.51.100.7", 1234))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        for index in range(3):
+            response = await client.post(
+                "/api/auth/login/start",
+                headers={"X-Forwarded-For": f"203.0.113.{index}"},
+            )
+            assert response.status_code == 200
+        limited = await client.post(
+            "/api/auth/login/start", headers={"X-Forwarded-For": "203.0.113.99"}
+        )
+        assert limited.status_code == 429
+        assert limited.headers["retry-after"] == "60"
+        assert set(limited.json()) == {"message"}
+    with store.connect() as db:
+        assert db.execute("SELECT count(*) FROM login_attempts").fetchone()[0] == 3
 
 
 @pytest.mark.asyncio

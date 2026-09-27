@@ -12,12 +12,20 @@ from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, ConfigDict
 
 from .storage import Form, Front, Member, Store, System
-from .web_auth import WebUser, require_authenticated_user
+from .login import LOGIN_START_WINDOW, LoginError, LoginService, LoginStartLimiter
+from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
+                       create_session_cookie, require_authenticated_user)
 from .web_models import FormCreate, FormPatch, FrontUpdate, MemberCreate, MemberPatch, SystemPatch
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+class LoginCompletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    browser_secret: str
 
 
 def form_json(form: Form) -> dict[str, Any]:
@@ -60,6 +68,10 @@ def front_json(front: Front | None) -> dict[str, Any]:
 def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> FastAPI:
     app = FastAPI(title="Plurapack Web API", version="1")
     app.state.store = store or Store(os.getenv("PLURAPACK_DATABASE", "plurapack.sqlite3"))
+    app.state.login_service = LoginService(app.state.store)
+    app.state.login_start_limiter = LoginStartLimiter(
+        int(os.getenv("PLURAPACK_LOGIN_START_LIMIT", "10"))
+    )
 
     @app.exception_handler(HTTPException)
     async def api_http_error(request: Request, exc: HTTPException) -> Response:
@@ -110,6 +122,51 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
     @app.get("/api/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.post("/api/auth/login/start")
+    async def start_login(request: Request) -> dict[str, Any]:
+        # Deliberately use the directly connected peer. Forwarded headers are
+        # attacker-controlled unless proxy trust is configured outside the app.
+        client = request.client.host if request.client else "unknown"
+        if not request.app.state.login_start_limiter.allow(client):
+            raise HTTPException(429, "Too many login attempts; try again shortly",
+                                headers={"Retry-After": str(LOGIN_START_WINDOW)})
+        attempt = await asyncio.to_thread(request.app.state.login_service.start)
+        return {"attemptId": attempt.id, "code": attempt.code,
+                "browserSecret": attempt.browser_secret, "expiresIn": attempt.expires_in,
+                "commandPrefix": os.getenv("PLURAPACK_PREFIX", "p;")}
+
+    @app.get("/api/auth/login/{attempt_id}")
+    async def login_status(attempt_id: str, request: Request) -> dict[str, str]:
+        try:
+            current = await asyncio.to_thread(request.app.state.login_service.status, attempt_id)
+        except LoginError as error:
+            raise HTTPException(404, str(error)) from error
+        return {"status": current}
+
+    @app.post("/api/auth/login/{attempt_id}/complete")
+    async def complete_login(attempt_id: str, body: LoginCompletion, request: Request) -> Response:
+        # Check session configuration before atomically consuming the attempt.
+        try:
+            create_session_cookie(WebUser("configuration-check", "configuration-check"), 1)
+        except RuntimeError as error:
+            raise HTTPException(503, "Dashboard authentication is not configured") from error
+        try:
+            user = await asyncio.to_thread(
+                request.app.state.login_service.complete, attempt_id, body.browser_secret)
+        except LoginError as error:
+            raise HTTPException(400, str(error)) from error
+        response = JSONResponse({"status": "authenticated"})
+        response.set_cookie(COOKIE_NAME, create_session_cookie(user), max_age=SESSION_LIFETIME,
+                            httponly=True, secure=cookie_secure(), samesite="lax", path="/")
+        return response
+
+    @app.post("/api/auth/logout", status_code=204)
+    async def logout() -> Response:
+        response = Response(status_code=204)
+        response.delete_cookie(COOKIE_NAME, path="/", httponly=True,
+                               secure=cookie_secure(), samesite="lax")
+        return response
 
     @app.get("/api/account")
     async def account(user: WebUser = Depends(require_authenticated_user),
@@ -269,6 +326,9 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
         return front_json(await run(store.switch_front, user.id, selector))
 
     if static_root:
+        @app.get("/login", include_in_schema=False)
+        async def login_page() -> FileResponse:
+            return FileResponse(static_root / "login.html")
         @app.get("/", include_in_schema=False)
         async def index() -> FileResponse:
             return FileResponse(static_root / "index.html")
