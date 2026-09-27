@@ -340,6 +340,10 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
         async def javascript() -> FileResponse:
             return FileResponse(static_root / "app.js", media_type="text/javascript")
 
+        @app.get("/dashboard_helpers.js", include_in_schema=False)
+        async def dashboard_helpers() -> FileResponse:
+            return FileResponse(static_root / "dashboard_helpers.js", media_type="text/javascript")
+
         @app.get("/styles.css", include_in_schema=False)
         async def stylesheet() -> FileResponse:
             return FileResponse(static_root / "styles.css", media_type="text/css")
