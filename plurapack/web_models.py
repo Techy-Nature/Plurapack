@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 
 class APIModel(BaseModel):
@@ -36,6 +36,12 @@ class MemberCreate(APIModel):
         if not value:
             raise ValueError("name cannot be blank")
         return value
+
+    @model_validator(mode="after")
+    def explicit_proxy_required(self) -> "MemberCreate":
+        if not self.prefix and not self.proxy:
+            raise ValueError("proxy or prefix is required")
+        return self
 
 
 class MemberPatch(APIModel):

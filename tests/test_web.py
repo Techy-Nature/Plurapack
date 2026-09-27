@@ -31,6 +31,7 @@ async def test_health_and_authentication(api):
         account = await client.get("/api/account")
         assert account.status_code == 200
         assert account.json()["systemId"] == system_id
+        assert [system["id"] for system in account.json()["systems"]] == [system_id]
 
 
 @pytest.mark.asyncio
@@ -60,6 +61,8 @@ async def test_member_crud_patch_preserves_fields_and_validation(api):
         assert edited.json()["pronouns"] == "they/them"
         assert (await client.post(f"/api/systems/{system_id}/members",
                                   json={"name": "", "unexpected": True})).status_code == 422
+        no_proxy = await client.post(f"/api/systems/{system_id}/members", json={"name": "No Proxy"})
+        assert no_proxy.status_code == 422
         assert (await client.get(f"/api/systems/{system_id}/members/fffff")).status_code == 404
         assert (await client.delete(f"/api/systems/{system_id}/members/{member['id']}")).status_code == 204
         assert (await client.get(f"/api/systems/{system_id}/members/{member['id']}")).status_code == 404
@@ -93,9 +96,22 @@ async def test_forms_relationships_crud_and_front(api):
 async def test_unsupported_voice_modes_and_system_delete(api):
     store, system_id, _, transport = api
     member = store.add_member("owner", "Voice", "v:")
+    store.configure_voice("owner", member.id, "voice.wav", {}, "send")
     async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
         result = await client.patch(f"/api/systems/{system_id}/members/{member.id}",
                                     json={"playback": "local"})
         assert result.status_code == 422
+        assert (await client.patch(f"/api/systems/{system_id}/members/{member.id}",
+                                   json={"playback": "off"})).status_code == 200
+        assert (await client.patch(f"/api/systems/{system_id}/members/{member.id}",
+                                   json={"playback": "send"})).status_code == 200
+        unsupported = await client.patch(f"/api/systems/{system_id}/members/{member.id}",
+                                         json={"voiceSettings": {"unknown": 1}})
+        assert unsupported.status_code == 422
+        assert "unsupported fields" in unsupported.json()["message"]
+        supported = await client.patch(f"/api/systems/{system_id}/members/{member.id}",
+                                       json={"voiceSettings": {"temperature": 0.7}})
+        assert supported.status_code == 200
+        assert supported.json()["voice"]["settings"] == {"temperature": 0.7}
         assert (await client.delete(f"/api/systems/{system_id}")).status_code == 204
         assert (await client.get(f"/api/systems/{system_id}")).status_code == 404

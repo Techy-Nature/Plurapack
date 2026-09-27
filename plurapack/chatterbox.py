@@ -8,11 +8,7 @@ from urllib.parse import urlsplit
 
 from .storage import Member
 from .speech import SpeechPart
-
-PERMITTED_SETTINGS = {
-    "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor",
-    "language", "split_text", "chunk_size",
-}
+from .voice import validate_voice_settings
 
 
 class ChatterboxError(RuntimeError):
@@ -40,23 +36,17 @@ class ChatterboxBackend:
         if not member.voice_reference:
             raise ChatterboxError("Speech voice reference is not configured.")
         try:
-            settings = json.loads(member.voice_settings)
-        except (TypeError, json.JSONDecodeError) as error:
+            settings = validate_voice_settings(member.voice_settings)
+        except (TypeError, ValueError) as error:
             raise ChatterboxError("Speech voice settings are invalid.") from error
-        if not isinstance(settings, dict):
-            raise ChatterboxError("Speech voice settings must be an object.")
-        if set(settings) - PERMITTED_SETTINGS:
-            raise ChatterboxError("Speech voice settings contain unsupported fields.")
         return await self._synthesize_with_settings(text, member, settings)
 
     async def synthesize_styled(self, parts: tuple[SpeechPart, ...], member: Member) -> bytes:
         """Render spans separately so Chatterbox's controls can convey formatting."""
         try:
-            base = json.loads(member.voice_settings)
-        except (TypeError, json.JSONDecodeError) as error:
+            base = validate_voice_settings(member.voice_settings)
+        except (TypeError, ValueError) as error:
             raise ChatterboxError("Speech voice settings are invalid.") from error
-        if not isinstance(base, dict) or set(base) - PERMITTED_SETTINGS:
-            raise ChatterboxError("Speech voice settings are invalid.")
         presets = {
             "normal": {},
             "emphasis": {"exaggeration": 0.85, "cfg_weight": 0.35},
@@ -74,10 +64,10 @@ class ChatterboxBackend:
     async def _synthesize_with_settings(self, text: str, member: Member, settings: dict) -> bytes:
         if not member.voice_reference:
             raise ChatterboxError("Speech voice reference is not configured.")
-        if not isinstance(settings, dict):
-            raise ChatterboxError("Speech voice settings must be an object.")
-        if set(settings) - PERMITTED_SETTINGS:
-            raise ChatterboxError("Speech voice settings contain unsupported fields.")
+        try:
+            settings = validate_voice_settings(settings)
+        except (TypeError, ValueError) as error:
+            raise ChatterboxError("Speech voice settings are invalid.") from error
         payload = {
             "text": text,
             "voice_mode": "clone",

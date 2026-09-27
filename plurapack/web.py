@@ -73,7 +73,7 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
         first = exc.errors()[0]
         location = ".".join(str(part) for part in first["loc"] if part != "body")
         message = f"{location}: {first['msg']}" if location else str(first["msg"])
-        return JSONResponse({"message": message, "errors": exc.errors()}, status_code=422)
+        return JSONResponse({"message": message}, status_code=422)
 
     def db(request: Request) -> Store:
         return request.app.state.store
@@ -159,7 +159,10 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
                             user: WebUser = Depends(require_authenticated_user),
                             store: Store = Depends(db)) -> dict[str, Any]:
         await authorized(system_id, user, store)
-        prefix = body.prefix if body.prefix is not None else (body.proxy or f"{body.name}:")
+        # Like the bot's member command, the API requires the caller to choose
+        # the proxy rather than inventing a dashboard-only default.
+        prefix = body.prefix if body.prefix is not None else body.proxy
+        assert prefix is not None  # Enforced by MemberCreate.explicit_proxy_required.
         member = await run(store.add_member, user.id, body.name, prefix, body.suffix,
                            body.description or "", alias=body.alias, pronouns=body.pronouns,
                            color=body.color, avatar=str(body.avatar) if body.avatar else None)
@@ -180,12 +183,14 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
         changes = body.model_dump(exclude_unset=True)
         if "default_form_id" in changes:
             member = await run(store.configure_default_form, user.id, member.id, changes.pop("default_form_id"))
-        if "playback" in changes:
-            playback = changes["playback"]
-            if playback in {"local", "both"}:
-                raise HTTPException(422, "Local playback is not implemented; use off or send")
-        if "voice_settings" in changes:
-            changes["voice_settings"] = json.dumps(changes["voice_settings"], separators=(",", ":"), sort_keys=True)
+        playback = changes.pop("playback", None)
+        voice_settings = changes.pop("voice_settings", None)
+        if playback is not None or voice_settings is not None:
+            member = await run(
+                store.configure_voice, user.id, member.id, member.voice_reference,
+                voice_settings if voice_settings is not None else member.voice_settings,
+                playback if playback is not None else member.playback,
+            )
         changes = {key: str(value) if key == "avatar" and value else value for key, value in changes.items()}
         if changes:
             member = await run(store.update_member, user.id, member.id, **changes)

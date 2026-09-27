@@ -18,7 +18,9 @@ python -m plurapack.web
 Then visit `http://127.0.0.1:8000`. Set `PLURAPACK_WEB_HOST` and
 `PLURAPACK_WEB_PORT` to change the bind address. Run the bot and Web API in two
 terminals with the same `PLURAPACK_DATABASE` to run both. SQLite WAL mode and
-short per-operation connections allow safe concurrent access.
+short per-operation connections allow safe concurrent access. The existing
+`owners.account_id` primary key intentionally limits each account to one linked
+system; the account response uses a `systems` list only as a stable API shape.
 
 The API provides `/api/account`, authorized system/member/form CRUD, front
 retrieval and switching, and `/api/health`; interactive OpenAPI documentation is
@@ -34,7 +36,9 @@ system identity; `GET /api/systems/:systemId` loads members; `POST
 /api/systems/:systemId/members` accepts the new-member fields; `POST
 /api/systems/:systemId/members/:memberId/forms` accepts the new-form fields; and
 `PATCH /api/systems/:systemId/members/:memberId` currently changes a default
-form. Successful creates return the new object, patches return the updated
+form. Member creation requires an explicit proxy prefix, matching the bot's
+`member` command; the API does not derive one from the member name. Successful
+creates return the new object, patches return the updated
 object, deletes return `204`, validation errors return `422`, unauthenticated
 requests return `401`, unauthorized systems return `403`, and missing or
 mismatched nested resources return `404`.

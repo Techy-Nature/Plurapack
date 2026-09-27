@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import secrets
 import sqlite3
@@ -10,6 +9,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Iterable, Iterator
+
+from .voice import normalize_voice_settings
 
 
 def short_hash(length: int) -> str:
@@ -190,7 +191,7 @@ class Store:
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
 
     def systems_for_account(self, account_id: str) -> list[System]:
-        """Return systems linked to an account (currently one by schema design)."""
+        """Return the account's linked system as a list (the schema permits at most one)."""
         with self.connect() as db:
             rows = db.execute("""SELECT s.* FROM systems s JOIN owners o ON o.system_id=s.id
                 WHERE o.account_id=? ORDER BY s.display_name""", (account_id,)).fetchall()
@@ -217,7 +218,7 @@ class Store:
         if member is None:
             raise PermissionError("Member not found or not owned by this account.")
         allowed = {"name", "prefix", "suffix", "avatar", "color", "alias", "description",
-                   "pronouns", "default_form_id", "playback", "voice_settings"}
+                   "pronouns", "default_form_id"}
         if not changes or not set(changes) <= allowed:
             raise ValueError("No supported member fields were supplied.")
         if "prefix" in changes or "suffix" in changes:
@@ -766,24 +767,18 @@ class Store:
         return self.form_selected(account_id, form.id)[0]  # type: ignore[index]
 
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
-                        voice_settings: str = "{}", playback: str = "send") -> Member:
+                        voice_settings: str | dict[str, Any] = "{}", playback: str = "send") -> Member:
         """Configure an owned member. Only ``send`` has output in this server-only release."""
         if playback not in {"off", "local", "send", "both"}:
             raise ValueError("Playback must be off, local, send, or both.")
         if playback in {"local", "both"}:
             raise ValueError("Local playback is not implemented; use off or send.")
-        try:
-            settings = json.loads(voice_settings)
-        except json.JSONDecodeError as error:
-            raise ValueError("Voice settings must be a JSON object.") from error
-        if not isinstance(settings, dict):
-            raise ValueError("Voice settings must be a JSON object.")
+        normalized = normalize_voice_settings(voice_settings)
         member = self.member_selected(account_id, member_selector)
         if member is None:
             raise PermissionError("Member not found or not owned by this account.")
         if playback == "send" and not voice_reference:
             raise ValueError("Send playback requires a voice reference.")
-        normalized = json.dumps(settings, separators=(",", ":"), sort_keys=True)
         with self.connect() as db:
             db.execute("UPDATE members SET voice_reference=?, voice_settings=?, playback=? WHERE id=?",
                        (voice_reference, normalized, playback, member.id))
