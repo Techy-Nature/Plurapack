@@ -24,12 +24,28 @@ system; the account response uses a `systems` list only as a stable API shape.
 
 The API provides `/api/account`, authorized system/member/form CRUD, front
 retrieval and switching, and `/api/health`; interactive OpenAPI documentation is
-at `/docs`. Requests use a signed, HttpOnly-ready `plurapack_session` cookie.
-**Stoat OAuth login/callback routes are intentionally not implemented yet**
-because this repository has no OAuth specification or credentials. Consequently,
-the dashboard will return `401` until a trusted OAuth callback issues a cookie;
-never treat a user-controlled account ID as authentication. The session secret
-must be at least 32 characters and should be stable, random, and private.
+at `/docs`. Plurapack does not rely on Stoat OAuth. Instead, `/login` creates a
+five-minute, one-time code and asks the user to send `<prefix>login CODE` to the
+Plurapack bot. The bot obtains the real account ID from the authenticated Stoat
+message author, and the initiating browser exchanges its separate private secret
+for the existing signed `plurapack_session` cookie. Neither the public attempt ID
+nor the browser can select an account ID.
+
+Run the bot and web process against the same `PLURAPACK_DATABASE`; otherwise the
+bot cannot approve the web process's pending codes. Login codes use eight
+unambiguous characters displayed as `XXXX-XXXX`, and both those codes and the
+browser credentials are stored only as SHA-256 hashes. Attempts are single-use,
+expire after five minutes, and records more than a day past expiration are
+removed when another login begins. `POST /api/auth/logout` removes the local
+session; it does not alter the user's Stoat account.
+
+The session secret must be at least 32 random, private characters and must remain
+stable across the bot-verified login. Session cookies are `HttpOnly`,
+`SameSite=Lax`, scoped to `/`, and last 24 hours. `PLURAPACK_COOKIE_SECURE`
+defaults to `true`, as required for production HTTPS. For local HTTP development
+only, explicitly set `PLURAPACK_COOKIE_SECURE=false`; never use that setting on a
+public deployment. No Stoat token, password, account ID, login code, browser
+secret, or session value should be entered into the dashboard or written to logs.
 
 The existing frontend contract is: `GET /api/account` initializes account and
 system identity; `GET /api/systems/:systemId` loads members; `POST

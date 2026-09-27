@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException, Request, status
 
 COOKIE_NAME = "plurapack_session"
+SESSION_LIFETIME = 86400
 
 
 @dataclass(frozen=True)
@@ -26,8 +27,8 @@ def _secret() -> bytes | None:
     return value.encode() if value and len(value) >= 32 else None
 
 
-def create_session_cookie(user: WebUser, lifetime: int = 86400) -> str:
-    """Create a signed value for the future OAuth callback (and integration tests)."""
+def create_session_cookie(user: WebUser, lifetime: int = SESSION_LIFETIME) -> str:
+    """Create the signed local session issued after trusted identity verification."""
     secret = _secret()
     if secret is None:
         raise RuntimeError("PLURAPACK_SESSION_SECRET must contain at least 32 characters")
@@ -36,6 +37,13 @@ def create_session_cookie(user: WebUser, lifetime: int = 86400) -> str:
     encoded = base64.urlsafe_b64encode(payload).rstrip(b"=")
     signature = hmac.new(secret, encoded, hashlib.sha256).hexdigest().encode()
     return (encoded + b"." + signature).decode()
+
+
+def cookie_secure() -> bool:
+    """Default to HTTPS-only; localhost operators must explicitly opt out."""
+    return os.getenv("PLURAPACK_COOKIE_SECURE", "true").strip().casefold() not in {
+        "0", "false", "no", "off"
+    }
 
 
 async def get_current_user(request: Request) -> WebUser | None:

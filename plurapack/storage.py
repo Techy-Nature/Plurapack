@@ -126,6 +126,15 @@ class Store:
                     token_hash TEXT PRIMARY KEY, system_id TEXT NOT NULL REFERENCES systems(id),
                     created_by TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER
                 );
+                CREATE TABLE IF NOT EXISTS login_attempts (
+                    id TEXT PRIMARY KEY, code_hash TEXT NOT NULL UNIQUE,
+                    browser_secret_hash TEXT NOT NULL,
+                    created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+                    verified_account_id TEXT, verified_username TEXT,
+                    consumed_at INTEGER
+                );
+                CREATE INDEX IF NOT EXISTS login_attempts_expiry
+                    ON login_attempts(expires_at);
                 CREATE TABLE IF NOT EXISTS proxied_messages (
                     proxy_message_id TEXT PRIMARY KEY, source_message_id TEXT NOT NULL UNIQUE,
                     channel_id TEXT NOT NULL, system_id TEXT NOT NULL, member_id TEXT NOT NULL,
