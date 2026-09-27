@@ -14,11 +14,12 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from .storage import Form, Front, Member, Store, System
+from .storage import Form, Front, Member, ProxyTag, Store, System
 from .login import LOGIN_START_WINDOW, LoginError, LoginService, LoginStartLimiter
 from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
                        create_session_cookie, require_authenticated_user)
-from .web_models import FormCreate, FormPatch, FrontUpdate, MemberCreate, MemberPatch, SystemPatch
+from .web_models import (FormCreate, FormPatch, FrontUpdate, MemberCreate, MemberPatch,
+                         ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -28,10 +29,12 @@ class LoginCompletion(BaseModel):
     browser_secret: str
 
 
-def form_json(form: Form) -> dict[str, Any]:
+def form_json(form: Form, store: Store | None = None) -> dict[str, Any]:
     return {"id": form.id, "memberId": form.member_id, "displayName": form.display_name,
             "picture": form.avatar, "soma": form.soma, "pronouns": form.pronouns,
-            "prefix": form.prefix, "suffix": form.suffix, "banner": form.banner}
+            "prefix": form.prefix, "suffix": form.suffix, "banner": form.banner,
+            "proxyTags": ([tag.__dict__ for tag in store.proxy_tags(form_id=form.id)]
+                          if store else [{"prefix": form.prefix, "suffix": form.suffix}] if form.prefix else [])}
 
 
 def member_json(store: Store, member: Member, front: Front | None = None) -> dict[str, Any]:
@@ -39,10 +42,11 @@ def member_json(store: Store, member: Member, front: Front | None = None) -> dic
             "alias": member.alias, "pronouns": member.pronouns, "color": member.color or "#7765A8",
             "avatar": member.avatar, "description": member.description,
             "prefix": member.prefix, "suffix": member.suffix, "proxy": f"{member.prefix}{member.suffix}",
+            "proxyTags": [tag.__dict__ for tag in store.proxy_tags(member_id=member.id)],
             "banner": member.banner,
             "defaultFormId": member.default_form_id,
             "fronting": bool(front and front.member.id == member.id),
-            "forms": [form_json(form) for form in store.forms_for_member(member.id)],
+            "forms": [form_json(form, store) for form in store.forms_for_member(member.id)],
             "voice": {"configured": member.voice_reference is not None,
                       "settings": json.loads(member.voice_settings), "playback": member.playback,
                       "supportedPlayback": ["off", "send"],
@@ -267,7 +271,7 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
                          user: WebUser = Depends(require_authenticated_user),
                          store: Store = Depends(db)) -> list[dict[str, Any]]:
         await owned_member(system_id, member_id, user, store)
-        return [form_json(form) for form in await run(store.forms_for_member, member_id)]
+        return [form_json(form, store) for form in await run(store.forms_for_member, member_id)]
 
     @app.post("/api/systems/{system_id}/members/{member_id}/forms", status_code=201)
     async def create_form(system_id: str, member_id: str, body: FormCreate,
@@ -277,13 +281,13 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
         form = await run(store.create_form, user.id, member_id, body.display_name,
                          str(body.picture) if body.picture else None, body.soma, body.pronouns,
                          body.prefix, body.suffix, str(body.banner) if body.banner else None)
-        return form_json(form)
+        return form_json(form, store)
 
     @app.get("/api/systems/{system_id}/members/{member_id}/forms/{form_id}")
     async def get_form(system_id: str, member_id: str, form_id: str,
                        user: WebUser = Depends(require_authenticated_user),
                        store: Store = Depends(db)) -> dict[str, Any]:
-        return form_json(await owned_form(system_id, member_id, form_id, user, store))
+        return form_json(await owned_form(system_id, member_id, form_id, user, store), store)
 
     @app.patch("/api/systems/{system_id}/members/{member_id}/forms/{form_id}")
     async def patch_form(system_id: str, member_id: str, form_id: str, body: FormPatch,
@@ -295,7 +299,58 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
             changes["avatar"] = str(changes.pop("picture")) if changes["picture"] else None
         if "banner" in changes and changes["banner"]:
             changes["banner"] = str(changes["banner"])
-        return form_json(await run(store.update_form, user.id, form_id, **changes))
+        return form_json(await run(store.update_form, user.id, form_id, **changes), store)
+
+    @app.post("/api/systems/{system_id}/members/{member_id}/proxy-tags", status_code=201)
+    async def add_member_proxy_tag(system_id: str, member_id: str, body: ProxyTagUpdate,
+                                   user: WebUser = Depends(require_authenticated_user),
+                                   store: Store = Depends(db)) -> dict[str, str]:
+        await owned_member(system_id, member_id, user, store)
+        await run(store.configure_member_proxy, user.id, member_id, body.prefix, body.suffix)
+        return body.model_dump()
+
+    @app.delete("/api/systems/{system_id}/members/{member_id}/proxy-tags", status_code=204)
+    async def delete_member_proxy_tag(system_id: str, member_id: str, body: ProxyTagUpdate,
+                                      user: WebUser = Depends(require_authenticated_user),
+                                      store: Store = Depends(db)) -> Response:
+        await owned_member(system_id, member_id, user, store)
+        await run(store.remove_proxy_tag, user.id, member_id, body.prefix, body.suffix)
+        return Response(status_code=204)
+
+    @app.put("/api/systems/{system_id}/members/{member_id}/proxy-tags")
+    async def replace_member_proxy_tags(system_id: str, member_id: str, body: ProxyTagsUpdate,
+                                        user: WebUser = Depends(require_authenticated_user),
+                                        store: Store = Depends(db)) -> dict[str, Any]:
+        member = await owned_member(system_id, member_id, user, store)
+        tags = [ProxyTag(tag.prefix, tag.suffix) for tag in body.proxy_tags]
+        await run(store.replace_proxy_tags, user.id, member_id, tags)
+        return await run(member_json, store, member, await run(store.current_front, user.id))
+
+    @app.post("/api/systems/{system_id}/members/{member_id}/forms/{form_id}/proxy-tags", status_code=201)
+    async def add_form_proxy_tag(system_id: str, member_id: str, form_id: str, body: ProxyTagUpdate,
+                                 user: WebUser = Depends(require_authenticated_user),
+                                 store: Store = Depends(db)) -> dict[str, str]:
+        await owned_form(system_id, member_id, form_id, user, store)
+        await run(store.configure_form_proxy, user.id, form_id, body.prefix, body.suffix)
+        return body.model_dump()
+
+    @app.delete("/api/systems/{system_id}/members/{member_id}/forms/{form_id}/proxy-tags", status_code=204)
+    async def delete_form_proxy_tag(system_id: str, member_id: str, form_id: str, body: ProxyTagUpdate,
+                                    user: WebUser = Depends(require_authenticated_user),
+                                    store: Store = Depends(db)) -> Response:
+        await owned_form(system_id, member_id, form_id, user, store)
+        await run(store.remove_proxy_tag, user.id, form_id, body.prefix, body.suffix, form=True)
+        return Response(status_code=204)
+
+    @app.put("/api/systems/{system_id}/members/{member_id}/forms/{form_id}/proxy-tags")
+    async def replace_form_proxy_tags(system_id: str, member_id: str, form_id: str,
+                                      body: ProxyTagsUpdate,
+                                      user: WebUser = Depends(require_authenticated_user),
+                                      store: Store = Depends(db)) -> dict[str, Any]:
+        await owned_form(system_id, member_id, form_id, user, store)
+        tags = [ProxyTag(tag.prefix, tag.suffix) for tag in body.proxy_tags]
+        await run(store.replace_proxy_tags, user.id, form_id, tags, form=True)
+        return form_json(await owned_form(system_id, member_id, form_id, user, store), store)
 
     @app.delete("/api/systems/{system_id}/members/{member_id}/forms/{form_id}", status_code=204)
     async def remove_form(system_id: str, member_id: str, form_id: str,

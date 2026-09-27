@@ -31,9 +31,12 @@ COMMAND_HELP = {
     "login": ("lg", "CODE", "Approve a one-time dashboard login."),
     "setup": ("s", "[SYSTEM_NAME] [DESCRIPTION]", "Create your system."),
     "member": ("m", "NAME PREFIX [SUFFIX] [DESCRIPTION]", "Add a member and proxy tag."),
+    "memberproxy": ("mt", "MEMBER [PREFIX] [SUFFIX]", "Add or list member proxy tags."),
+    "memberproxy-clear": ("mc", "MEMBER", "Clear every proxy tag from a member."),
     "alias": ("a", "MEMBER [ALIAS]", "Set or clear a member selector."),
     "form": ("f", "MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]", "Create an alternate presentation."),
-    "formproxy": ("ft", "FORM [PREFIX] [SUFFIX]", "Set or clear a form proxy tag."),
+    "formproxy": ("ft", "FORM [PREFIX] [SUFFIX]", "Add or list form proxy tags."),
+    "formproxy-clear": ("fc", "FORM", "Clear every proxy tag from a form."),
     "defaultform": ("df", "MEMBER [FORM_OR_OFF]", "Set or clear a default form."),
     "pronouns": ("p", "MEMBER [PRONOUNS]", "Set or clear member pronouns."),
     "formpronouns": ("fp", "FORM [PRONOUNS]", "Set or inherit form pronouns."),
@@ -567,6 +570,36 @@ def create_bot(prefix: str, database: str) -> Any:
         status = f"`{configured.alias}`" if configured.alias else "cleared"
         await ctx.send(f"Alias for **{configured.name}** is {status}; their full name remains on proxies.")
 
+    @bot.command(aliases=[COMMAND_SHORTCUTS["memberproxy"]])
+    async def memberproxy(ctx: commands.Context, selector: str, member_prefix: str = "",
+                          suffix: str = "") -> None:
+        """Add a member proxy tag, or list tags when one is omitted."""
+        if not member_prefix:
+            member = store.member_selected(ctx.author.id, selector)
+            if member is None:
+                await ctx.send("Member not found or not owned by this account.")
+                return
+            tags = store.proxy_tags(member_id=member.id)
+            listing = "\n".join(f"{index}. `{tag.prefix}text{tag.suffix}`"
+                                for index, tag in enumerate(tags, 1)) or "No proxy tags are configured."
+            await ctx.send(f"Proxy tags for **{member.name}** ({len(tags)}/100):\n{listing}")
+            return
+        try:
+            configured = store.configure_member_proxy(ctx.author.id, selector, member_prefix, suffix)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"Added proxy tag `{member_prefix}text{suffix}` for **{configured.name}**.")
+
+    @bot.command(name="memberproxy-clear", aliases=[COMMAND_SHORTCUTS["memberproxy-clear"]])
+    async def memberproxy_clear(ctx: commands.Context, selector: str) -> None:
+        try:
+            configured = store.configure_member_proxy(ctx.author.id, selector, None)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"All proxy tags for **{configured.name}** are cleared.")
+
     @bot.command(aliases=[COMMAND_SHORTCUTS["form"]])
     async def form(ctx: commands.Context, selector: str, display_name: str, picture: str = "", *,
                    soma: str = "") -> None:
@@ -585,21 +618,38 @@ def create_bot(prefix: str, database: str) -> Any:
     @bot.command(aliases=[COMMAND_SHORTCUTS["formproxy"]])
     async def formproxy(ctx: commands.Context, selector: str, form_prefix: str = "",
                         suffix: str = "") -> None:
-        """Set or clear the prefix and suffix that select a form directly."""
+        """Add a form tag, or list tags when the prefix is omitted."""
+        if not form_prefix:
+            selected = store.form_selected(ctx.author.id, selector)
+            if selected is None:
+                await ctx.send("Form not found or not owned by this account.")
+                return
+            configured = selected[0]
+            tags = store.proxy_tags(form_id=configured.id)
+            listing = "\n".join(f"{index}. `{tag.prefix}text{tag.suffix}`"
+                                for index, tag in enumerate(tags, 1)) or "No proxy tags are configured."
+            await ctx.send(f"Proxy tags for **{configured.display_name}** ({len(tags)}/100):\n{listing}")
+            return
         try:
             configured = store.configure_form_proxy(
-                ctx.author.id, selector, form_prefix or None, suffix
+                ctx.author.id, selector, form_prefix, suffix
             )
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return
-        if configured.prefix:
-            await ctx.send(
-                f"Proxy tag for **{configured.display_name}** is "
-                f"`{configured.prefix}text{configured.suffix}`."
-            )
-        else:
-            await ctx.send(f"Proxy tag for **{configured.display_name}** is cleared.")
+        await ctx.send(
+            f"Added proxy tag for **{configured.display_name}**: "
+            f"`{form_prefix}text{suffix}`."
+        )
+
+    @bot.command(name="formproxy-clear", aliases=[COMMAND_SHORTCUTS["formproxy-clear"]])
+    async def formproxy_clear(ctx: commands.Context, selector: str) -> None:
+        try:
+            configured = store.configure_form_proxy(ctx.author.id, selector, None)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"All proxy tags for **{configured.display_name}** are cleared.")
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["front"], *COMMAND_ALIASES["front"]])
     async def front(ctx: commands.Context, selector: str) -> None:

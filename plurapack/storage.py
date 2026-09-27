@@ -13,6 +13,9 @@ from typing import Any, Iterable, Iterator
 from .voice import normalize_voice_settings
 
 
+MAX_PROXY_TAGS = 100
+
+
 def short_hash(length: int) -> str:
     """Return a cryptographically random, lowercase SHA-256 fragment."""
     return hashlib.sha256(secrets.token_bytes(32)).hexdigest()[:length]
@@ -75,6 +78,13 @@ class Autoproxy:
     """A system's independent autoproxy selection and front-following preference."""
     member: Member | None
     autofront: bool
+
+
+@dataclass(frozen=True)
+class ProxyTag:
+    """One of the proxy tags assigned to a member or form."""
+    prefix: str
+    suffix: str = ""
 
 
 class Store:
@@ -170,6 +180,16 @@ class Store:
                     show_system_tag INTEGER NOT NULL CHECK(show_system_tag IN (0,1)),
                     PRIMARY KEY(system_id, scope_type, scope_id)
                 );
+                CREATE TABLE IF NOT EXISTS proxy_tags (
+                    id INTEGER PRIMARY KEY,
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    member_id TEXT REFERENCES members(id) ON DELETE CASCADE,
+                    form_id TEXT REFERENCES forms(id) ON DELETE CASCADE,
+                    prefix TEXT NOT NULL,
+                    suffix TEXT NOT NULL DEFAULT '',
+                    CHECK((member_id IS NOT NULL) <> (form_id IS NOT NULL)),
+                    UNIQUE(system_id, prefix, suffix)
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
             if "color" not in columns:
@@ -209,6 +229,13 @@ class Store:
             if "banner" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN banner TEXT")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
+            # Seed the normalized table when opening an older database. The
+            # legacy columns remain as the primary tag for API compatibility.
+            db.execute("""INSERT OR IGNORE INTO proxy_tags(system_id,member_id,prefix,suffix)
+                SELECT system_id,id,prefix,suffix FROM members WHERE prefix<>''""")
+            db.execute("""INSERT OR IGNORE INTO proxy_tags(system_id,form_id,prefix,suffix)
+                SELECT m.system_id,f.id,f.prefix,f.suffix FROM forms f
+                JOIN members m ON m.id=f.member_id WHERE f.prefix<>''""")
 
     def systems_for_account(self, account_id: str) -> list[System]:
         """Return the account's linked system as a list (the schema permits at most one)."""
@@ -465,6 +492,8 @@ class Store:
                         (member_id, system_id, name, prefix, suffix, description,
                          alias, pronouns, color, avatar),
                     )
+                    db.execute("""INSERT INTO proxy_tags(system_id,member_id,prefix,suffix)
+                        VALUES (?,?,?,?)""", (system_id, member_id, prefix, suffix))
                     break
                 except sqlite3.IntegrityError as error:
                     if "members.id" not in str(error):
@@ -481,10 +510,13 @@ class Store:
             for member in values:
                 while True:
                     try:
+                        member_id = short_hash(5)
                         db.execute("""INSERT INTO members
                             (id,system_id,name,prefix,suffix,avatar,color,pronouns) VALUES (?,?,?,?,?,?,?,?)""",
-                            (short_hash(5), system_id, member.name, member.prefix, member.suffix,
+                            (member_id, system_id, member.name, member.prefix, member.suffix,
                              member.avatar, member.color, member.pronouns))
+                        db.execute("""INSERT INTO proxy_tags(system_id,member_id,prefix,suffix)
+                            VALUES (?,?,?,?)""", (system_id, member_id, member.prefix, member.suffix))
                         break
                     except sqlite3.IntegrityError as error:
                         if "members.id" not in str(error):
@@ -514,8 +546,10 @@ class Store:
         """Resolve a member's stable ID, full name, short alias, or proxy prefix."""
         selector = selector.strip()
         with self.connect() as db:
-            row = db.execute("""SELECT m.* FROM members m JOIN owners o ON o.system_id=m.system_id
-                WHERE o.account_id=? AND (m.id=? OR m.name=? OR m.alias=? OR m.prefix=?)""",
+            row = db.execute("""SELECT DISTINCT m.* FROM members m
+                JOIN owners o ON o.system_id=m.system_id
+                LEFT JOIN proxy_tags t ON t.member_id=m.id
+                WHERE o.account_id=? AND (m.id=? OR m.name=? OR m.alias=? OR t.prefix=?)""",
                 (account_id, selector, selector, selector, selector)).fetchone()
             return Member(**dict(row)) if row else None
 
@@ -571,6 +605,9 @@ class Store:
                             (id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner)
                             VALUES (?,?,?,?,?,?,?,?,?)""",
                             (form_id, member.id, display_name, avatar, soma, pronouns, prefix, suffix, banner))
+                        if prefix:
+                            db.execute("""INSERT INTO proxy_tags(system_id,form_id,prefix,suffix)
+                                VALUES (?,?,?,?)""", (member.system_id, form_id, prefix, suffix))
                         break
                     except sqlite3.IntegrityError as error:
                         if "forms.id" not in str(error):
@@ -767,7 +804,7 @@ class Store:
 
     def configure_form_proxy(self, account_id: str, form_selector: str,
                              prefix: str | None, suffix: str = "") -> Form:
-        """Set a form-specific proxy tag, or clear it when no prefix is supplied."""
+        """Add a form proxy tag, or clear all of its tags when omitted."""
         selected = self.form_selected(account_id, form_selector)
         if selected is None:
             raise PermissionError("Form not found or not owned by this account.")
@@ -775,17 +812,128 @@ class Store:
         normalized_prefix = prefix or ""
         self._validate_proxy_tag(normalized_prefix, suffix)
         with self.connect() as db:
-            collision = db.execute("""SELECT 1 FROM forms f JOIN members m ON m.id=f.member_id
-                WHERE m.system_id=? AND f.id<>? AND f.prefix=? AND f.suffix=? AND f.prefix<>''""",
-                (member.system_id, form.id, normalized_prefix, suffix)).fetchone()
-            member_collision = db.execute("""SELECT 1 FROM members
-                WHERE system_id=? AND prefix=? AND suffix=?""",
-                (member.system_id, normalized_prefix, suffix)).fetchone()
-            if normalized_prefix and (collision or member_collision):
-                raise ValueError("That proxy prefix and suffix are already in use.")
-            db.execute("UPDATE forms SET prefix=?,suffix=? WHERE id=?",
-                       (normalized_prefix, suffix, form.id))
+            if normalized_prefix:
+                count = db.execute("SELECT count(*) FROM proxy_tags WHERE form_id=?", (form.id,)).fetchone()[0]
+                exists = db.execute("""SELECT 1 FROM proxy_tags
+                    WHERE form_id=? AND prefix=? AND suffix=?""",
+                    (form.id, normalized_prefix, suffix)).fetchone()
+                if count >= MAX_PROXY_TAGS and not exists:
+                    raise ValueError(f"A form can have at most {MAX_PROXY_TAGS} proxy tags.")
+                collision = db.execute("""SELECT 1 FROM proxy_tags
+                    WHERE system_id=? AND prefix=? AND suffix=?
+                    AND (form_id IS NULL OR form_id<>?)""",
+                    (member.system_id, normalized_prefix, suffix, form.id)).fetchone()
+                if collision:
+                    raise ValueError("That proxy prefix and suffix are already in use.")
+                db.execute("""INSERT OR IGNORE INTO proxy_tags(system_id,form_id,prefix,suffix)
+                    VALUES (?,?,?,?)""", (member.system_id, form.id, normalized_prefix, suffix))
+                if not form.prefix:
+                    db.execute("UPDATE forms SET prefix=?,suffix=? WHERE id=?",
+                               (normalized_prefix, suffix, form.id))
+            else:
+                db.execute("DELETE FROM proxy_tags WHERE form_id=?", (form.id,))
+                db.execute("UPDATE forms SET prefix='',suffix='' WHERE id=?", (form.id,))
         return self.form_selected(account_id, form.id)[0]  # type: ignore[index]
+
+    def configure_member_proxy(self, account_id: str, member_selector: str,
+                               prefix: str | None, suffix: str = "") -> Member:
+        """Add a member proxy tag, or clear all tags when no prefix is supplied."""
+        member = self.member_selected(account_id, member_selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        normalized_prefix = prefix or ""
+        self._validate_proxy_tag(normalized_prefix, suffix)
+        with self.connect() as db:
+            if normalized_prefix:
+                count = db.execute("SELECT count(*) FROM proxy_tags WHERE member_id=?", (member.id,)).fetchone()[0]
+                exists = db.execute("""SELECT 1 FROM proxy_tags
+                    WHERE member_id=? AND prefix=? AND suffix=?""",
+                    (member.id, normalized_prefix, suffix)).fetchone()
+                if count >= MAX_PROXY_TAGS and not exists:
+                    raise ValueError(f"A member can have at most {MAX_PROXY_TAGS} proxy tags.")
+                collision = db.execute("""SELECT 1 FROM proxy_tags
+                    WHERE system_id=? AND prefix=? AND suffix=?
+                    AND (member_id IS NULL OR member_id<>?)""",
+                    (member.system_id, normalized_prefix, suffix, member.id)).fetchone()
+                if collision:
+                    raise ValueError("That proxy prefix and suffix are already in use.")
+                db.execute("""INSERT OR IGNORE INTO proxy_tags(system_id,member_id,prefix,suffix)
+                    VALUES (?,?,?,?)""", (member.system_id, member.id, normalized_prefix, suffix))
+                if not member.prefix:
+                    db.execute("UPDATE members SET prefix=?,suffix=? WHERE id=?",
+                               (normalized_prefix, suffix, member.id))
+            else:
+                db.execute("DELETE FROM proxy_tags WHERE member_id=?", (member.id,))
+                db.execute("UPDATE members SET prefix='',suffix='' WHERE id=?", (member.id,))
+        return self.member_selected(account_id, member.id)  # type: ignore[return-value]
+
+    def proxy_tags(self, member_id: str | None = None, form_id: str | None = None) -> list[ProxyTag]:
+        """Return all tags for exactly one member or form in configured order."""
+        if (member_id is None) == (form_id is None):
+            raise ValueError("Specify exactly one member or form.")
+        column, value = ("member_id", member_id) if member_id else ("form_id", form_id)
+        with self.connect() as db:
+            rows = db.execute(f"""SELECT prefix,suffix FROM proxy_tags WHERE {column}=?
+                ORDER BY id""", (value,)).fetchall()
+        return [ProxyTag(str(row["prefix"]), str(row["suffix"])) for row in rows]
+
+    def remove_proxy_tag(self, account_id: str, selector: str, prefix: str,
+                         suffix: str = "", *, form: bool = False) -> None:
+        """Remove one owned tag while retaining every other configured tag."""
+        selected = self.form_selected(account_id, selector) if form else self.member_selected(account_id, selector)
+        if selected is None:
+            raise PermissionError("Member or form not found or not owned by this account.")
+        target = selected[0] if form else selected
+        column = "form_id" if form else "member_id"
+        with self.connect() as db:
+            result = db.execute(f"DELETE FROM proxy_tags WHERE {column}=? AND prefix=? AND suffix=?",
+                                (target.id, prefix, suffix))
+            if not result.rowcount:
+                raise ValueError("That proxy tag is not configured.")
+            remaining = db.execute(f"""SELECT prefix,suffix FROM proxy_tags WHERE {column}=?
+                ORDER BY id LIMIT 1""", (target.id,)).fetchone()
+            table = "forms" if form else "members"
+            db.execute(f"UPDATE {table} SET prefix=?,suffix=? WHERE id=?",
+                       (remaining["prefix"], remaining["suffix"], target.id) if remaining else ("", "", target.id))
+
+    def replace_proxy_tags(self, account_id: str, selector: str,
+                           tags: Iterable[ProxyTag], *, form: bool = False) -> list[ProxyTag]:
+        """Replace all tags for one owned identity in one transaction."""
+        selected = self.form_selected(account_id, selector) if form else self.member_selected(account_id, selector)
+        if selected is None:
+            raise PermissionError("Member or form not found or not owned by this account.")
+        target = selected[0] if form else selected
+        member = selected[1] if form else selected
+        values = [ProxyTag(tag.prefix.strip(), tag.suffix.strip()) for tag in tags]
+        if len(values) > MAX_PROXY_TAGS:
+            raise ValueError(f"An identity can have at most {MAX_PROXY_TAGS} proxy tags.")
+        for tag in values:
+            self._validate_proxy_tag(tag.prefix, tag.suffix)
+            if not tag.prefix:
+                raise ValueError("Proxy prefixes cannot be empty.")
+        pairs = {(tag.prefix, tag.suffix) for tag in values}
+        if len(pairs) != len(values):
+            raise ValueError("Duplicate proxy tags are not allowed.")
+        column = "form_id" if form else "member_id"
+        table = "forms" if form else "members"
+        with self.connect() as db:
+            if values:
+                placeholders = ",".join("(?,?)" for _ in values)
+                parameters = [part for tag in values for part in (tag.prefix, tag.suffix)]
+                collision = db.execute(f"""SELECT 1 FROM proxy_tags
+                    WHERE system_id=? AND {column} IS NOT ? AND (prefix,suffix) IN ({placeholders})""",
+                    (member.system_id, target.id, *parameters)).fetchone()
+                if collision:
+                    raise ValueError("A proxy prefix and suffix are already in use.")
+            db.execute(f"DELETE FROM proxy_tags WHERE {column}=?", (target.id,))
+            db.executemany(
+                f"INSERT INTO proxy_tags(system_id,{column},prefix,suffix) VALUES (?,?,?,?)",
+                [(member.system_id, target.id, tag.prefix, tag.suffix) for tag in values],
+            )
+            primary = values[0] if values else ProxyTag("")
+            db.execute(f"UPDATE {table} SET prefix=?,suffix=? WHERE id=?",
+                       (primary.prefix, primary.suffix, target.id))
+        return self.proxy_tags(form_id=target.id) if form else self.proxy_tags(member_id=target.id)
 
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
                         voice_settings: str | dict[str, Any] = "{}", playback: str = "send") -> Member:
@@ -820,12 +968,14 @@ class Store:
 
     def match_member(self, account_id: str, content: str) -> tuple[Member, str] | None:
         with self.connect() as db:
-            form_rows = db.execute("""SELECT f.id, f.prefix, f.suffix FROM forms f
-                JOIN members m ON m.id=f.member_id JOIN owners o ON o.system_id=m.system_id
-                WHERE o.account_id=? AND f.prefix<>''
-                ORDER BY length(f.prefix)+length(f.suffix) DESC""", (account_id,)).fetchall()
-            rows = db.execute("""SELECT m.* FROM members m JOIN owners o ON o.system_id=m.system_id
-                WHERE o.account_id=? ORDER BY length(m.prefix)+length(m.suffix) DESC""", (account_id,)).fetchall()
+            form_rows = db.execute("""SELECT f.id,t.prefix,t.suffix FROM proxy_tags t
+                JOIN forms f ON f.id=t.form_id JOIN members m ON m.id=f.member_id
+                JOIN owners o ON o.system_id=m.system_id WHERE o.account_id=?
+                ORDER BY length(t.prefix)+length(t.suffix) DESC,t.id""", (account_id,)).fetchall()
+            rows = db.execute("""SELECT m.*,t.prefix tag_prefix,t.suffix tag_suffix FROM proxy_tags t
+                JOIN members m ON m.id=t.member_id JOIN owners o ON o.system_id=m.system_id
+                WHERE o.account_id=? ORDER BY length(t.prefix)+length(t.suffix) DESC,t.id""",
+                (account_id,)).fetchall()
         for form in form_rows:
             if content.startswith(form["prefix"]) and (not form["suffix"] or content.endswith(form["suffix"])):
                 end = -len(form["suffix"]) if form["suffix"] else None
@@ -835,10 +985,12 @@ class Store:
                     if identity:
                         return identity, body
         for row in rows:
-            member = Member(**dict(row))
-            if content.startswith(member.prefix) and (not member.suffix or content.endswith(member.suffix)):
-                end = -len(member.suffix) if member.suffix else None
-                body = content[len(member.prefix):end].strip()
+            values = dict(row)
+            prefix, suffix = values.pop("tag_prefix"), values.pop("tag_suffix")
+            member = Member(**values)
+            if content.startswith(prefix) and (not suffix or content.endswith(suffix)):
+                end = -len(suffix) if suffix else None
+                body = content[len(prefix):end].strip()
                 if body:
                     # Proxy tags select the stable member, but presentation is
                     # allowed to come from their configured default form.

@@ -117,6 +117,9 @@ Initial commands:
 ```text
 p;setup My system
 p;member Alex [alex]            # proxy with: [alex] hello
+p;memberproxy Alex A: :A        # add another tag; repeat for more
+p;memberproxy Alex              # list Alex's tags (up to 100)
+p;memberproxy-clear Alex        # clear all of Alex's tags
 p;alias abc12 Al                # short selector; proxies still display the full name
 p;form abc12 "Alex at Sea" https://example/avatar.png Blue fins and a long tail.
 p;formproxy 4f8ac sea: :sea     # sea: proxy with this form even off-front :sea
@@ -143,7 +146,8 @@ Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
 
 Every command also has a one- or two-letter shortcut: `s` (setup), `m` (member),
 `i` (import), `x` (export), `l` (link), `c` (color), `v` (verify), `vo` (voice),
-`of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `ft` (formproxy), `fr` (front),
+`of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `mt` (memberproxy),
+`mc` (memberproxy-clear), `ft` (formproxy), `fc` (formproxy-clear), `fr` (front),
 `ap` (autoproxy), `af` (autofront), `vi` (viewinfo), `ml` (viewmembers), `vm`
 (viewmember), `dm` (deletemember), and `ds` (deletesystem).
 

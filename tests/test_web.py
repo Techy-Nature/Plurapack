@@ -181,6 +181,32 @@ async def test_forms_relationships_crud_and_front(api):
 
 
 @pytest.mark.asyncio
+async def test_member_and_form_proxy_tags_can_be_replaced_up_to_limit(api):
+    store, system_id, _, transport = api
+    member = store.add_member("owner", "Proxy User", "first:")
+    form = store.create_form("owner", member.id, "Proxy Form", prefix="form:")
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
+        member_path = f"/api/systems/{system_id}/members/{member.id}/proxy-tags"
+        replacement = {"proxyTags": [
+            {"prefix": f"member-{index}:", "suffix": f":{index}"} for index in range(100)
+        ]}
+        response = await client.put(member_path, json=replacement)
+        assert response.status_code == 200
+        assert response.json()["proxyTags"] == replacement["proxyTags"]
+        assert (await client.put(member_path, json={"proxyTags": replacement["proxyTags"] + [
+            {"prefix": "too-many:"}
+        ]})).status_code == 422
+
+        form_path = f"/api/systems/{system_id}/members/{member.id}/forms/{form.id}/proxy-tags"
+        form_tags = {"proxyTags": [{"prefix": "one:"}, {"prefix": "two:", "suffix": ":two"}]}
+        response = await client.put(form_path, json=form_tags)
+        assert response.status_code == 200
+        assert response.json()["proxyTags"] == [
+            {"prefix": "one:", "suffix": ""}, {"prefix": "two:", "suffix": ":two"}
+        ]
+
+
+@pytest.mark.asyncio
 async def test_unsupported_voice_modes_and_system_delete(api):
     store, system_id, _, transport = api
     member = store.add_member("owner", "Voice", "v:")

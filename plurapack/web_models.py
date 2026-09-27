@@ -10,6 +10,15 @@ class APIModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class ProxyTagUpdate(APIModel):
+    prefix: str = Field(min_length=1, max_length=32)
+    suffix: str = Field("", max_length=32)
+
+
+class ProxyTagsUpdate(APIModel):
+    proxy_tags: list[ProxyTagUpdate] = Field(alias="proxyTags", max_length=100)
+
+
 class SystemPatch(APIModel):
     display_name: str | None = Field(None, alias="displayName", min_length=1, max_length=80)
     description: str | None = Field(None, max_length=1000)
