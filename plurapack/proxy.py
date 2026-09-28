@@ -46,11 +46,17 @@ class ProxyService:
         self._invalidate_speech(proxy_id)
         if not self.speech_queue:
             return
-        self._proxy_text[proxy_id] = text
         try:
-            self.speech_queue.submit(SpeechJob(channel_id, proxy_id, text, member))
+            accepted = self.speech_queue.submit(SpeechJob(channel_id, proxy_id, text, member))
         except Exception as error:
             logging.getLogger(__name__).error("Could not queue speech (%s)", type(error).__name__)
+            return
+        if accepted:
+            self._proxy_text[proxy_id] = text
+        elif member.playback in {"send", "both"}:
+            # Playback filtering is expected and silent. A server-playback job
+            # can only be rejected here because the bounded queue is full.
+            logging.getLogger(__name__).warning("Speech queue is full; audio was not queued")
 
     def _delete_speech(self, proxy_id: str) -> None:
         self._invalidate_speech(proxy_id)

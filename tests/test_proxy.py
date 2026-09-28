@@ -31,6 +31,9 @@ class FakePlatform:
         self.reproxied.append((proxy_id, member.id))
         return "proxy-2"
 
+    async def proxy_content(self, channel_id, proxy_id):
+        return "original"
+
 
 @pytest.fixture
 def store(tmp_path):

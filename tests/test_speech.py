@@ -94,7 +94,7 @@ async def test_queue_uses_styled_backend_when_formatting_enabled(voice_store):
     assert delivered == [b"styled-mp3"]
 
 
-async def test_enqueue_occurs_after_record_and_saturation_preserves_proxy(voice_store):
+async def test_enqueue_occurs_after_record_and_saturation_preserves_proxy(voice_store, caplog):
     member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "send")
     events = []
 
@@ -110,11 +110,14 @@ async def test_enqueue_occurs_after_record_and_saturation_preserves_proxy(voice_
     original_submit = queue.submit
     queue.submit = lambda job: (events.append("submit"), original_submit(job))[1]
     assert queue.submit(SpeechJob("c", "already", "x", member))
-    result = await ProxyService(RecordingStore(), FakePlatform(), speech_queue=queue).handle(
+    service = ProxyService(RecordingStore(), FakePlatform(), speech_queue=queue)
+    result = await service.handle(
         Incoming("source", "channel", "owner", "[a] hello"))
     assert result == "proxy-1"
     assert events[-2:] == ["record", "submit"]
     assert voice_store.proxy_owned_by("proxy-1", "owner")
+    assert "proxy-1" not in service._proxy_text
+    assert "Speech queue is full; audio was not queued" in caplog.text
 
 
 async def test_edit_replaces_audio_with_new_text_and_current_voice(voice_store):
@@ -132,13 +135,15 @@ async def test_edit_replaces_audio_with_new_text_and_current_voice(voice_store):
     assert queue.is_current(jobs[1])
 
 
-async def test_edit_of_non_voiced_proxy_does_not_enqueue(voice_store):
+async def test_edit_of_non_voiced_proxy_does_not_enqueue(voice_store, caplog):
     queue = SpeechQueue(Backend(), lambda job, audio: None)
     service = ProxyService(voice_store, FakePlatform(), speech_queue=queue)
     await service.handle(Incoming("source", "channel", "owner", "[a] original"))
     await service.handle_reaction("channel", "proxy-1", "owner", "✏️")
     assert await service.handle(Incoming("edit", "channel", "owner", "edited")) == "proxy-1"
     assert queue.queue.empty()
+    assert "proxy-1" not in service._proxy_text
+    assert not caplog.records
 
 
 @pytest.mark.parametrize("old_voice,new_voice,expected", [
