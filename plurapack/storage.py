@@ -1047,6 +1047,15 @@ class Store:
                 AND (? IS NULL OR p.channel_id=?)""",
                 (proxy_id, account_id, channel_id, channel_id)).fetchone() is not None
 
+    def proxy_identity_for(self, proxy_id: str, account_id: str) -> Member | None:
+        """Return the current identity for an owned, live proxy message."""
+        with self.connect() as db:
+            row = db.execute("""SELECT p.member_id FROM proxied_messages p
+                JOIN owners o ON o.system_id=p.system_id
+                WHERE p.proxy_message_id=? AND o.account_id=? AND p.deleted_at IS NULL""",
+                (proxy_id, account_id)).fetchone()
+        return self.proxy_identity(account_id, str(row["member_id"])) if row else None
+
     def replace_proxy(self, old_proxy_id: str, new_proxy_id: str, member: Member, account_id: str) -> bool:
         """Move durable attribution to a re-proxied message, if the caller owns both."""
         if self.system_for(account_id) != member.system_id:
