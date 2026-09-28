@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, replace
 from typing import Protocol
 
@@ -24,6 +25,7 @@ class Platform(Protocol):
     async def edit_proxy(self, channel_id: str, proxy_id: str, content: str) -> None: ...
     async def delete_proxy(self, channel_id: str, proxy_id: str) -> None: ...
     async def send_reproxy(self, incoming: Incoming, proxy_id: str, member: Member) -> str: ...
+    async def proxy_content(self, channel_id: str, proxy_id: str) -> str: ...
 
 
 class ProxyService:
@@ -33,6 +35,26 @@ class ProxyService:
         self.speech_queue = speech_queue
         self._inflight: set[str] = set()
         self._pending_edits: dict[tuple[str, str], str] = {}
+        self._proxy_text: dict[str, str] = {}
+
+    def _invalidate_speech(self, proxy_id: str) -> None:
+        if self.speech_queue:
+            self.speech_queue.cancel(proxy_id)
+
+    def _queue_speech(self, channel_id: str, proxy_id: str, text: str, member: Member) -> None:
+        """Make speech a best-effort derived side effect of current proxy state."""
+        self._invalidate_speech(proxy_id)
+        if not self.speech_queue:
+            return
+        self._proxy_text[proxy_id] = text
+        try:
+            self.speech_queue.submit(SpeechJob(channel_id, proxy_id, text, member))
+        except Exception as error:
+            logging.getLogger(__name__).error("Could not queue speech (%s)", type(error).__name__)
+
+    def _delete_speech(self, proxy_id: str) -> None:
+        self._invalidate_speech(proxy_id)
+        self._proxy_text.pop(proxy_id, None)
 
     async def handle_reaction(self, channel_id: str, proxy_id: str, account_id: str, emoji: str) -> bool:
         """Handle the deliberately small reaction control surface for an owned proxy."""
@@ -42,8 +64,7 @@ class ProxyService:
             self._pending_edits[(account_id, channel_id)] = proxy_id
             return True
         if emoji in {"❌", "🗑️"}:
-            if self.speech_queue:
-                self.speech_queue.cancel(proxy_id)
+            self._delete_speech(proxy_id)
             await self.platform.delete_proxy(channel_id, proxy_id)
             self.store.mark_proxy_deleted(proxy_id, account_id)
             self._pending_edits = {key: value for key, value in self._pending_edits.items() if value != proxy_id}
@@ -61,7 +82,11 @@ class ProxyService:
                     edit_target, message.author_id, message.channel_id):
                 self._pending_edits.pop(edit_key, None)
                 return None
+            self._invalidate_speech(edit_target)
             await self.platform.edit_proxy(message.channel_id, edit_target, message.content.strip())
+            member = self.store.proxy_identity_for(edit_target, message.author_id)
+            if member:
+                self._queue_speech(message.channel_id, edit_target, message.content.strip(), member)
             self._pending_edits.pop(edit_key, None)
             await self.platform.delete_source(message)
             return edit_target
@@ -73,11 +98,26 @@ class ProxyService:
                 member = replace(member, name=self.store.proxy_name(
                     member, message.server_id, message.channel_id
                 ))
-                replacement_id = await self.platform.send_reproxy(message, message.reply_to_id, member)
+                old_proxy_id = message.reply_to_id
+                self._invalidate_speech(old_proxy_id)
+                text = self._proxy_text.get(old_proxy_id) if self.speech_queue else None
+                if self.speech_queue and text is None:
+                    content_reader = getattr(self.platform, "proxy_content", None)
+                    if content_reader:
+                        try:
+                            text = await content_reader(message.channel_id, old_proxy_id)
+                        except Exception as error:
+                            logging.getLogger(__name__).error(
+                                "Could not read proxy for speech (%s)", type(error).__name__
+                            )
+                replacement_id = await self.platform.send_reproxy(message, old_proxy_id, member)
                 if not self.store.replace_proxy(message.reply_to_id, replacement_id, member, message.author_id):
                     await self.platform.delete_proxy(message.channel_id, replacement_id)
                     return None
-                await self.platform.delete_proxy(message.channel_id, message.reply_to_id)
+                self._delete_speech(old_proxy_id)
+                if text is not None:
+                    self._queue_speech(message.channel_id, replacement_id, text, member)
+                await self.platform.delete_proxy(message.channel_id, old_proxy_id)
                 await self.platform.delete_source(message)
                 return replacement_id
         match = self.store.match_member(message.author_id, message.content)
@@ -103,8 +143,7 @@ class ProxyService:
                 return None
             if not self.store.record_proxy(message.id, proxy_id, message.channel_id, member, message.author_id):
                 return None
-            if self.speech_queue:
-                self.speech_queue.submit(SpeechJob(message.channel_id, proxy_id, body, member))
+            self._queue_speech(message.channel_id, proxy_id, body, member)
             # The source is removed only after the replacement exists and its attribution is durable.
             await self.platform.delete_source(message)
             return proxy_id

@@ -205,6 +205,9 @@ class StoatPlatform:
         )
         return posted.id
 
+    async def proxy_content(self, channel_id: str, proxy_id: str) -> str:
+        return (await self.state.http.get_message(channel_id, proxy_id)).content
+
     async def deliver_speech(self, channel_id: str, proxy_message_id: str, audio: bytes) -> None:
         """Upload speech through persistent state, never the event-scoped message map."""
         channel = self.state.get_channel(channel_id)

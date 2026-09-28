@@ -117,7 +117,7 @@ async def test_enqueue_occurs_after_record_and_saturation_preserves_proxy(voice_
     assert voice_store.proxy_owned_by("proxy-1", "owner")
 
 
-async def test_edits_and_reproxy_do_not_create_replacement_audio(voice_store):
+async def test_edit_replaces_audio_with_new_text_and_current_voice(voice_store):
     voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "send")
     queue = SpeechQueue(Backend(), lambda job, audio: None)
     service = ProxyService(voice_store, FakePlatform(), speech_queue=queue)
@@ -125,9 +125,88 @@ async def test_edits_and_reproxy_do_not_create_replacement_audio(voice_store):
     assert queue.queue.qsize() == 1
     await service.handle_reaction("channel", "proxy-1", "owner", "✏️")
     await service.handle(Incoming("edit", "channel", "owner", "edited"))
-    assert queue.queue.qsize() == 1
-    await service.handle(Incoming("reproxy", "channel", "owner", "Alex", reply_to_id="proxy-1"))
-    assert queue.queue.qsize() == 1
+    assert queue.queue.qsize() == 2
+    jobs = [queue.queue.get_nowait(), queue.queue.get_nowait()]
+    assert [job.text for job in jobs] == ["original", "edited"]
+    assert not queue.is_current(jobs[0])
+    assert queue.is_current(jobs[1])
+
+
+async def test_edit_of_non_voiced_proxy_does_not_enqueue(voice_store):
+    queue = SpeechQueue(Backend(), lambda job, audio: None)
+    service = ProxyService(voice_store, FakePlatform(), speech_queue=queue)
+    await service.handle(Incoming("source", "channel", "owner", "[a] original"))
+    await service.handle_reaction("channel", "proxy-1", "owner", "✏️")
+    assert await service.handle(Incoming("edit", "channel", "owner", "edited")) == "proxy-1"
+    assert queue.queue.empty()
+
+
+@pytest.mark.parametrize("old_voice,new_voice,expected", [
+    (True, True, "sam.wav"),
+    (True, False, None),
+    (False, True, "sam.wav"),
+])
+async def test_reproxy_uses_only_new_identity_voice(voice_store, old_voice, new_voice, expected):
+    voice_store.add_member("owner", "Sam", "[s]")
+    if old_voice:
+        voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "send")
+    if new_voice:
+        voice_store.configure_voice("owner", "Sam", "sam.wav", "{}", "send")
+    queue = SpeechQueue(Backend(), lambda job, audio: None)
+    service = ProxyService(voice_store, FakePlatform(), speech_queue=queue)
+    await service.handle(Incoming("source", "channel", "owner", "[a] original"))
+    original = queue.queue.get_nowait() if old_voice else None
+
+    assert await service.handle(Incoming(
+        "reproxy", "channel", "owner", "Sam", reply_to_id="proxy-1"
+    )) == "proxy-2"
+    if original:
+        assert not queue.is_current(original)
+    if expected:
+        replacement = queue.queue.get_nowait()
+        assert (replacement.proxy_message_id, replacement.text,
+                replacement.member.voice_reference) == ("proxy-2", "original", expected)
+    else:
+        assert queue.queue.empty()
+
+
+async def test_rapid_edits_and_running_synthesis_discard_stale_audio(voice_store):
+    voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "send")
+    started, release = asyncio.Event(), asyncio.Event()
+
+    class Slow(Backend):
+        async def synthesize(self, text, member):
+            if text == "original":
+                started.set()
+                await release.wait()
+            return text.encode()
+
+    delivered = []
+    async def deliver(job, audio): delivered.append((job.text, audio))
+    queue = SpeechQueue(Slow(), deliver)
+    service = ProxyService(voice_store, FakePlatform(), speech_queue=queue)
+    await service.handle(Incoming("source", "channel", "owner", "[a] original"))
+    worker = asyncio.create_task(speech_worker(queue))
+    await started.wait()
+    for source, text in (("edit-1", "first"), ("edit-2", "latest")):
+        await service.handle_reaction("channel", "proxy-1", "owner", "✏️")
+        await service.handle(Incoming(source, "channel", "owner", text))
+    release.set()
+    await asyncio.wait_for(queue.queue.join(), 1)
+    assert delivered == [("latest", b"latest")]
+    worker.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await worker
+
+
+async def test_voice_queue_failure_does_not_break_proxy_lifecycle(voice_store):
+    voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "send")
+    queue = SpeechQueue(Backend(), lambda job, audio: None)
+    queue.submit = lambda job: (_ for _ in ()).throw(RuntimeError("offline"))
+    service = ProxyService(voice_store, FakePlatform(), speech_queue=queue)
+    assert await service.handle(Incoming("source", "channel", "owner", "[a] original")) == "proxy-1"
+    await service.handle_reaction("channel", "proxy-1", "owner", "✏️")
+    assert await service.handle(Incoming("edit", "channel", "owner", "edited")) == "proxy-1"
 
 
 async def test_failures_do_not_kill_worker_and_delete_cancels_delivery(voice_store):

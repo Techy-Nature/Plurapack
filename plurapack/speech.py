@@ -72,6 +72,7 @@ class SpeechJob:
     proxy_message_id: str
     text: str
     member: Member
+    generation: int = 0
 
 
 class SpeechQueue:
@@ -79,24 +80,35 @@ class SpeechQueue:
     def __init__(self, backend: SpeechBackend, deliver, limit: int = 8):
         self.backend, self.deliver = backend, deliver
         self.queue: asyncio.Queue[SpeechJob] = asyncio.Queue(maxsize=limit)
-        self.cancelled: set[str] = set()
+        self._generation = 0
+        self._current: dict[str, int] = {}
+        self._pending: dict[str, int] = {}
 
     def submit(self, job: SpeechJob) -> bool:
         if job.member.playback not in {"send", "both"}:
             return False
+        self._generation += 1
+        job = SpeechJob(job.channel_id, job.proxy_message_id, job.text, job.member,
+                        self._generation)
         try:
             self.queue.put_nowait(job)
+            self._current[job.proxy_message_id] = job.generation
+            self._pending[job.proxy_message_id] = self._pending.get(job.proxy_message_id, 0) + 1
             return True
         except asyncio.QueueFull:
             return False
 
     def cancel(self, proxy_message_id: str) -> None:
-        self.cancelled.add(proxy_message_id)
+        """Invalidate every queued or synthesizing generation for a proxy."""
+        self._current.pop(proxy_message_id, None)
+
+    def is_current(self, job: SpeechJob) -> bool:
+        return self._current.get(job.proxy_message_id) == job.generation
 
     async def run_one(self) -> None:
         job = await self.queue.get()
         try:
-            if job.proxy_message_id not in self.cancelled:
+            if self.is_current(job):
                 parts = speech_parts(job.text, job.member)
                 if not parts:
                     return
@@ -105,10 +117,18 @@ class SpeechQueue:
                     audio = await styled(parts, job.member)
                 else:
                     audio = await self.backend.synthesize(" ".join(part.text for part in parts), job.member)
-                if job.proxy_message_id not in self.cancelled:
+                # Cancellation cannot necessarily stop an HTTP request, so the
+                # generation is checked again after synthesis completes.
+                if self.is_current(job):
                     await self.deliver(job, audio)
         finally:
-            self.cancelled.discard(job.proxy_message_id)
+            remaining = self._pending[job.proxy_message_id] - 1
+            if remaining:
+                self._pending[job.proxy_message_id] = remaining
+            else:
+                self._pending.pop(job.proxy_message_id, None)
+                if self._current.get(job.proxy_message_id) == job.generation:
+                    self._current.pop(job.proxy_message_id, None)
             self.queue.task_done()
 
 
