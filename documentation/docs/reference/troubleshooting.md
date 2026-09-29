@@ -2,8 +2,8 @@
 
 ## The bot does not start
 
-**`STOAT_BOT_TOKEN is required`**
-: Set the token in the same process environment used to start Plurapack.
+**`STOAT_BOT_TOKEN or FLUXER_BOT_TOKEN is required`**
+: Set at least one token in the same process environment used to start Plurapack. Set both to connect to both platforms.
 
 **Stoat dependency is not installed**
 : Activate the intended virtual environment and run `python -m pip install -e .` from the checkout.

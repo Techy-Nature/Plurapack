@@ -4,7 +4,8 @@ Plurapack reads configuration from environment variables. It does not automatica
 
 | Variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `STOAT_BOT_TOKEN` | Yes | — | Private Stoat bot token. |
+| `STOAT_BOT_TOKEN` | One platform token required | — | Private Stoat bot token. |
+| `FLUXER_BOT_TOKEN` | One platform token required | — | Private Fluxer bot token. Set both tokens to run both connections together. |
 | `PLURAPACK_PREFIX` | No | `p;` | Prefix for bot commands, not member tags. |
 | `PLURAPACK_DATABASE` | No | `plurapack.sqlite3` | SQLite database path. |
 | `PLURAPACK_TTS_URL` | No | disabled | Full HTTP(S) Chatterbox `/tts` endpoint. |

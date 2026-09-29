@@ -22,6 +22,7 @@ Never write the token into source code or commit it to Git.
 
 ```bash
 export STOAT_BOT_TOKEN='your-private-token'
+export FLUXER_BOT_TOKEN='your-private-token'
 export PLURAPACK_PREFIX='p;'
 export PLURAPACK_DATABASE='/private/path/plurapack.sqlite3'
 ```
@@ -30,11 +31,14 @@ export PLURAPACK_DATABASE='/private/path/plurapack.sqlite3'
 
 ```powershell
 $env:STOAT_BOT_TOKEN = 'your-private-token'
+$env:FLUXER_BOT_TOKEN = 'your-private-token'
 $env:PLURAPACK_PREFIX = 'p;'
 $env:PLURAPACK_DATABASE = 'C:\private\plurapack.sqlite3'
 ```
 
-`STOAT_BOT_TOKEN` is required. The prefix defaults to `p;`, and the database defaults to `plurapack.sqlite3` in the current directory.
+At least one of `STOAT_BOT_TOKEN` and `FLUXER_BOT_TOKEN` is required. Set both
+to connect to Stoat and Fluxer at the same time. The prefix defaults to `p;`,
+and the database defaults to `plurapack.sqlite3` in the current directory.
 
 ## 3. Start Plurapack
 

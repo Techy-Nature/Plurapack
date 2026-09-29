@@ -6,6 +6,7 @@ import importlib
 import importlib.util
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -832,18 +833,34 @@ def create_bot(prefix: str, database: str) -> Any:
 
 
 def main() -> None:
-    token = os.environ.get("STOAT_BOT_TOKEN")
-    if not token:
-        raise SystemExit("STOAT_BOT_TOKEN is required (copy .env.example; never commit the token).")
+    stoat_token = os.environ.get("STOAT_BOT_TOKEN")
+    fluxer_token = os.environ.get("FLUXER_BOT_TOKEN")
+    if not stoat_token and not fluxer_token:
+        raise SystemExit("STOAT_BOT_TOKEN or FLUXER_BOT_TOKEN is required (never commit tokens).")
+    prefix = os.environ.get("PLURAPACK_PREFIX", "p;")
+    database = os.environ.get("PLURAPACK_DATABASE", "plurapack.sqlite3")
+    runners: list[tuple[str, Any, str]] = []
     try:
-        bot = create_bot(
-            os.environ.get("PLURAPACK_PREFIX", "p;"),
-            os.environ.get("PLURAPACK_DATABASE", "plurapack.sqlite3"),
-        )
-    except StoatDependencyError as error:
+        if stoat_token:
+            runners.append(("Stoat", create_bot(prefix, database), stoat_token))
+        if fluxer_token:
+            from .fluxer_bot import create_fluxer_bot
+
+            runners.append(("Fluxer", create_fluxer_bot(prefix, database), fluxer_token))
+    except (StoatDependencyError, RuntimeError) as error:
         raise SystemExit(str(error)) from None
-    _print_cli_status("Connecting to Stoat...")
-    bot.run(token)
+
+    def run(platform: str, client: Any, token: str) -> None:
+        _print_cli_status(f"Connecting to {platform}...")
+        client.run(token)
+
+    if len(runners) == 1:
+        run(*runners[0])
+        return
+    with ThreadPoolExecutor(max_workers=len(runners), thread_name_prefix="plurapack") as pool:
+        futures = [pool.submit(run, *runner) for runner in runners]
+        for future in futures:
+            future.result()
 
 
 if __name__ == "__main__":

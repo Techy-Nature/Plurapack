@@ -105,10 +105,13 @@ python -m pip install -e '.[dev]'
 cp .env.example .env
 ```
 
-Create a bot in Stoat, place its token in your environment (the program does not automatically read `.env`), then run:
+Create a bot in Stoat, Fluxer, or both, and place its token in your environment
+(the program does not automatically read `.env`). When both tokens are set,
+one Plurapack process connects to both services and shares the configured database:
 
 ```bash
 export STOAT_BOT_TOKEN='...'
+export FLUXER_BOT_TOKEN='...'
 export PLURAPACK_PREFIX='p;'
 plurapack
 ```
@@ -119,14 +122,23 @@ the repository's entry point:
 
 ```powershell
 $env:STOAT_BOT_TOKEN = "..."
+$env:FLUXER_BOT_TOKEN = "..."
 $env:PLURAPACK_PREFIX = "p;"
 python main.py
 ```
 
-From Windows Command Prompt, use `set STOAT_BOT_TOKEN=...` and then
+From Windows Command Prompt, use `set STOAT_BOT_TOKEN=...` and/or
+`set FLUXER_BOT_TOKEN=...`, then
 `python main.py` instead.
 
-Never commit `.env`, the SQLite database, or reference voice files. The bot needs permission in each target channel to view/send messages, use masquerades, upload files (when speech delivery is enabled), add/read reactions, edit its own messages, and delete the invoking user's source message. If deletion is denied, the proxy remains posted and the source is preserved; operators should grant only the permissions needed in intended proxy channels.
+Never commit `.env`, the SQLite database, or reference voice files. On Fluxer,
+Plurapack uses a channel webhook named **Plurapack Proxy**, so it also needs
+Manage Webhooks. The bot needs permission in each target channel to view/send
+messages, upload files (when speech delivery is enabled), add/read reactions,
+edit its own messages, and delete the invoking user's source message. Stoat
+also requires masquerade permission. If deletion is denied, the proxy remains
+posted and the source is preserved; operators should grant only the permissions
+needed in intended proxy channels.
 
 Initial commands:
 
