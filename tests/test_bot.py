@@ -1,9 +1,12 @@
 from types import SimpleNamespace
+import io
+import wave
 
 import pytest
 
 from plurapack import bot
 from plurapack.proxy import Incoming
+from plurapack.storage import Store
 
 
 def test_help_lists_every_command_with_usage_and_shortcut():
@@ -169,3 +172,49 @@ async def test_stoat_platform_applies_form_name_and_avatar_to_masquerade():
         "avatar": "https://example.test/sea.png",
         "color": "#123456",
     }
+
+
+def test_voice_upload_installs_wav_and_replaces_same_name(monkeypatch, tmp_path):
+    def wav_bytes(frames):
+        output = io.BytesIO()
+        with wave.open(output, "wb") as audio:
+            audio.setnchannels(1)
+            audio.setsampwidth(2)
+            audio.setframerate(24000)
+            audio.writeframes(frames)
+        return output.getvalue()
+
+    payloads = iter([wav_bytes(b"\0\0"), wav_bytes(b"\1\0\2\0")])
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            self.close()
+
+    monkeypatch.setattr(bot.urllib.request, "urlopen", lambda request, timeout: Response(next(payloads)))
+    attachment = SimpleNamespace(filename="My Voice.wav", url="https://example.test/voice.wav")
+
+    assert bot._install_voice_attachment(attachment, tmp_path) == "My-Voice.wav"
+    first = (tmp_path / "My-Voice.wav").read_bytes()
+    assert bot._install_voice_attachment(attachment, tmp_path) == "My-Voice.wav"
+    assert (tmp_path / "My-Voice.wav").read_bytes() != first
+
+
+def test_groups_create_add_and_update_active_group(tmp_path):
+    store = Store(tmp_path / "groups.sqlite3")
+    store.create_system("owner", "System")
+    first = store.add_member("owner", "Alex", "[a]")
+    second = store.add_member("owner", "Bea", "[b]")
+    store.configure_alias("owner", first.id, "al")
+
+    group = store.create_group("owner", "Friends at Work", "work")
+    configured, members = store.add_group_members("owner", ["al", second.id])
+    renamed = store.update_active_group("owner", alias="coworkers")
+    pictured = store.update_active_group("owner", avatar="https://example.test/group.png")
+
+    assert configured.id == group.id
+    assert [member.id for member in members] == [first.id, second.id]
+    assert renamed.alias == "coworkers"
+    assert pictured.avatar == "https://example.test/group.png"

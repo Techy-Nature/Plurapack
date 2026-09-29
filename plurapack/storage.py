@@ -87,6 +87,15 @@ class ProxyTag:
     suffix: str = ""
 
 
+@dataclass(frozen=True)
+class Group:
+    id: str
+    system_id: str
+    name: str
+    alias: str
+    avatar: str | None
+
+
 class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -189,6 +198,21 @@ class Store:
                     suffix TEXT NOT NULL DEFAULT '',
                     CHECK((member_id IS NOT NULL) <> (form_id IS NOT NULL)),
                     UNIQUE(system_id, prefix, suffix)
+                );
+                CREATE TABLE IF NOT EXISTS groups (
+                    id TEXT PRIMARY KEY CHECK(length(id)=5),
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL COLLATE NOCASE, alias TEXT NOT NULL COLLATE NOCASE,
+                    avatar TEXT, UNIQUE(system_id,name), UNIQUE(system_id,alias)
+                );
+                CREATE TABLE IF NOT EXISTS group_members (
+                    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+                    member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                    PRIMARY KEY(group_id,member_id)
+                );
+                CREATE TABLE IF NOT EXISTS active_groups (
+                    system_id TEXT PRIMARY KEY REFERENCES systems(id) ON DELETE CASCADE,
+                    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE
                 );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
@@ -421,8 +445,8 @@ class Store:
 
     def public_member_selected(self, selector: str, system_id: str | None = None) -> Member | None:
         """Resolve a card selector without granting any mutation permissions."""
-        query = "SELECT * FROM members WHERE (id=? OR name=?)"
-        parameters: list[str] = [selector.strip(), selector.strip()]
+        query = "SELECT * FROM members WHERE (id=? OR name=? OR alias=?)"
+        parameters: list[str] = [selector.strip(), selector.strip(), selector.strip()]
         if system_id:
             query += " AND system_id=?"
             parameters.append(system_id)
@@ -552,6 +576,96 @@ class Store:
                 WHERE o.account_id=? AND (m.id=? OR m.name=? OR m.alias=? OR t.prefix=?)""",
                 (account_id, selector, selector, selector, selector)).fetchone()
             return Member(**dict(row)) if row else None
+
+    def public_form_selected(self, selector: str) -> tuple[Form, Member] | None:
+        """Resolve a form publicly by stable ID or an unambiguous display name."""
+        selector = selector.strip()
+        with self.connect() as db:
+            rows = db.execute("""SELECT f.id form_id, f.member_id, f.display_name,
+                f.avatar form_avatar, f.soma, f.pronouns form_pronouns,
+                f.prefix form_prefix, f.suffix form_suffix, f.banner form_banner, m.*
+                FROM forms f JOIN members m ON m.id=f.member_id
+                WHERE f.id=? OR f.display_name=?
+                ORDER BY CASE WHEN f.id=? THEN 0 ELSE 1 END""",
+                (selector, selector, selector)).fetchall()
+        if not rows:
+            return None
+        if len(rows) > 1 and rows[0]["form_id"] != selector:
+            raise ValueError("More than one form has that name; use the form ID instead.")
+        values = dict(rows[0])
+        form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
+                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
+                    values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"))
+        values.pop("member_id")
+        return form, Member(**values)
+
+    def create_group(self, account_id: str, name: str, alias: str) -> Group:
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        name, alias = name.strip(), alias.strip()
+        if not name or len(name) > 80:
+            raise ValueError("Group name must be 1–80 characters.")
+        if not re.fullmatch(r"[^\s:]{1,24}", alias):
+            raise ValueError("Group alias must be 1–24 characters without spaces or colons.")
+        try:
+            with self.connect() as db:
+                while True:
+                    group_id = short_hash(5)
+                    try:
+                        db.execute("INSERT INTO groups(id,system_id,name,alias) VALUES (?,?,?,?)",
+                                   (group_id, system_id, name, alias))
+                        db.execute("""INSERT INTO active_groups(system_id,group_id) VALUES (?,?)
+                            ON CONFLICT(system_id) DO UPDATE SET group_id=excluded.group_id""",
+                                   (system_id, group_id))
+                        break
+                    except sqlite3.IntegrityError as error:
+                        if "groups.id" not in str(error):
+                            raise
+        except sqlite3.IntegrityError as error:
+            raise ValueError("That group name or alias is already in use.") from error
+        return self.active_group(account_id)  # type: ignore[return-value]
+
+    def active_group(self, account_id: str) -> Group | None:
+        with self.connect() as db:
+            row = db.execute("""SELECT g.* FROM groups g JOIN active_groups a ON a.group_id=g.id
+                JOIN owners o ON o.system_id=g.system_id WHERE o.account_id=?""", (account_id,)).fetchone()
+        return Group(**dict(row)) if row else None
+
+    def add_group_members(self, account_id: str, selectors: Iterable[str]) -> tuple[Group, list[Member]]:
+        group = self.active_group(account_id)
+        if group is None:
+            raise PermissionError("Create a group first.")
+        members = []
+        for selector in selectors:
+            member = self.member_selected(account_id, selector)
+            if member is None:
+                raise ValueError(f"Member `{selector}` was not found.")
+            members.append(member)
+        if not members:
+            raise ValueError("Supply at least one member alias or ID.")
+        with self.connect() as db:
+            db.executemany("INSERT OR IGNORE INTO group_members(group_id,member_id) VALUES (?,?)",
+                           ((group.id, member.id) for member in members))
+        return group, members
+
+    def update_active_group(self, account_id: str, **changes: Any) -> Group:
+        group = self.active_group(account_id)
+        if group is None:
+            raise PermissionError("Create a group first.")
+        if not changes or not set(changes) <= {"alias", "avatar"}:
+            raise ValueError("No supported group fields were supplied.")
+        if "alias" in changes and not re.fullmatch(r"[^\s:]{1,24}", changes["alias"].strip()):
+            raise ValueError("Group alias must be 1–24 characters without spaces or colons.")
+        if "avatar" in changes and not re.fullmatch(r"https?://\S+", changes["avatar"]):
+            raise ValueError("Group avatar must be an HTTP or HTTPS URL.")
+        try:
+            with self.connect() as db:
+                db.execute(f"UPDATE groups SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
+                           (*changes.values(), group.id))
+        except sqlite3.IntegrityError as error:
+            raise ValueError("That group alias is already in use.") from error
+        return self.active_group(account_id)  # type: ignore[return-value]
 
     def configure_alias(self, account_id: str, member_selector: str, alias: str | None) -> Member:
         """Set a short lookup name without changing the member's full display name."""
