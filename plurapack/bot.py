@@ -13,6 +13,7 @@ from typing import Any
 from .proxy import Incoming, ProxyService
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
+from .browser_audio import BrowserAudioStore
 from .storage import Member, Store, System
 from .login import LoginError, LoginService
 from .transfer import TransferError, export_document, parse_import
@@ -283,9 +284,16 @@ def create_bot(prefix: str, database: str) -> Any:
     if tts_url:
         queue_limit = _positive_environment_integer("PLURAPACK_TTS_QUEUE_LIMIT", 8, 1000)
         bot.speech_worker_count = _positive_environment_integer("PLURAPACK_TTS_WORKERS", 1, 4)
-        speech_queue = SpeechQueue(ChatterboxBackend(tts_url),
-                                   lambda job, audio: platform.deliver_speech(
-                                       job.channel_id, job.proxy_message_id, audio), queue_limit)
+        browser_audio = BrowserAudioStore.configured(database)
+        speech_queue = SpeechQueue(
+            ChatterboxBackend(tts_url),
+            lambda job, audio: platform.deliver_speech(
+                job.channel_id, job.proxy_message_id, audio),
+            queue_limit,
+            lambda job, audio: browser_audio.publish(
+                job.account_id, job.proxy_message_id, job.generation, audio),
+            browser_audio.invalidate,
+        )
         bot.speech_queue = speech_queue
     service = ProxyService(store, platform, prefix, speech_queue)
     login_service = LoginService(store)

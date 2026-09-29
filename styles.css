@@ -20,3 +20,4 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-vi
 .member-item img.avatar{width:42px;height:42px;object-fit:cover}
 .proxy-field{grid-column:1/-1}.proxy-field select{width:100%;min-height:44px;padding:.65rem;border:1px solid var(--line);border-radius:.55rem;background:#091019;color:var(--text)}.proxy-row{display:grid;grid-template-columns:2rem 1fr 1fr;gap:.55rem;align-items:center}.proxy-row b{text-align:center;color:var(--muted)}.proxy-row input{min-width:0}.proxy-pages{display:flex;align-items:center;justify-content:center;gap:.75rem}.proxy-pages button{min-width:48px}.proxy-pages span{min-width:8rem;text-align:center;color:var(--muted)}
 @media(max-width:700px){.proxy-row{grid-template-columns:2rem 1fr}.proxy-row input:last-child{grid-column:2}.proxy-pages span{min-width:auto}}
+.voice-control{display:grid;gap:.35rem}.voice-control small{color:var(--muted);line-height:1.35}

@@ -20,6 +20,7 @@ from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
                        create_session_cookie, require_authenticated_user)
 from .web_models import (FormCreate, FormPatch, FrontUpdate, MemberCreate, MemberPatch,
                          ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
+from .browser_audio import BrowserAudioStore
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -49,7 +50,7 @@ def member_json(store: Store, member: Member, front: Front | None = None) -> dic
             "forms": [form_json(form, store) for form in store.forms_for_member(member.id)],
             "voice": {"configured": member.voice_reference is not None,
                       "settings": json.loads(member.voice_settings), "playback": member.playback,
-                      "supportedPlayback": ["off", "send"],
+                      "supportedPlayback": ["off", "local", "send", "both"],
                       "speechFormatting": bool(member.speech_formatting),
                       "strikethroughSpeech": member.strikethrough_speech}}
 
@@ -70,9 +71,12 @@ def front_json(front: Front | None) -> dict[str, Any]:
             "formId": front.form.id if front and front.form else None}
 
 
-def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> FastAPI:
+def create_app(store: Store | None = None, static_root: Path | None = ROOT,
+               browser_audio: BrowserAudioStore | None = None) -> FastAPI:
     app = FastAPI(title="Plurapack Web API", version="1")
     app.state.store = store or Store(os.getenv("PLURAPACK_DATABASE", "plurapack.sqlite3"))
+    database = getattr(app.state.store, "path", os.getenv("PLURAPACK_DATABASE", "plurapack.sqlite3"))
+    app.state.browser_audio = browser_audio or BrowserAudioStore.configured(database)
     app.state.login_service = LoginService(app.state.store)
     app.state.login_start_limiter = LoginStartLimiter(
         int(os.getenv("PLURAPACK_LOGIN_START_LIMIT", "10"))
@@ -184,6 +188,27 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT) -> F
                 "systemId": summaries[0]["id"] if summaries else None,
                 "user": {"id": user.id, "username": user.username, "avatar": user.avatar},
                 "systems": summaries}
+
+    @app.get("/api/voice/events")
+    async def voice_events(request: Request,
+                           user: WebUser = Depends(require_authenticated_user)) -> Response:
+        events = await asyncio.to_thread(request.app.state.browser_audio.events, user.id)
+        return JSONResponse(
+            [{"id": event.id, "proxyMessageId": event.proxy_message_id,
+              "generation": event.generation} for event in events],
+            headers={"Cache-Control": "no-store, private"},
+        )
+
+    @app.get("/api/voice/audio/{event_id}")
+    async def voice_audio(event_id: str, request: Request,
+                          user: WebUser = Depends(require_authenticated_user)) -> Response:
+        audio = await asyncio.to_thread(request.app.state.browser_audio.take, user.id, event_id)
+        if audio is None:
+            raise HTTPException(404, "Audio is unavailable or expired")
+        return Response(audio, media_type="audio/mpeg", headers={
+            "Cache-Control": "no-store, private", "Pragma": "no-cache",
+            "X-Content-Type-Options": "nosniff",
+        })
 
     @app.get("/api/systems/{system_id}")
     async def get_system(system_id: str, user: WebUser = Depends(require_authenticated_user),

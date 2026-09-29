@@ -43,9 +43,9 @@ test("failed saves preserve the draft and editing state", () => {
   assert.strictEqual(failed.draft, draft);
 });
 
-test("only Off and Send voice modes are enabled", () => {
-  assert.deepEqual(h.VOICE_MODES.filter((mode) => mode.enabled).map((mode) => mode.id), ["off", "send"]);
-  assert.deepEqual(h.VOICE_MODES.filter((mode) => !mode.enabled).map((mode) => mode.id), ["browser", "both"]);
+test("all voice playback modes are enabled", () => {
+  assert.deepEqual(h.VOICE_MODES.filter((mode) => mode.enabled).map((mode) => mode.id), ["off", "send", "local", "both"]);
+  assert.deepEqual(h.VOICE_MODES.filter((mode) => !mode.enabled), []);
 });
 
 test("system is the initial and return view", () => {

@@ -41,6 +41,60 @@ async def test_off_does_not_enqueue_and_send_delivers_complete_identity(voice_st
     assert delivered == [("channel", "proxy", b"mp3")]
 
 
+@pytest.mark.parametrize("mode,stoat_count,local_count", [
+    ("send", 1, 0), ("local", 0, 1), ("both", 1, 1),
+])
+async def test_playback_modes_route_one_synthesis(voice_store, mode, stoat_count, local_count):
+    member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", mode)
+    backend = Backend()
+    backend.calls = 0
+    original = backend.synthesize
+
+    async def synthesize(text, selected):
+        backend.calls += 1
+        return await original(text, selected)
+
+    backend.synthesize = synthesize
+    stoat, local = [], []
+    queue = SpeechQueue(backend, lambda job, audio: stoat.append(audio),
+                        deliver_local=lambda job, audio: local.append(audio))
+    assert queue.submit(SpeechJob("channel", "proxy", "hello", member, account_id="owner"))
+    await queue.run_one()
+    assert len(stoat) == stoat_count
+    assert len(local) == local_count
+    assert backend.calls == 1
+    if mode == "both":
+        assert stoat[0] is local[0]
+
+
+@pytest.mark.parametrize("failing", ["stoat", "local"])
+async def test_both_destination_failures_are_isolated(voice_store, failing):
+    member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "both")
+    completed = []
+
+    async def destination(name, audio):
+        if name == failing:
+            raise RuntimeError("private details")
+        completed.append((name, audio))
+
+    queue = SpeechQueue(Backend(), lambda job, audio: destination("stoat", audio),
+                        deliver_local=lambda job, audio: destination("local", audio))
+    queue.submit(SpeechJob("c", "p", "private", member, account_id="owner"))
+    await queue.run_one()
+    assert completed == [("local" if failing == "stoat" else "stoat", b"mp3")]
+
+
+async def test_stale_generation_reaches_neither_destination(voice_store):
+    member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "both")
+    delivered = []
+    queue = SpeechQueue(Backend(), lambda job, audio: delivered.append("stoat"),
+                        deliver_local=lambda job, audio: delivered.append("local"))
+    queue.submit(SpeechJob("c", "p", "old", member, account_id="owner"))
+    queue.submit(SpeechJob("c", "p", "new", member, account_id="owner"))
+    await queue.run_one()
+    assert delivered == []
+
+
 def test_semantic_speech_formatting_is_opt_in(voice_store):
     member = voice_store.member_named("owner", "Alex")
     source = 'I said "hello" *waves* **very clearly** and ~~never mind~~.'
@@ -260,8 +314,7 @@ async def test_failures_do_not_kill_worker_and_delete_cancels_delivery(voice_sto
 def test_invalid_or_unauthorized_voice_configuration(voice_store):
     with pytest.raises(ValueError):
         voice_store.configure_voice("owner", "Alex", "a.wav", "[]", "send")
-    with pytest.raises(ValueError, match="not implemented"):
-        voice_store.configure_voice("owner", "Alex", "a.wav", "{}", "both")
+    assert voice_store.configure_voice("owner", "Alex", "a.wav", "{}", "both").playback == "both"
     with pytest.raises(PermissionError):
         voice_store.configure_voice("stranger", "Alex", "a.wav", "{}", "send")
     with pytest.raises(ValueError, match="mumble"):

@@ -13,8 +13,8 @@
   const VOICE_MODES = Object.freeze([
     { id: "off", label: "Off", enabled: true },
     { id: "send", label: "Send", enabled: true },
-    { id: "browser", label: "Browser", enabled: false },
-    { id: "both", label: "Both", enabled: false },
+    { id: "local", label: "Browser", enabled: true },
+    { id: "both", label: "Both", enabled: true },
   ]);
 
   function nextFormName(forms) {
