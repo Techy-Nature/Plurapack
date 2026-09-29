@@ -141,13 +141,13 @@ class SpeechQueue:
             self.queue.task_done()
 
     async def _route(self, job: SpeechJob, audio: bytes) -> None:
-        """Route one synthesis result, isolating failures between destinations."""
+        """Route one synthesis result without coupling independent destinations."""
         destinations = []
         if job.member.playback in {"send", "both"}:
             destinations.append(("Stoat", self.deliver))
         if job.member.playback in {"local", "both"} and self.deliver_local:
             destinations.append(("browser", self.deliver_local))
-        for name, destination in destinations:
+        async def route_one(name, destination) -> None:
             try:
                 result = destination(job, audio)
                 if hasattr(result, "__await__"):
@@ -155,6 +155,12 @@ class SpeechQueue:
             except Exception as error:
                 logging.getLogger(__name__).error(
                     "%s speech delivery failed (%s)", name, type(error).__name__)
+
+        # In ``both`` mode an attachment upload may be slow, while publishing to
+        # the browser spool is independent and quick. Start both together, but
+        # wait for both so queue bookkeeping still has one simple completion.
+        await asyncio.gather(*(route_one(name, destination)
+                               for name, destination in destinations))
 
 
 async def speech_worker(queue: SpeechQueue) -> None:

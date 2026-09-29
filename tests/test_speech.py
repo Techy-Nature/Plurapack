@@ -84,6 +84,29 @@ async def test_both_destination_failures_are_isolated(voice_store, failing):
     assert completed == [("local" if failing == "stoat" else "stoat", b"mp3")]
 
 
+async def test_slow_stoat_delivery_does_not_delay_browser_publication(voice_store):
+    member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "both")
+    stoat_started, release_stoat, browser_published = (
+        asyncio.Event(), asyncio.Event(), asyncio.Event()
+    )
+
+    async def deliver_stoat(job, audio):
+        stoat_started.set()
+        await release_stoat.wait()
+
+    async def deliver_browser(job, audio):
+        browser_published.set()
+
+    queue = SpeechQueue(Backend(), deliver_stoat, deliver_local=deliver_browser)
+    queue.submit(SpeechJob("c", "p", "private", member, account_id="owner"))
+    running = asyncio.create_task(queue.run_one())
+    await stoat_started.wait()
+    await asyncio.wait_for(browser_published.wait(), 0.2)
+    assert not running.done()
+    release_stoat.set()
+    await running
+
+
 async def test_stale_generation_reaches_neither_destination(voice_store):
     member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "both")
     delivered = []

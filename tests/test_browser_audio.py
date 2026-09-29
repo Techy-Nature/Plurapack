@@ -1,3 +1,6 @@
+import re
+import stat
+
 import httpx
 import pytest
 
@@ -25,6 +28,28 @@ def test_ephemeral_audio_expires_is_bounded_and_invalidates(tmp_path):
     assert [event.proxy_message_id for event in audio.events("owner")] == ["proxy-3"]
     now[0] += 11
     assert audio.events("owner") == []
+
+
+def test_spool_and_every_stage_of_published_files_are_private(tmp_path, monkeypatch):
+    root = tmp_path / "audio"
+    audio = BrowserAudioStore(root)
+    temporary_modes = []
+    real_replace = __import__("os").replace
+
+    def inspect_replace(source, destination):
+        temporary_modes.append(stat.S_IMODE(source.stat().st_mode))
+        real_replace(source, destination)
+
+    monkeypatch.setattr("plurapack.browser_audio.os.replace", inspect_replace)
+    first = audio.publish("account-private", "message-private", 1, b"private")
+    second = audio.publish("account-private", "message-private", 2, b"private")
+
+    assert stat.S_IMODE(root.stat().st_mode) == 0o700
+    assert temporary_modes == [0o600, 0o600, 0o600, 0o600]
+    assert all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in root.iterdir())
+    assert first.id != second.id
+    assert re.fullmatch(r"[A-Za-z0-9_-]{32}", first.id)
+    assert all("private" not in path.name for path in root.iterdir())
 
 
 @pytest.mark.asyncio

@@ -30,10 +30,10 @@ class BrowserAudioStore:
         self.root = Path(root)
         self.ttl, self.limit, self.clock = ttl, limit, clock
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        try:
-            self.root.chmod(0o700)
-        except OSError:
-            pass
+        # Apply the restrictive mode even when the configured directory already
+        # existed. Failing closed is safer than publishing private clips into a
+        # directory whose permissions could not be secured.
+        self.root.chmod(0o700)
 
     @classmethod
     def configured(cls, database: str | Path) -> "BrowserAudioStore":
@@ -58,6 +58,13 @@ class BrowserAudioStore:
                 path.unlink()
             except FileNotFoundError:
                 pass
+
+    @staticmethod
+    def _write_private(path: Path, content: bytes) -> None:
+        """Create a new spool file with mode 0600 regardless of process umask."""
+        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(content)
 
     def cleanup(self) -> None:
         now = self.clock()
@@ -97,8 +104,10 @@ class BrowserAudioStore:
                     "generation": generation, "created": self.clock()}
         audio_tmp = self.root / f".{event_id}.audio.tmp"
         metadata_tmp = self.root / f".{event_id}.json.tmp"
-        audio_tmp.write_bytes(audio)
-        metadata_tmp.write_text(json.dumps(metadata, separators=(",", ":")), encoding="utf-8")
+        self._write_private(audio_tmp, audio)
+        self._write_private(
+            metadata_tmp, json.dumps(metadata, separators=(",", ":")).encode("utf-8")
+        )
         os.replace(audio_tmp, self._audio_path(event_id))
         os.replace(metadata_tmp, self._metadata_path(event_id))
         self.cleanup()
