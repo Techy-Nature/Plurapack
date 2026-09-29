@@ -6,6 +6,13 @@ import importlib
 import importlib.util
 import json
 import os
+import re
+import shlex
+import shutil
+import subprocess
+import tempfile
+import urllib.request
+import wave
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,11 +60,13 @@ COMMAND_HELP = {
     "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
     "export": ("x", "[FORMAT]", "Export portable system metadata."),
     "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]", "Show system or member information."),
+    "info": ("in", "SYSTEM_MEMBER_OR_FORM", "Show a system, member, or form profile."),
+    "group": ("g", "create|add|alias|avatar ...", "Create and edit the current group."),
     "viewmembers": ("ml", "[SYSTEM]", "Show a system's member cards."),
     "viewmember": ("vm", "MEMBER", "Show one member card."),
     "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
     "deletesystem": ("ds", "", "Start permanent system deletion."),
-    "voice": ("vo", "MEMBER FILE [PLAYBACK] [SETTINGS]", "Configure speech reference audio."),
+    "voice": ("vo", "MEMBER [PLAYBACK] [SETTINGS] + WAV/MP3", "Upload speech reference audio."),
     "voiceoff": ("of", "MEMBER", "Disable speech for a member."),
     "voiceformat": ("vf", "MEMBER on|off [MODE]", "Configure semantic speech formatting."),
 }
@@ -150,6 +159,79 @@ def _system_embed(sdk: Any, system: System, member_count: int) -> Any:
     description += f"\n\n**System ID:** `{system.id}`\n**Members:** {member_count}"
     return sdk.SendableEmbed(title=system.display_name, description=description,
                              icon_url=system.logo)
+
+
+def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, Member]) -> Any:
+    """Build the compact, common profile requested by the ``info`` command."""
+    if isinstance(value, System):
+        return sdk.SendableEmbed(
+            title=value.display_name,
+            description=(value.description or "No description provided.") + f"\n\n**ID:** `{value.id}`",
+            icon_url=value.logo, media=value.banner,
+        )
+    if isinstance(value, tuple):
+        form, member = value
+        tags = store.proxy_tags(form_id=form.id)[:3]
+        name, identifier, avatar, pronouns, description, banner = (
+            form.display_name, form.id, form.avatar or member.avatar,
+            form.pronouns if form.pronouns is not None else member.pronouns,
+            form.soma or member.description, form.banner or member.banner,
+        )
+    else:
+        member = value
+        tags = store.proxy_tags(member_id=member.id)[:3]
+        name, identifier, avatar, pronouns, description, banner = (
+            member.name, member.id, member.avatar, member.pronouns, member.description, member.banner,
+        )
+    proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags) or "None"
+    body = (description or "No description provided.") + (
+        f"\n\n**ID:** `{identifier}`\n**Pronouns:** {pronouns or 'Not set'}\n**Proxies:** {proxies}"
+    )
+    return sdk.SendableEmbed(title=name, description=body, icon_url=avatar, media=banner)
+
+
+def _install_voice_attachment(attachment: Any, reference_dir: Path, max_bytes: int = 25 * 1024 * 1024) -> str:
+    """Download and atomically install a WAV/MP3 attachment as a validated WAV."""
+    filename = str(getattr(attachment, "filename", getattr(attachment, "name", "reference")))
+    extension = Path(filename).suffix.casefold()
+    if extension not in {".wav", ".mp3"}:
+        raise ValueError("Voice reference must be a WAV or MP3 attachment.")
+    safe_stem = re.sub(r"[^A-Za-z0-9._-]+", "-", Path(filename).stem).strip(".-") or "reference"
+    target_name = safe_stem[:80] + ".wav"
+    url = str(getattr(attachment, "url", ""))
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("The attached voice reference has no downloadable URL.")
+    reference_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=reference_dir) as workspace:
+        source = Path(workspace) / ("source" + extension)
+        request = urllib.request.Request(url, headers={"User-Agent": "Plurapack/voice-upload"})
+        with urllib.request.urlopen(request, timeout=30) as response, source.open("wb") as output:
+            data = response.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise ValueError("Voice reference must be no larger than 25 MiB.")
+            output.write(data)
+        converted = Path(workspace) / "converted.wav"
+        if extension == ".mp3":
+            if shutil.which("ffmpeg") is None:
+                raise ValueError("MP3 conversion requires ffmpeg on the bot host.")
+            result = subprocess.run(
+                ["ffmpeg", "-v", "error", "-y", "-i", str(source), "-ac", "1", "-ar", "24000", str(converted)],
+                capture_output=True, timeout=60,
+            )
+            if result.returncode:
+                raise ValueError("The MP3 attachment could not be converted to WAV.")
+        else:
+            converted = source
+        try:
+            with wave.open(str(converted), "rb") as audio:
+                if audio.getnframes() < 1:
+                    raise ValueError("Voice reference contains no audio.")
+        except (wave.Error, EOFError) as error:
+            raise ValueError("The attachment is not valid audio.") from error
+        temporary_target = reference_dir / (target_name + ".new")
+        shutil.copyfile(converted, temporary_target)
+        os.replace(temporary_target, reference_dir / target_name)
+    return target_name
 
 
 class StoatDependencyError(RuntimeError):
@@ -433,6 +515,56 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await send_pages(ctx, [[_member_embed(stoat, store, selected)]])
 
+    @bot.command(aliases=[COMMAND_SHORTCUTS["info"]])
+    async def info(ctx: commands.Context, *, selector: str) -> None:
+        """Show a system, member, or form selected by nickname, alias, or ID."""
+        try:
+            value = store.system_info(selector)
+            if value is None:
+                value = store.public_member_selected(selector)
+            if value is None:
+                value = store.public_form_selected(selector)
+        except ValueError as error:
+            await ctx.send(str(error))
+            return
+        if value is None:
+            await ctx.send("System, member, or form not found. Use an exact nickname, alias, or ID.")
+            return
+        await ctx.send(embeds=[_profile_embed(stoat, store, value)])
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["group"]])
+    async def group(ctx: commands.Context, action: str, *, arguments: str = "") -> None:
+        """Dispatch group subcommands while keeping their argument rules independent."""
+        try:
+            values = shlex.split(arguments)
+        except ValueError as error:
+            await ctx.send(f"Invalid quoting: {error}")
+            return
+        action = action.casefold()
+        try:
+            if action == "create":
+                if len(values) != 2:
+                    raise ValueError(f'Usage: `{prefix}group create "name" alias`')
+                configured = store.create_group(ctx.author.id, values[0], values[1])
+                await ctx.send(f"Created group **{configured.name}** (`{configured.id}`), alias `{configured.alias}`.")
+            elif action == "add":
+                configured, members = store.add_group_members(ctx.author.id, values)
+                await ctx.send(f"Added {len(members)} member(s) to **{configured.name}**.")
+            elif action == "alias":
+                if len(values) != 1:
+                    raise ValueError(f'Usage: `{prefix}group alias "new-alias"`')
+                configured = store.update_active_group(ctx.author.id, alias=values[0].strip())
+                await ctx.send(f"Group alias is now `{configured.alias}`.")
+            elif action == "avatar":
+                if len(values) != 1:
+                    raise ValueError(f"Usage: `{prefix}group avatar IMAGE_URL`")
+                configured = store.update_active_group(ctx.author.id, avatar=values[0])
+                await ctx.send(f"Avatar updated for **{configured.name}**.")
+            else:
+                raise ValueError("Group action must be create, add, alias, or avatar.")
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+
     @bot.command(name="import", aliases=[COMMAND_SHORTCUTS["import"]])
     async def import_system(ctx: commands.Context, source: str, *, document: str) -> None:
         """Import pasted JSON from PluralKit, Tupperbox, or Plurapack."""
@@ -518,28 +650,24 @@ def create_bot(prefix: str, database: str) -> Any:
         await ctx.send(f"Account connected to system `{system_id}`.")
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["voice"]])
-    async def voice(ctx: commands.Context, selector: str, reference: str, playback: str = "send", *,
+    async def voice(ctx: commands.Context, selector: str, playback: str = "send", *,
                     settings: str = "{}") -> None:
-        """Use an operator-installed reference filename; chat uploads are intentionally unsupported."""
+        """Install an attached WAV/MP3, replacing an earlier upload with the same name."""
         reference_dir_value = os.environ.get("PLURAPACK_VOICE_REFERENCE_DIR")
         if not reference_dir_value:
             await ctx.send("Voice configuration is disabled until the operator sets PLURAPACK_VOICE_REFERENCE_DIR.")
             return
+        attachments = list(getattr(ctx.message, "attachments", ()) or ())
+        if len(attachments) != 1:
+            await ctx.send("Attach exactly one WAV or MP3 voice reference.")
+            return
         reference_dir = Path(reference_dir_value).expanduser().resolve()
-        candidate = (reference_dir / reference).resolve()
         try:
-            candidate.relative_to(reference_dir)
-        except ValueError:
-            await ctx.send("Voice reference must be inside the operator-approved directory.")
-            return
-        if not candidate.is_file():
-            await ctx.send("That operator-managed voice reference does not exist.")
-            return
-        try:
+            reference = await asyncio.to_thread(_install_voice_attachment, attachments[0], reference_dir)
             configured = store.configure_voice(
-                ctx.author.id, selector, candidate.relative_to(reference_dir).as_posix(), settings, playback
+                ctx.author.id, selector, reference, settings, playback
             )
-        except (PermissionError, ValueError, json.JSONDecodeError) as error:
+        except (OSError, TimeoutError, PermissionError, ValueError, json.JSONDecodeError) as error:
             await ctx.send(str(error))
             return
         await ctx.send(f"Voice for **{configured.name}** is configured for `{configured.playback}` playback.")
