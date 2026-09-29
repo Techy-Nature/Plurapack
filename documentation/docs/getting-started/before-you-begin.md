@@ -2,25 +2,28 @@
 
 There are two roles in a Plurapack setup:
 
-- A **user** sends commands and proxied messages in Stoat.
+- A **user** sends commands and proxied messages in Stoat or Fluxer.
 - An **operator** installs the bot, protects its token and database, and grants it channel permissions.
 
 You can be both. If someone already runs Plurapack in your server, skip installation and continue to [Your first system](first-system.md).
 
 ## What users need
 
-- A Stoat account.
+- A Stoat or Fluxer account.
 - Access to a server and channel containing the Plurapack bot.
 - Permission from the server or system owner to use that space.
 
 ## What operators need
 
 - Python 3.11 or newer.
-- A bot created in Stoat and its private token.
+- A bot created in Stoat, Fluxer, or both, and its private token.
 - A machine that can stay online while the bot is needed.
 - A plan for protecting and backing up the SQLite database.
 
-The bot needs permission in intended proxy channels to view and send messages, use masquerades, upload files if speech is enabled, add and read reactions, edit its own messages, and delete invoking users' source messages. Grant it only the permissions it needs.
+The bot needs permission in intended proxy channels to view and send messages,
+upload files if speech is enabled, add and read reactions, edit proxy messages,
+and delete invoking users' source messages. Stoat needs masquerade permission;
+Fluxer needs Manage Webhooks. Grant it only the permissions it needs.
 
 ## A few terms
 

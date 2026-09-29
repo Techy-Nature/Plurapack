@@ -77,6 +77,45 @@ def test_main_reports_that_it_is_connecting(monkeypatch, capsys):
     assert capsys.readouterr().out == "[Plurapack] Connecting to Stoat...\n"
 
 
+def test_main_can_run_fluxer_without_stoat(monkeypatch, capsys):
+    from plurapack import fluxer_bot
+
+    tokens = []
+    monkeypatch.delenv("STOAT_BOT_TOKEN", raising=False)
+    monkeypatch.setenv("FLUXER_BOT_TOKEN", "fluxer-token")
+    monkeypatch.setattr(
+        fluxer_bot, "create_fluxer_bot", lambda prefix, database: SimpleNamespace(run=tokens.append)
+    )
+
+    bot.main()
+
+    assert tokens == ["fluxer-token"]
+    assert capsys.readouterr().out == "[Plurapack] Connecting to Fluxer...\n"
+
+
+def test_main_runs_stoat_and_fluxer_together(monkeypatch, capsys):
+    from plurapack import fluxer_bot
+
+    started = []
+    monkeypatch.setenv("STOAT_BOT_TOKEN", "stoat-token")
+    monkeypatch.setenv("FLUXER_BOT_TOKEN", "fluxer-token")
+    monkeypatch.setattr(
+        bot, "create_bot", lambda prefix, database: SimpleNamespace(run=lambda token: started.append(token))
+    )
+    monkeypatch.setattr(
+        fluxer_bot,
+        "create_fluxer_bot",
+        lambda prefix, database: SimpleNamespace(run=lambda token: started.append(token)),
+    )
+
+    bot.main()
+
+    assert sorted(started) == ["fluxer-token", "stoat-token"]
+    output = capsys.readouterr().out
+    assert "[Plurapack] Connecting to Stoat...\n" in output
+    assert "[Plurapack] Connecting to Fluxer...\n" in output
+
+
 async def test_stoat_platform_applies_member_color_to_username():
     class Masquerade:
         def __init__(self, **kwargs):

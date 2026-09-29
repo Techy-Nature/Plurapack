@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "plurapack"
 version = "0.1.0"
-description = "A self-hosted Stoat member proxy with optional local speech"
+description = "A self-hosted Stoat and Fluxer member proxy with optional local speech"
 requires-python = ">=3.11"
-dependencies = ["stoat.py>=1.2.1,<2", "fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
+dependencies = ["stoat.py>=1.2.1,<2", "fluxer.py>=0.4.2,<1", "fastapi>=0.115,<1", "uvicorn>=0.30,<1"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "httpx>=0.27,<1"]
