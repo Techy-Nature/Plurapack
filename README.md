@@ -52,6 +52,22 @@ This small in-memory limit does not retain permanent IP history and intentionall
 `X-Forwarded-For`, so deployments behind a reverse proxy should enforce any
 client-aware rate limit at that trusted proxy.
 
+### Browser voice playback
+
+Voice playback modes have destination-based meanings: `send` uploads the one
+generated MP3 to Stoat, `local` offers it only to the authenticated dashboard,
+and `both` routes that same synthesis result to both destinations. Dashboard
+playback is opt-in per browser tab through **Enable voice playback**, is ordered,
+and uses authenticated polling plus one-use audio retrieval. If several tabs for
+the same account are open, the first one to retrieve a clip consumes it.
+
+Because the bot and Web API normally run as separate processes, ephemeral audio
+uses a private cross-process spool rather than SQLite. Both processes must use
+the same `PLURAPACK_DATABASE` (or explicitly share
+`PLURAPACK_BROWSER_AUDIO_DIR`). Opaque clips expire after 120 seconds and the
+spool retains at most 100 clips by default; operators can adjust these bounds
+with `PLURAPACK_BROWSER_AUDIO_TTL` and `PLURAPACK_BROWSER_AUDIO_LIMIT`.
+
 The existing frontend contract is: `GET /api/account` initializes account and
 system identity; `GET /api/systems/:systemId` loads members; `POST
 /api/systems/:systemId/members` accepts the new-member fields; `POST

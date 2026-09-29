@@ -73,23 +73,26 @@ class SpeechJob:
     text: str
     member: Member
     generation: int = 0
+    account_id: str = ""
 
 
 class SpeechQueue:
     """Bounded asynchronous queue; delivery is supplied by the platform adapter."""
-    def __init__(self, backend: SpeechBackend, deliver, limit: int = 8):
+    def __init__(self, backend: SpeechBackend, deliver, limit: int = 8,
+                 deliver_local=None, invalidate_local=None):
         self.backend, self.deliver = backend, deliver
+        self.deliver_local, self.invalidate_local = deliver_local, invalidate_local
         self.queue: asyncio.Queue[SpeechJob] = asyncio.Queue(maxsize=limit)
         self._generation = 0
         self._current: dict[str, int] = {}
         self._pending: dict[str, int] = {}
 
     def submit(self, job: SpeechJob) -> bool:
-        if job.member.playback not in {"send", "both"}:
+        if job.member.playback not in {"send", "local", "both"}:
             return False
         self._generation += 1
         job = SpeechJob(job.channel_id, job.proxy_message_id, job.text, job.member,
-                        self._generation)
+                        generation=self._generation, account_id=job.account_id)
         try:
             self.queue.put_nowait(job)
             self._current[job.proxy_message_id] = job.generation
@@ -101,6 +104,12 @@ class SpeechQueue:
     def cancel(self, proxy_message_id: str) -> None:
         """Invalidate every queued or synthesizing generation for a proxy."""
         self._current.pop(proxy_message_id, None)
+        if self.invalidate_local:
+            try:
+                self.invalidate_local(proxy_message_id)
+            except Exception as error:
+                logging.getLogger(__name__).error(
+                    "Could not invalidate browser speech (%s)", type(error).__name__)
 
     def is_current(self, job: SpeechJob) -> bool:
         return self._current.get(job.proxy_message_id) == job.generation
@@ -120,7 +129,7 @@ class SpeechQueue:
                 # Cancellation cannot necessarily stop an HTTP request, so the
                 # generation is checked again after synthesis completes.
                 if self.is_current(job):
-                    await self.deliver(job, audio)
+                    await self._route(job, audio)
         finally:
             remaining = self._pending[job.proxy_message_id] - 1
             if remaining:
@@ -130,6 +139,28 @@ class SpeechQueue:
                 if self._current.get(job.proxy_message_id) == job.generation:
                     self._current.pop(job.proxy_message_id, None)
             self.queue.task_done()
+
+    async def _route(self, job: SpeechJob, audio: bytes) -> None:
+        """Route one synthesis result without coupling independent destinations."""
+        destinations = []
+        if job.member.playback in {"send", "both"}:
+            destinations.append(("Stoat", self.deliver))
+        if job.member.playback in {"local", "both"} and self.deliver_local:
+            destinations.append(("browser", self.deliver_local))
+        async def route_one(name, destination) -> None:
+            try:
+                result = destination(job, audio)
+                if hasattr(result, "__await__"):
+                    await result
+            except Exception as error:
+                logging.getLogger(__name__).error(
+                    "%s speech delivery failed (%s)", name, type(error).__name__)
+
+        # In ``both`` mode an attachment upload may be slow, while publishing to
+        # the browser spool is independent and quick. Start both together, but
+        # wait for both so queue bookkeeping still has one simple completion.
+        await asyncio.gather(*(route_one(name, destination)
+                               for name, destination in destinations))
 
 
 async def speech_worker(queue: SpeechQueue) -> None:

@@ -937,17 +937,15 @@ class Store:
 
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
                         voice_settings: str | dict[str, Any] = "{}", playback: str = "send") -> Member:
-        """Configure an owned member. Only ``send`` has output in this server-only release."""
+        """Configure an owned member's synthesis and playback destinations."""
         if playback not in {"off", "local", "send", "both"}:
             raise ValueError("Playback must be off, local, send, or both.")
-        if playback in {"local", "both"}:
-            raise ValueError("Local playback is not implemented; use off or send.")
         normalized = normalize_voice_settings(voice_settings)
         member = self.member_selected(account_id, member_selector)
         if member is None:
             raise PermissionError("Member not found or not owned by this account.")
-        if playback == "send" and not voice_reference:
-            raise ValueError("Send playback requires a voice reference.")
+        if playback != "off" and not voice_reference:
+            raise ValueError("Voice playback requires a voice reference.")
         with self.connect() as db:
             db.execute("UPDATE members SET voice_reference=?, voice_settings=?, playback=? WHERE id=?",
                        (voice_reference, normalized, playback, member.id))

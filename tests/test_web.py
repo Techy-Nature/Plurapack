@@ -207,14 +207,16 @@ async def test_member_and_form_proxy_tags_can_be_replaced_up_to_limit(api):
 
 
 @pytest.mark.asyncio
-async def test_unsupported_voice_modes_and_system_delete(api):
+async def test_voice_modes_and_system_delete(api):
     store, system_id, _, transport = api
     member = store.add_member("owner", "Voice", "v:")
     store.configure_voice("owner", member.id, "voice.wav", {}, "send")
     async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
         result = await client.patch(f"/api/systems/{system_id}/members/{member.id}",
                                     json={"playback": "local"})
-        assert result.status_code == 422
+        assert result.status_code == 200
+        assert result.json()["voice"]["playback"] == "local"
+        assert result.json()["voice"]["supportedPlayback"] == ["off", "local", "send", "both"]
         assert (await client.patch(f"/api/systems/{system_id}/members/{member.id}",
                                    json={"playback": "off"})).status_code == 200
         assert (await client.patch(f"/api/systems/{system_id}/members/{member.id}",
