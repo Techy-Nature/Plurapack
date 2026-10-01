@@ -3,7 +3,9 @@
 New to Plurapack? The text-only, website-ready user guide lives in [`documentation/`](documentation/README.md), with onboarding, everyday workflows, configuration, privacy, and troubleshooting documentation.
 
 Invites:
+
 Stoat: https://stoat.chat/bot/01M1ZB80QNH00RN1XEWH3D38TH
+
 Fluxer: https://web.fluxer.app/oauth2/authorize?client_id=1548168978344448000&scope=bot&permissions=536983552
 
 ## Dashboard and Web API
