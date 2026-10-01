@@ -7,9 +7,12 @@ its own startup and shutdown lifecycle.
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import sys
 from collections.abc import Sequence
+
+from .config import StorageConfigurationError, resolve_database_path
 
 
 Component = tuple[str, tuple[str, ...]]
@@ -74,6 +77,15 @@ async def supervise(
     shutdown_waiter: asyncio.Task[bool] | None = None
     exit_code = 0
     try:
+        try:
+            database = resolve_database_path()
+        except StorageConfigurationError as error:
+            _status(f"Persistent storage error: {error}")
+            return 1
+        # Give both child processes one identical resolved path.  This is
+        # especially important for the cross-process browser-audio spool key.
+        os.environ["PLURAPACK_DATABASE"] = database
+        _status(f"Database: {database}")
         _status("Starting Plurapack bot and dashboard.")
         for name, command in components:
             try:

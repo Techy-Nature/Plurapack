@@ -31,11 +31,34 @@ required. Remove any existing Railway start-command override such as `uvicorn
 ...` so the image command is used. The server automatically listens on
 Railway's `PORT` and on all interfaces.
 
-At minimum, configure `PLURAPACK_SESSION_SECRET` as a stable random value of at
-least 32 characters and configure `STOAT_BOT_TOKEN` and/or `FLUXER_BOT_TOKEN`.
-Keep both components in this one Railway service so they share the persistent
-volume containing `PLURAPACK_DATABASE` (and browser audio, when enabled). An
-ephemeral SQLite file is lost on redeploy.
+Railway's container filesystem is ephemeral. To retain systems, members,
+settings, login state, and other SQLite data across redeployments or container
+replacement:
+
+1. Create or attach a Railway Volume to the existing Plurapack service.
+2. Mount the volume at `/data`.
+3. Add `PLURAPACK_DATA_DIR=/data` to the service variables.
+4. Keep the unified Start Command as `python -m plurapack` (or let the
+   `Dockerfile` command run).
+
+A Railway Volume is required for SQLite data to survive container replacement;
+setting `PLURAPACK_DATA_DIR` alone does not make an ephemeral filesystem
+persistent. Keep both the bot and dashboard in the **same Railway service** for
+this deployment model. The launcher prints the selected database path at
+startup so `/data/plurapack.sqlite3` is easy to verify.
+
+`PLURAPACK_DATABASE` remains supported and takes precedence when set, using its
+exact path. Otherwise, `PLURAPACK_DATA_DIR` places the default database at
+`<data-dir>/plurapack.sqlite3`. With neither variable, the existing
+`plurapack.sqlite3` current-directory default remains unchanged. Plurapack
+creates missing database directories and fails startup rather than falling back
+if configured storage cannot be used. It never automatically moves or deletes
+an existing database; operators changing paths must deliberately move any data
+they want to retain while the service is stopped.
+
+At minimum, also configure `PLURAPACK_SESSION_SECRET` as a stable random value
+of at least 32 characters and configure `STOAT_BOT_TOKEN` and/or
+`FLUXER_BOT_TOKEN`.
 
 The API provides `/api/account`, authorized system/member/form CRUD, front
 retrieval and switching, and `/api/health`; interactive OpenAPI documentation is
@@ -82,6 +105,9 @@ processes use the same `PLURAPACK_DATABASE` (or explicitly share
 `PLURAPACK_BROWSER_AUDIO_DIR`). Opaque clips expire after 120 seconds and the
 spool retains at most 100 clips by default; operators can adjust these bounds
 with `PLURAPACK_BROWSER_AUDIO_TTL` and `PLURAPACK_BROWSER_AUDIO_LIMIT`.
+The default spool stays in the operating system's temporary directory even when
+`PLURAPACK_DATA_DIR` is set, so a persistent volume does not become an audio
+archive.
 
 The existing frontend contract is: `GET /api/account` initializes account and
 system identity; `GET /api/systems/:systemId` loads members; `POST
