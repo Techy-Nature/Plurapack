@@ -435,8 +435,12 @@ app = create_app()
 
 
 def main() -> None:
-    uvicorn.run("plurapack.web:app", host=os.getenv("PLURAPACK_WEB_HOST", "127.0.0.1"),
-                port=int(os.getenv("PLURAPACK_WEB_PORT", "8000")))
+    # Railway and similar platforms provide the public listening port through
+    # PORT. Keep the Plurapack-specific setting as an explicit override for
+    # self-hosted installations.
+    port = os.getenv("PLURAPACK_WEB_PORT", os.getenv("PORT", "8000"))
+    uvicorn.run("plurapack.web:app", host=os.getenv("PLURAPACK_WEB_HOST", "0.0.0.0"),
+                port=int(port))
 
 
 if __name__ == "__main__":

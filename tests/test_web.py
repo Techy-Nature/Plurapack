@@ -1,6 +1,7 @@
 import httpx
 import pytest
 
+import plurapack.web as web
 from plurapack.storage import Store
 from plurapack.web import create_app
 from plurapack.web_auth import COOKIE_NAME, WebUser, create_session_cookie
@@ -231,3 +232,34 @@ async def test_voice_modes_and_system_delete(api):
         assert supported.json()["voice"]["settings"] == {"temperature": 0.7}
         assert (await client.delete(f"/api/systems/{system_id}")).status_code == 204
         assert (await client.get(f"/api/systems/{system_id}")).status_code == 404
+
+
+def test_main_uses_platform_port_and_public_host(monkeypatch):
+    started = {}
+    monkeypatch.delenv("PLURAPACK_WEB_HOST", raising=False)
+    monkeypatch.delenv("PLURAPACK_WEB_PORT", raising=False)
+    monkeypatch.setenv("PORT", "4321")
+    monkeypatch.setattr(web.uvicorn, "run", lambda app, **options: started.update(
+        app=app, **options))
+
+    web.main()
+
+    assert started == {
+        "app": "plurapack.web:app",
+        "host": "0.0.0.0",
+        "port": 4321,
+    }
+
+
+def test_main_prefers_plurapack_port_override(monkeypatch):
+    started = {}
+    monkeypatch.setenv("PORT", "4321")
+    monkeypatch.setenv("PLURAPACK_WEB_PORT", "8765")
+    monkeypatch.setenv("PLURAPACK_WEB_HOST", "127.0.0.1")
+    monkeypatch.setattr(web.uvicorn, "run", lambda app, **options: started.update(
+        app=app, **options))
+
+    web.main()
+
+    assert started["host"] == "127.0.0.1"
+    assert started["port"] == 8765
