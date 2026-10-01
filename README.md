@@ -2,6 +2,8 @@
 
 New to Plurapack? The text-only, website-ready user guide lives in [`documentation/`](documentation/README.md), with onboarding, everyday workflows, configuration, privacy, and troubleshooting documentation.
 
+Plurapack is an early alpha, self-hosted [Stoat](https://stoat.chat) and [Fluxer](https://web.fluxer.app/) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
+
 Invites:
 
 Stoat: https://stoat.chat/bot/01M1ZB80QNH00RN1XEWH3D38TH
@@ -127,7 +129,6 @@ object, deletes return `204`, validation errors return `422`, unauthenticated
 requests return `401`, unauthorized systems return `403`, and missing or
 mismatched nested resources return `404`.
 
-Plurapack is an early, self-hosted [Stoat](https://stoat.chat) and [Fluxer](https://web.fluxer.app/) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
 
 ## What works in this initial release
 
