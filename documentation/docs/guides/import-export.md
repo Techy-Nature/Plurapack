@@ -24,10 +24,20 @@ p;import tupperbox <attached JSON>
 
 `export` defaults to Plurapack. An omitted import format is detected from schema
 metadata; ambiguous files are rejected rather than guessed. Import conflict modes
-are `--merge` (safe default), `--skip-existing`, and explicit `--overwrite`. Merge
-creates missing records and preserves matching records, skip-existing reports and
-skips matches, and overwrite updates matching records without deleting records
-absent from the file. Create a native backup before an overwrite.
+are `--merge` (safe default), `--skip-existing`, and explicit `--overwrite`.
+
+- **Merge** preserves populated local scalar fields, fills empty fields, adds new
+  proxy tags and group memberships, and merges forms by case-insensitive display
+  name. Matching forms keep populated local fields while gaining missing fields
+  and proxy tags. Existing defaults, forms, tags, and relationships are retained.
+- **Skip existing** leaves matching members completely untouched and reports them;
+  only new records are created.
+- **Overwrite** replaces every portable field, proxy tag, form, default-form
+  selection, and group membership on matching imported members. Matching imported
+  groups receive the imported alias and avatar. Unrelated members and groups are
+  never deleted merely because they are absent from the file.
+
+Create a native backup before an overwrite.
 
 PluralKit and Tupperbox do not have Plurapack's form model. Compatibility exports
 therefore accept an explicit forms policy:

@@ -281,15 +281,24 @@ def _external_members(data: ImportedSystem, forms_mode: str) -> tuple[list[Impor
                 name=f"{parent.name} — {form.display_name}",
                 prefix=form.proxy_tags[0]["prefix"] if form.proxy_tags else "",
                 suffix=form.proxy_tags[0]["suffix"] if form.proxy_tags else "",
-                avatar=form.avatar,
+                avatar=form.avatar if form.avatar is not None else parent.avatar,
                 color=parent.color,
-                pronouns=form.pronouns,
+                pronouns=form.pronouns if form.pronouns is not None else parent.pronouns,
                 export_id=form.export_id,
-                description=form.soma,
-                banner=form.banner,
+                description=form.soma or parent.description,
+                banner=form.banner or parent.banner,
                 proxy_tags=list(form.proxy_tags),
                 groups=list(parent.groups),
             ))
+    names: dict[str, str] = {}
+    for member in members:
+        key = member.name.casefold()
+        if key in names:
+            raise TransferError(
+                f"Promoted form name {member.name!r} conflicts with exported member {names[key]!r}. "
+                "Rename the member or form before using forms_mode='members'."
+            )
+        names[key] = member.name
     return members, len(forms)
 
 
@@ -346,28 +355,89 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
         group_map={}; existing_groups={r["name"].casefold():r for r in db.execute("SELECT * FROM groups WHERE system_id=?",(sid,))}
         for i,g in enumerate(data.groups):
             row=existing_groups.get(g.name.casefold())
-            if row: group_map[g.export_id]=row["id"]
+            if row:
+                group_map[g.export_id]=row["id"]
+                if strategy == "overwrite":
+                    db.execute("UPDATE groups SET alias=?,avatar=? WHERE id=?",
+                               (g.alias, g.avatar, row["id"]))
+                elif strategy == "merge" and not row["avatar"] and g.avatar:
+                    db.execute("UPDATE groups SET avatar=? WHERE id=?", (g.avatar, row["id"]))
             else:
                 gid=short_hash(5); alias=g.alias or f"group{i+1}"; db.execute("INSERT INTO groups(id,system_id,name,alias,avatar) VALUES (?,?,?,?,?)",(gid,sid,g.name,alias,g.avatar)); group_map[g.export_id]=gid; groups_count+=1
         member_map={}
+        actions={}
         for m in data.members:
             row=existing.get(m.name.casefold())
-            if row and strategy=="skip-existing": skipped+=1; member_map[m.export_id]=row["id"]; continue
-            if row and strategy=="merge": skipped+=1; member_map[m.export_id]=row["id"]; continue
+            if row and strategy=="skip-existing":
+                skipped+=1; member_map[m.export_id]=row["id"]; actions[m.export_id]="skip"; continue
+            if row and strategy=="merge":
+                mid=row["id"]
+                # Empty/null presentation fields inherit useful imported values;
+                # populated local values and boolean preferences always win.
+                merged={key: row[key] if row[key] not in {None, ""} else value for key,value in {
+                    "alias":m.alias,"description":m.description,"pronouns":m.pronouns,
+                    "color":m.color,"avatar":m.avatar,"banner":m.banner}.items()}
+                db.execute("UPDATE members SET alias=?,description=?,pronouns=?,color=?,avatar=?,banner=? WHERE id=?",
+                           (merged["alias"],merged["description"],merged["pronouns"],merged["color"],
+                            merged["avatar"],merged["banner"],mid))
+                current_tags={(tag["prefix"],tag["suffix"]) for tag in db.execute(
+                    "SELECT prefix,suffix FROM proxy_tags WHERE member_id=?",(mid,))}
+                for t in m.proxy_tags:
+                    pair=(t["prefix"],t["suffix"])
+                    if pair not in current_tags:
+                        db.execute("INSERT INTO proxy_tags(system_id,member_id,prefix,suffix) VALUES (?,?,?,?)",
+                                   (sid,mid,*pair)); current_tags.add(pair); tags_count+=1
+                member_map[m.export_id]=mid; actions[m.export_id]="merge"; continue
             if row:
-                mid=row["id"]; db.execute("UPDATE members SET name=?,alias=?,description=?,pronouns=?,color=?,avatar=?,banner=?,speech_formatting=?,strikethrough_speech=? WHERE id=?",(m.name,m.alias,m.description,m.pronouns,m.color,m.avatar,m.banner,int(m.speech_formatting),m.strikethrough_speech,mid)); db.execute("DELETE FROM proxy_tags WHERE member_id=?",(mid,))
+                mid=row["id"]
+                db.execute("UPDATE members SET name=?,prefix=?,suffix=?,alias=?,description=?,pronouns=?,color=?,avatar=?,banner=?,speech_formatting=?,strikethrough_speech=?,default_form_id=NULL WHERE id=?",(m.name,m.prefix,m.suffix,m.alias,m.description,m.pronouns,m.color,m.avatar,m.banner,int(m.speech_formatting),m.strikethrough_speech,mid))
+                db.execute("DELETE FROM proxy_tags WHERE member_id=?",(mid,))
             else:
                 mid=short_hash(5); db.execute("INSERT INTO members(id,system_id,name,prefix,suffix,avatar,color,alias,description,pronouns,banner,speech_formatting,strikethrough_speech) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",(mid,sid,m.name,m.prefix,m.suffix,m.avatar,m.color,m.alias,m.description,m.pronouns,m.banner,int(m.speech_formatting),m.strikethrough_speech)); imported+=1
             member_map[m.export_id]=mid
+            actions[m.export_id]="overwrite" if row else "create"
             for t in m.proxy_tags: db.execute("INSERT INTO proxy_tags(system_id,member_id,prefix,suffix) VALUES (?,?,?,?)",(sid,mid,t["prefix"],t["suffix"])); tags_count+=1
         for m in data.members:
             mid=member_map[m.export_id]
+            action=actions[m.export_id]
+            if action == "skip":
+                continue
+            if action == "overwrite":
+                db.execute("DELETE FROM group_members WHERE member_id=?",(mid,))
             for ref in m.groups: db.execute("INSERT OR IGNORE INTO group_members(group_id,member_id) VALUES (?,?)",(group_map[ref],mid))
-            if (not existing.get(m.name.casefold())) or strategy=="overwrite":
-                form_map={}
-                if strategy=="overwrite": db.execute("DELETE FROM forms WHERE member_id=?",(mid,))
+            form_map={}
+            if action == "overwrite":
+                db.execute("DELETE FROM forms WHERE member_id=?",(mid,))
+            if action in {"create", "overwrite"}:
                 for f in m.forms:
                     fid=short_hash(5); db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner) VALUES (?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner)); form_map[f.export_id]=fid
                     for t in f.proxy_tags: db.execute("INSERT INTO proxy_tags(system_id,form_id,prefix,suffix) VALUES (?,?,?,?)",(sid,fid,t["prefix"],t["suffix"])); tags_count+=1
-                if m.default_form in form_map: db.execute("UPDATE members SET default_form_id=? WHERE id=?",(form_map[m.default_form],mid))
+            elif action == "merge":
+                existing_forms={r["display_name"].casefold():r for r in db.execute(
+                    "SELECT * FROM forms WHERE member_id=?",(mid,))}
+                for f in m.forms:
+                    form_row=existing_forms.get(f.display_name.casefold())
+                    if form_row:
+                        fid=form_row["id"]
+                        values={key:form_row[key] if form_row[key] not in {None,""} else value for key,value in {
+                            "avatar":f.avatar,"soma":f.soma,"pronouns":f.pronouns,"banner":f.banner}.items()}
+                        db.execute("UPDATE forms SET avatar=?,soma=?,pronouns=?,banner=? WHERE id=?",
+                                   (values["avatar"],values["soma"],values["pronouns"],values["banner"],fid))
+                        current_tags={(tag["prefix"],tag["suffix"]) for tag in db.execute(
+                            "SELECT prefix,suffix FROM proxy_tags WHERE form_id=?",(fid,))}
+                        for t in f.proxy_tags:
+                            pair=(t["prefix"],t["suffix"])
+                            if pair not in current_tags:
+                                db.execute("INSERT INTO proxy_tags(system_id,form_id,prefix,suffix) VALUES (?,?,?,?)",
+                                           (sid,fid,*pair)); current_tags.add(pair); tags_count+=1
+                    else:
+                        fid=short_hash(5)
+                        db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner) VALUES (?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner))
+                        for t in f.proxy_tags:
+                            db.execute("INSERT INTO proxy_tags(system_id,form_id,prefix,suffix) VALUES (?,?,?,?)",
+                                       (sid,fid,t["prefix"],t["suffix"])); tags_count+=1
+                    form_map[f.export_id]=fid
+            if m.default_form in form_map and (action != "merge" or not db.execute(
+                    "SELECT default_form_id FROM members WHERE id=?",(mid,)).fetchone()[0]):
+                db.execute("UPDATE members SET default_form_id=? WHERE id=?",(form_map[m.default_form],mid))
     return TransferReport(str(fmt),imported,groups_count,tags_count,skipped,len(data.warnings),data.warnings)

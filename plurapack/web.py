@@ -250,7 +250,9 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         filename = f"plurapack-backup-{today}.json" if format == "plurapack" else f"plurapack-{format}-export-{today}.json"
         return Response(document, media_type="application/json", headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
-            "X-Plurapack-Warnings": str(len(report.warnings)), "Cache-Control": "no-store, private"})
+            "X-Plurapack-Warnings": str(len(report.warnings)),
+            "X-Plurapack-Warning": " ".join(report.warnings),
+            "Cache-Control": "no-store, private"})
 
     @app.post("/api/systems/{system_id}/import")
     async def transfer_import(system_id: str, request: Request, format: str | None = None,
