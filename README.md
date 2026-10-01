@@ -2,7 +2,7 @@
 
 New to Plurapack? The text-only, website-ready user guide lives in [`documentation/`](documentation/README.md), with onboarding, everyday workflows, configuration, privacy, and troubleshooting documentation.
 
-Plurapack is an early alpha, self-hosted [Stoat](https://stoat.chat) and [Fluxer](https://web.fluxer.app/) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
+Plurapack is an early alpha, Railway-hosted [Stoat](https://stoat.chat) and [Fluxer](https://web.fluxer.app/) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
 
 Invites:
 
