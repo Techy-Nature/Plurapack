@@ -24,7 +24,7 @@ Never write the token into source code or commit it to Git.
 export STOAT_BOT_TOKEN='your-private-token'
 export FLUXER_BOT_TOKEN='your-private-token'
 export PLURAPACK_PREFIX='p;'
-export PLURAPACK_DATABASE='/private/path/plurapack.sqlite3'
+export PLURAPACK_DATA_DIR='/private/path/plurapack-data'
 ```
 
 ### Windows PowerShell
@@ -33,12 +33,18 @@ export PLURAPACK_DATABASE='/private/path/plurapack.sqlite3'
 $env:STOAT_BOT_TOKEN = 'your-private-token'
 $env:FLUXER_BOT_TOKEN = 'your-private-token'
 $env:PLURAPACK_PREFIX = 'p;'
-$env:PLURAPACK_DATABASE = 'C:\private\plurapack.sqlite3'
+$env:PLURAPACK_DATA_DIR = 'C:\private\plurapack-data'
 ```
 
 At least one of `STOAT_BOT_TOKEN` and `FLUXER_BOT_TOKEN` is required. Set both
 to connect to Stoat and Fluxer at the same time. The prefix defaults to `p;`,
 and the database defaults to `plurapack.sqlite3` in the current directory.
+When `PLURAPACK_DATA_DIR` is set, the default database is instead
+`plurapack.sqlite3` beneath that directory. An explicitly set
+`PLURAPACK_DATABASE` takes precedence and can still select a custom database
+file. Missing required directories are created at startup; invalid or
+inaccessible configured paths stop startup rather than causing an ephemeral
+fallback.
 
 ## 3. Start Plurapack
 
@@ -55,6 +61,22 @@ server's `PORT`, `PLURAPACK_WEB_PORT`, and `PLURAPACK_WEB_HOST` configuration:
 ```bash
 python -m plurapack
 ```
+
+## Railway persistent storage
+
+For Railway, attach a Volume to the existing Plurapack service, mount it at
+`/data`, and set `PLURAPACK_DATA_DIR=/data`. Keep `python -m plurapack` as the
+Start Command and keep the bot and dashboard together in the same service. A
+Volume—not merely the environment variable—is required for the SQLite database
+to survive redeployments and container replacement.
+
+Plurapack does not move an old database when its configured path changes. Move
+it deliberately while Plurapack is stopped if retaining an existing deployment.
+The browser-audio spool is temporary and remains outside the persistent data
+directory. If voice-reference uploads are enabled with
+`PLURAPACK_VOICE_REFERENCE_DIR`, point that variable to a directory on the
+volume (for example `/data/voice-references`) so those user-uploaded files also
+survive replacement.
 
 ## 4. Keep it safe
 

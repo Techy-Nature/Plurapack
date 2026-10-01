@@ -21,6 +21,7 @@ from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
 from .web_models import (FormCreate, FormPatch, FrontUpdate, MemberCreate, MemberPatch,
                          ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
 from .browser_audio import BrowserAudioStore
+from .config import resolve_database_path
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -74,8 +75,12 @@ def front_json(front: Front | None) -> dict[str, Any]:
 def create_app(store: Store | None = None, static_root: Path | None = ROOT,
                browser_audio: BrowserAudioStore | None = None) -> FastAPI:
     app = FastAPI(title="Plurapack Web API", version="1")
-    app.state.store = store or Store(os.getenv("PLURAPACK_DATABASE", "plurapack.sqlite3"))
-    database = getattr(app.state.store, "path", os.getenv("PLURAPACK_DATABASE", "plurapack.sqlite3"))
+    if store is None:
+        database = resolve_database_path()
+        store = Store(database)
+    else:
+        database = store.path
+    app.state.store = store
     app.state.browser_audio = browser_audio or BrowserAudioStore.configured(database)
     app.state.login_service = LoginService(app.state.store)
     app.state.login_start_limiter = LoginStartLimiter(

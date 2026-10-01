@@ -99,6 +99,13 @@ class Group:
 class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
+        if self.path != ":memory:":
+            try:
+                Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+            except OSError as error:
+                raise RuntimeError(
+                    f"Cannot create database parent directory for '{self.path}': {error}"
+                ) from error
         self._initialize()
 
     @contextmanager

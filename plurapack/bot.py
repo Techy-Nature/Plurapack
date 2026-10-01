@@ -25,6 +25,7 @@ from .browser_audio import BrowserAudioStore
 from .storage import Member, Store, System
 from .login import LoginError, LoginService
 from .transfer import TransferError, export_document, parse_import
+from .config import StorageConfigurationError, resolve_database_path
 
 
 STOAT_INSTALL_MESSAGE = (
@@ -966,7 +967,10 @@ def main() -> None:
     if not stoat_token and not fluxer_token:
         raise SystemExit("STOAT_BOT_TOKEN or FLUXER_BOT_TOKEN is required (never commit tokens).")
     prefix = os.environ.get("PLURAPACK_PREFIX", "p;")
-    database = os.environ.get("PLURAPACK_DATABASE", "plurapack.sqlite3")
+    try:
+        database = resolve_database_path()
+    except StorageConfigurationError as error:
+        raise SystemExit(f"Persistent storage error: {error}") from None
     runners: list[tuple[str, Any, str]] = []
     try:
         if stoat_token:
