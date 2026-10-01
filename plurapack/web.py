@@ -4,8 +4,11 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
+from datetime import date
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import quote
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
@@ -22,6 +25,7 @@ from .web_models import (FormCreate, FormPatch, FrontUpdate, MemberCreate, Membe
                          ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
 from .browser_audio import BrowserAudioStore
 from .config import resolve_database_path
+from .transfer import MAX_FILE_SIZE, TransferError, export_system, import_system
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -230,6 +234,42 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
                    for key, value in changes.items()}
         updated = await run(store.update_system, user.id, system_id, **changes)
         return await run(system_json, store, user.id, updated)
+
+    @app.get("/api/systems/{system_id}/export")
+    async def transfer_export(system_id: str, format: str = "plurapack", group_id: str | None = None,
+                              forms: str = "loss",
+                              user: WebUser = Depends(require_authenticated_user),
+                              store: Store = Depends(db)) -> Response:
+        await authorized(system_id, user, store)
+        try:
+            document, report = await asyncio.to_thread(export_system, store, user.id, format,
+                                                       group_id, forms)
+        except (TransferError, PermissionError) as error:
+            raise HTTPException(422, str(error)) from error
+        today = date.today().isoformat()
+        filename = f"plurapack-backup-{today}.json" if format == "plurapack" else f"plurapack-{format}-export-{today}.json"
+        return Response(document, media_type="application/json", headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}",
+            "X-Plurapack-Warnings": str(len(report.warnings)), "Cache-Control": "no-store, private"})
+
+    @app.post("/api/systems/{system_id}/import")
+    async def transfer_import(system_id: str, request: Request, format: str | None = None,
+                              strategy: str = "merge",
+                              user: WebUser = Depends(require_authenticated_user),
+                              store: Store = Depends(db)) -> dict[str, Any]:
+        await authorized(system_id, user, store)
+        document = await request.body()
+        if len(document) > MAX_FILE_SIZE:
+            raise HTTPException(413, "Import exceeds the 5 MiB upload limit")
+        try:
+            report = await asyncio.to_thread(import_system, store, user.id, document, format, strategy)
+        except (TransferError, PermissionError, sqlite3.IntegrityError) as error:
+            raise HTTPException(422, str(error)) from error
+        return {"format": report.format, "membersImported": report.members_imported,
+                "groupsImported": report.groups_imported, "proxyTagsImported": report.proxy_tags_imported,
+                "existingMembersSkipped": report.existing_members_skipped,
+                "unsupportedFieldsIgnored": report.unsupported_fields_ignored,
+                "warnings": list(report.warnings)}
 
     @app.delete("/api/systems/{system_id}", status_code=204)
     async def delete_system(system_id: str, user: WebUser = Depends(require_authenticated_user),
