@@ -48,6 +48,14 @@ plurapack
 
 From a source checkout, `python main.py` is an equivalent cross-platform entry point.
 
+For production, start the bot and web dashboard together under the unified
+supervisor. It stops both components if either one fails and preserves the web
+server's `PORT`, `PLURAPACK_WEB_PORT`, and `PLURAPACK_WEB_HOST` configuration:
+
+```bash
+python -m plurapack
+```
+
 ## 4. Keep it safe
 
 - Run the process as a dedicated, unprivileged account when possible.
