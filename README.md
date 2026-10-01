@@ -25,18 +25,17 @@ system; the account response uses a `systems` list only as a stable API shape.
 ### Railway deployment
 
 Railway automatically builds the included `Dockerfile`. It installs Plurapack
-and all declared Python dependencies (including Uvicorn), then starts the web
-service with `python -m plurapack.web`; no custom start command is required.
-Remove any existing Railway start-command override such as `uvicorn ...` so the
-image command is used. The server automatically listens on Railway's `PORT` and
-on all interfaces.
+and all declared Python dependencies (including Uvicorn), then starts the bot
+and dashboard together with `python -m plurapack`; no custom start command is
+required. Remove any existing Railway start-command override such as `uvicorn
+...` so the image command is used. The server automatically listens on
+Railway's `PORT` and on all interfaces.
 
 At minimum, configure `PLURAPACK_SESSION_SECRET` as a stable random value of at
-least 32 characters. Configure `STOAT_BOT_TOKEN` and/or `FLUXER_BOT_TOKEN` on a
-separate Railway service whose start command is `python main.py` if you also
-want the chat bot process. Both services must use shared persistent storage for
-`PLURAPACK_DATABASE` (and browser audio, when enabled); an ephemeral SQLite file
-inside one service is not shared with the other service and is lost on redeploy.
+least 32 characters and configure `STOAT_BOT_TOKEN` and/or `FLUXER_BOT_TOKEN`.
+Keep both components in this one Railway service so they share the persistent
+volume containing `PLURAPACK_DATABASE` (and browser audio, when enabled). An
+ephemeral SQLite file is lost on redeploy.
 
 The API provides `/api/account`, authorized system/member/form CRUD, front
 retrieval and switching, and `/api/health`; interactive OpenAPI documentation is
@@ -77,9 +76,9 @@ playback is opt-in per browser tab through **Enable voice playback**, is ordered
 and uses authenticated polling plus one-use audio retrieval. If several tabs for
 the same account are open, the first one to retrieve a clip consumes it.
 
-Because the bot and Web API normally run as separate processes, ephemeral audio
-uses a private cross-process spool rather than SQLite. Both processes must use
-the same `PLURAPACK_DATABASE` (or explicitly share
+The unified supervisor runs the bot and Web API as separate child processes, so
+ephemeral audio uses a private cross-process spool rather than SQLite. Both
+processes use the same `PLURAPACK_DATABASE` (or explicitly share
 `PLURAPACK_BROWSER_AUDIO_DIR`). Opaque clips expire after 120 seconds and the
 spool retains at most 100 clips by default; operators can adjust these bounds
 with `PLURAPACK_BROWSER_AUDIO_TTL` and `PLURAPACK_BROWSER_AUDIO_LIMIT`.

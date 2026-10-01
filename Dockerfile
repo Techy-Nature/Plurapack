@@ -12,4 +12,4 @@ COPY index.html login.html app.js dashboard_helpers.js styles.css ./
 
 RUN python -m pip install --no-cache-dir .
 
-CMD ["python", "-m", "plurapack.web"]
+CMD ["python", "-m", "plurapack"]
