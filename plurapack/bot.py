@@ -24,7 +24,7 @@ from .speech import SpeechQueue, speech_worker
 from .browser_audio import BrowserAudioStore
 from .storage import Member, Store, System
 from .login import LoginError, LoginService
-from .transfer import TransferError, export_document, parse_import
+from .transfer import TransferError, export_system as create_export, import_system as apply_import
 from .config import StorageConfigurationError, resolve_database_path
 
 
@@ -59,7 +59,7 @@ COMMAND_HELP = {
     "link": ("l", "", "Create a single-use account link code."),
     "verify": ("v", "CODE", "Connect an account with a link code."),
     "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
-    "export": ("x", "[FORMAT]", "Export portable system metadata."),
+    "export": ("x", "[FORMAT] [--forms-loss|--forms-members]", "Export portable system metadata."),
     "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]", "Show system or member information."),
     "info": ("in", "SYSTEM_MEMBER_OR_FORM", "Show a system, member, or form profile."),
     "group": ("g", "create|add|alias|avatar ...", "Create and edit the current group."),
@@ -567,37 +567,78 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send(str(error))
 
     @bot.command(name="import", aliases=[COMMAND_SHORTCUTS["import"]])
-    async def import_system(ctx: commands.Context, source: str, *, document: str) -> None:
+    async def import_system(ctx: commands.Context, source: str = "", *, document: str = "") -> None:
         """Import pasted JSON from PluralKit, Tupperbox, or Plurapack."""
         document = document.strip()
+        strategy = "merge"
+        option_words = [word for word in (source + " " + document).split() if word.startswith("--")]
+        for word in option_words:
+            if word in {"--merge", "--skip-existing", "--overwrite"}:
+                strategy = word[2:]
+        if document and all(word.startswith("--") for word in document.split()):
+            document = ""
+        if strategy == "overwrite" and "--confirm-overwrite" not in option_words:
+            await ctx.send("Overwrite can replace matching records. Back up first, then repeat with --overwrite --confirm-overwrite.")
+            return
+        if not document:
+            attachments = getattr(getattr(ctx, "message", None), "attachments", ())
+            if attachments:
+                attachment = attachments[0]
+                url = getattr(attachment, "url", None)
+                try:
+                    if not url:
+                        raise ValueError("The attachment does not provide a download URL.")
+                    def download() -> str:
+                        with urllib.request.urlopen(url, timeout=15) as response:
+                            data = response.read(5 * 1024 * 1024 + 1)
+                        if len(data) > 5 * 1024 * 1024:
+                            raise ValueError("Import exceeds the 5 MiB upload limit.")
+                        return data.decode("utf-8")
+                    document = await asyncio.to_thread(download)
+                except (OSError, UnicodeError, ValueError) as error:
+                    await ctx.send(f"Could not read the JSON attachment: {error}")
+                    return
+        if not document:
+            await ctx.send("Attach a JSON file (maximum 5 MiB), then run import again.")
+            return
         if document.startswith("```") and document.endswith("```"):
             document = document[3:-3].removeprefix("json").lstrip()
         try:
-            transfer = parse_import(source, document)
-            if store.system_for(ctx.author.id) is None:
-                store.create_system(ctx.author.id, transfer.name)
-            count = store.import_members(ctx.author.id, transfer.members)
+            words = source.split()
+            source = words[0] if words and not words[0].startswith("--") else ""
+            report = apply_import(store, ctx.author.id, document, source or None, strategy)
         except (PermissionError, TransferError, ValueError) as error:
             await ctx.send(str(error))
             return
         await ctx.send(
-            f"Imported {count} member{'s' if count != 1 else ''} from {source}. "
-            "External IDs and private message history were not copied."
+            f"Import complete. Members imported: {report.members_imported}; groups imported: "
+            f"{report.groups_imported}; proxy tags imported: {report.proxy_tags_imported}; "
+            f"existing members skipped: {report.existing_members_skipped}; warnings: {len(report.warnings)}."
         )
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["export"]])
-    async def export(ctx: commands.Context, format_name: str = "plurapack") -> None:
+    async def export(ctx: commands.Context, format_name: str = "plurapack", *, options: str = "") -> None:
         """Export portable member metadata, excluding owners and message history."""
         try:
-            system_name, members = store.export_system(ctx.author.id)
-            document = export_document(format_name, system_name, members)
+            choices = options.split()
+            unknown = set(choices) - {"--forms-loss", "--forms-members"}
+            if unknown:
+                raise TransferError(f"Unknown export option: {sorted(unknown)[0]}")
+            if "--forms-loss" in choices and "--forms-members" in choices:
+                raise TransferError("Choose either --forms-loss or --forms-members, not both.")
+            forms_mode = "members" if "--forms-members" in choices else "loss"
+            document, report = create_export(store, ctx.author.id, format_name,
+                                             forms_mode=forms_mode)
         except (PermissionError, TransferError) as error:
             await ctx.send(str(error))
             return
         safe_format = format_name.casefold().replace("-", "")
+        from datetime import date
+        filename = (f"plurapack-backup-{date.today().isoformat()}.json" if safe_format == "plurapack"
+                    else f"plurapack-{safe_format}-export-{date.today().isoformat()}.json")
         await ctx.send(
-            "Export ready. This file contains member names and proxy metadata; store it privately.",
-            attachments=[(f"plurapack-{safe_format}-export.json", document)],
+            f"Export ready. Members: {len(store.export_system(ctx.author.id)[1])}. Warnings: {len(report.warnings)}. Store it privately.",
+            attachments=[(filename, document)],
         )
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["link"]])

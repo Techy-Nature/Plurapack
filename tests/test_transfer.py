@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 
@@ -62,3 +63,252 @@ def test_transfer_rejects_unknown_sources_and_malformed_shapes():
         parse_import("other", "{}")
     with pytest.raises(TransferError, match="JSON array"):
         parse_import("pluralkit", '{"members": {}}')
+
+from plurapack.transfer import detect_format, export_system as export_store, import_system
+
+
+def test_native_v1_round_trip_preserves_portable_records(tmp_path):
+    source = Store(tmp_path / "source.db")
+    system_id = source.create_system("source", "Café 系统", "Unicode 🌈")
+    source.update_system("source", system_id, logo="https://example.test/system.png",
+                         banner="https://example.test/system-banner.png",
+                         system_tag="SYS", show_system_tag=0)
+    member = source.add_member("source", "Ålex", "[a]", "]", description="Hello 世界",
+                               alias="alex", pronouns="they/them", color="#7b68ee",
+                               avatar="https://example.test/a.png")
+    source.update_member("source", member.id, banner="https://example.test/member-banner.png")
+    source.configure_speech_formatting("source", member.id, True, "whisper")
+    source.configure_member_proxy("source", member.id, "A:", "")
+    friends = source.create_group("source", "Friends", "friends")
+    source.update_active_group("source", avatar="https://example.test/friends.png")
+    source.add_group_members("source", [member.id])
+    family = source.create_group("source", "家族", "family")
+    source.update_active_group("source", avatar="https://example.test/family.png")
+    source.add_group_members("source", [member.id])
+    happy = source.create_form("source", member.id, "Happy", "https://example.test/happy.png",
+                               "bright", "she/her", "H:", "",
+                               "https://example.test/happy-banner.png")
+    source.configure_form_proxy("source", happy.id, "happy:", ":)")
+    source.create_form("source", member.id, "Quiet", None, "", None, "Q:", "")
+    source.configure_default_form("source", member.id, happy.id)
+    source.add_member("source", "No forms or groups", "N:")
+
+    document, report = export_store(source, "source")
+    body = json.loads(document)
+    assert (body["format"], body["version"], body["generator"]["name"]) == ("plurapack", 1, "Plurapack")
+    assert body["exported_at"].endswith("Z")
+    assert b"source" not in document
+
+    target = Store(tmp_path / "target.db")
+    imported = import_system(target, "different-owner", document)
+    restored_system = target.system_info(target.system_for("different-owner"))
+    restored = target.member_named("different-owner", "Ålex")
+    assert imported.members_imported == 2
+    assert (restored_system.display_name, restored_system.description, restored_system.logo,
+            restored_system.banner, restored_system.system_tag, restored_system.show_system_tag) == (
+                "Café 系统", "Unicode 🌈", "https://example.test/system.png",
+                "https://example.test/system-banner.png", "SYS", 0)
+    assert (restored.name, restored.alias, restored.description, restored.pronouns, restored.color,
+            restored.avatar, restored.banner, restored.speech_formatting,
+            restored.strikethrough_speech) == (
+                "Ålex", "alex", "Hello 世界", "they/them", "#7b68ee",
+                "https://example.test/a.png", "https://example.test/member-banner.png", 1, "whisper")
+    assert len(target.proxy_tags(member_id=restored.id)) == 2
+    forms = {form.display_name: form for form in target.forms_for_member(restored.id)}
+    assert set(forms) == {"Happy", "Quiet"}
+    assert (forms["Happy"].avatar, forms["Happy"].banner, forms["Happy"].soma,
+            forms["Happy"].pronouns) == ("https://example.test/happy.png",
+                "https://example.test/happy-banner.png", "bright", "she/her")
+    assert len(target.proxy_tags(form_id=forms["Happy"].id)) == 2
+    assert restored.default_form_id == forms["Happy"].id
+    with target.connect() as db:
+        memberships = {row[0] for row in db.execute("""SELECT g.name FROM groups g
+            JOIN group_members gm ON gm.group_id=g.id WHERE gm.member_id=?""", (restored.id,))}
+        groups = {row["name"]: (row["alias"], row["avatar"]) for row in db.execute(
+            "SELECT name,alias,avatar FROM groups WHERE system_id=?", (restored.system_id,))}
+    assert memberships == {"Friends", "家族"}
+    assert groups == {"Friends": ("friends", "https://example.test/friends.png"),
+                      "家族": ("family", "https://example.test/family.png")}
+    assert target.forms_for_member(target.member_named("different-owner", "No forms or groups").id) == []
+
+
+def test_format_detection_and_ambiguity():
+    assert detect_format({"format": "plurapack", "members": [], "system": {}}) == "plurapack"
+    assert detect_format({"tuppers": [], "groups": []}) == "tupperbox"
+    assert detect_format({"system": {}, "members": [], "groups": [], "switches": []}) == "pluralkit"
+    with pytest.raises(TransferError, match="ambiguous"):
+        detect_format({"tuppers": [], "members": [], "switches": []})
+
+
+def test_tupperbox_flat_multiple_bracket_pairs_and_groups():
+    transfer = parse_import("tupperbox", json.dumps({"groups": [{"id": 4, "name": "Crew"}], "tuppers": [{
+        "id": 8, "name": "Sam", "brackets": ["[", "]", "S:", ""], "group_id": 4,
+        "user_id": "must-not-be-owner", "posts": 99,
+    }]}))
+    assert transfer.members[0].proxy_tags == [{"prefix": "[", "suffix": "]"}, {"prefix": "S:", "suffix": ""}]
+    assert transfer.members[0].groups == ["4"]
+
+
+def test_validation_failure_does_not_modify_store(tmp_path):
+    store = Store(tmp_path / "atomic.db")
+    store.create_system("owner", "Existing")
+    store.add_member("owner", "Safe", "S:")
+    bad = {"format": "plurapack", "version": 1, "system": {"name": "Bad"}, "groups": [],
+           "settings": {}, "members": [{"export_id": "x", "name": "Broken", "groups": ["missing"],
+                                           "proxy_tags": [{"prefix": "B:", "suffix": ""}]}]}
+    with pytest.raises(TransferError, match="unknown group"):
+        import_system(store, "owner", json.dumps(bad))
+    assert [member.name for member in store.export_system("owner")[1]] == ["Safe"]
+
+
+def test_conflict_strategies(tmp_path):
+    store = Store(tmp_path / "conflict.db")
+    store.create_system("owner", "Existing")
+    store.add_member("owner", "Alex", "old:", description="keep")
+    body = {"format": "plurapack", "version": 1, "system": {"name": "Imported"}, "groups": [],
+            "settings": {}, "members": [{"export_id": "m", "name": "Alex", "description": "new",
+                                            "proxy_tags": [{"prefix": "new:", "suffix": ""}]}]}
+    merged = import_system(store, "owner", json.dumps(body), strategy="merge")
+    assert merged.existing_members_skipped == 0 and store.member_named("owner", "Alex").description == "keep"
+    import_system(store, "owner", json.dumps(body), strategy="overwrite")
+    assert store.member_named("owner", "Alex").description == "new"
+
+
+@pytest.mark.parametrize(("format_name", "collection"), [
+    ("pluralkit", "members"),
+    ("tupperbox", "tuppers"),
+])
+def test_external_export_can_promote_forms_to_members(tmp_path, format_name, collection):
+    store = Store(tmp_path / f"{format_name}.db")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "A:", color="#7b68ee")
+    store.create_group("owner", "Friends", "friends")
+    group = store.active_group("owner")
+    store.add_group_members("owner", [member.id])
+    form = store.create_form(
+        "owner", member.id, "Happy", "https://example.test/happy.png",
+        "A happy presentation", "they/she", "H:", ":H",
+        "https://example.test/banner.png",
+    )
+    store.configure_form_proxy("owner", form.id, "happy:", "")
+
+    document, report = export_store(store, "owner", format_name, forms_mode="members")
+    exported = json.loads(document)
+    promoted = next(item for item in exported[collection] if item["name"] == "Alex — Happy")
+    assert promoted["id"] == f"form-{form.id}"
+    assert promoted["description"] == "A happy presentation"
+    assert promoted["avatar_url"] == "https://example.test/happy.png"
+    if format_name == "pluralkit":
+        assert promoted["proxy_tags"] == [
+            {"prefix": "H:", "suffix": ":H"},
+            {"prefix": "happy:", "suffix": ""},
+        ]
+        exported_group = next(item for item in exported["groups"] if item["id"] == f"group-{group.id}")
+        assert promoted["id"] in exported_group["members"]
+    else:
+        assert promoted["brackets"] == ["H:", ":H", "happy:", ""]
+        assert promoted["group_id"] == f"group-{group.id}"
+    assert "qualified standalone" in report.warnings[0]
+
+
+@pytest.mark.parametrize("format_name", ["pluralkit", "tupperbox"])
+def test_external_export_forms_loss_is_explicit_default(tmp_path, format_name):
+    store = Store(tmp_path / f"loss-{format_name}.db")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "A:")
+    store.create_form("owner", member.id, "Happy", None, "", None, "H:", "")
+    document, report = export_store(store, "owner", format_name)
+    exported = json.loads(document)
+    assert len(exported["members" if format_name == "pluralkit" else "tuppers"]) == 1
+    assert "1 forms were omitted" in report.warnings[0]
+
+
+def test_external_export_rejects_unknown_forms_mode(tmp_path):
+    store = Store(tmp_path / "invalid-mode.db")
+    store.create_system("owner", "Crew")
+    with pytest.raises(TransferError, match="Forms mode"):
+        export_store(store, "owner", "pluralkit", forms_mode="surprise")
+
+
+def test_merge_fills_empty_fields_and_adds_relationships_without_replacing(tmp_path):
+    store = Store(tmp_path / "merge.db")
+    store.create_system("owner", "Existing")
+    alex = store.add_member("owner", "Alex", "A:", description="Existing description")
+    store.create_group("owner", "Friends", "friends")
+    store.add_group_members("owner", [alex.id])
+    existing_form = store.create_form("owner", alex.id, "Happy", None, "Existing soma", None, "H:", "")
+    body = {"format":"plurapack","version":1,"system":{"name":"Imported"},"settings":{},
+      "groups":[{"export_id":"g","name":"System","alias":"system","avatar_url":None}],
+      "members":[{"export_id":"m","name":"Alex","description":"Imported description",
+        "pronouns":"they/them","proxy_tags":[{"prefix":"Alex:","suffix":""}],"groups":["g"],
+        "forms":[{"export_id":"f1","display_name":"Happy","soma":"Imported soma","pronouns":"she/her","proxy_tags":[{"prefix":"happy:","suffix":""}]},
+                 {"export_id":"f2","display_name":"New form","soma":"new","proxy_tags":[{"prefix":"new:","suffix":""}]}]}]}
+    report = import_system(store, "owner", json.dumps(body), strategy="merge")
+    merged = store.member_named("owner", "Alex")
+    assert report.existing_members_skipped == 0
+    assert merged.description == "Existing description" and merged.pronouns == "they/them"
+    assert {(t.prefix,t.suffix) for t in store.proxy_tags(member_id=merged.id)} == {("A:",""),("Alex:","")}
+    forms={f.display_name:f for f in store.forms_for_member(merged.id)}
+    assert set(forms)=={"Happy","New form"}
+    assert forms["Happy"].soma == "Existing soma" and forms["Happy"].pronouns == "she/her"
+    assert {(t.prefix,t.suffix) for t in store.proxy_tags(form_id=existing_form.id)} == {("H:",""),("happy:","")}
+    with store.connect() as db:
+        assert {r[0] for r in db.execute("SELECT g.name FROM groups g JOIN group_members gm ON gm.group_id=g.id WHERE gm.member_id=?",(merged.id,))} == {"Friends","System"}
+
+
+def test_overwrite_replaces_stale_memberships_forms_defaults_and_group_metadata(tmp_path):
+    store=Store(tmp_path / "overwrite-relations.db"); store.create_system("owner","Existing")
+    alex=store.add_member("owner","Alex","old:",description="old")
+    friends=store.create_group("owner","Friends","oldalias"); store.add_group_members("owner",[alex.id])
+    store.create_group("owner","Family","family"); store.add_group_members("owner",[alex.id])
+    old_form=store.create_form("owner",alex.id,"Old",None,"old",None,"O:","")
+    store.configure_default_form("owner",alex.id,old_form.id)
+    body={"format":"plurapack","version":1,"system":{"name":"Imported"},"settings":{},
+      "groups":[{"export_id":"friends","name":"Friends","alias":"newalias","avatar_url":"https://example.test/group.png"}],
+      "members":[{"export_id":"alex","name":"Alex","description":"new","proxy_tags":[{"prefix":"new:","suffix":""}],"groups":["friends"],"forms":[]}]}
+    import_system(store,"owner",json.dumps(body),strategy="overwrite")
+    alex=store.member_named("owner","Alex")
+    assert alex.description=="new" and alex.default_form_id is None and store.forms_for_member(alex.id)==[]
+    assert [(t.prefix,t.suffix) for t in store.proxy_tags(member_id=alex.id)]==[("new:","")]
+    with store.connect() as db:
+        assert [r[0] for r in db.execute("SELECT g.name FROM groups g JOIN group_members gm ON gm.group_id=g.id WHERE gm.member_id=?",(alex.id,))]==["Friends"]
+        row=db.execute("SELECT alias,avatar FROM groups WHERE id=?",(friends.id,)).fetchone()
+    assert tuple(row)==("newalias","https://example.test/group.png")
+
+
+def test_promoted_form_uses_existing_inheritance_and_rejects_name_collision(tmp_path):
+    store=Store(tmp_path / "inherit.db"); store.create_system("owner","Crew")
+    parent=store.add_member("owner","Alex","A:",description="Parent description",pronouns="they/them",avatar="https://example.test/a.png")
+    store.update_member("owner",parent.id,banner="https://example.test/banner.png")
+    store.create_form("owner",parent.id,"Happy",None,"",None,"H:","")
+    exported=json.loads(export_store(store,"owner","pluralkit",forms_mode="members")[0])
+    promoted=next(m for m in exported["members"] if m["name"]=="Alex — Happy")
+    assert (promoted["pronouns"],promoted["avatar_url"],promoted["description"],promoted["banner"]) == ("they/them","https://example.test/a.png","Parent description","https://example.test/banner.png")
+    store.add_member("owner","Alex — Happy","collision:")
+    with pytest.raises(TransferError,match="conflicts"):
+        export_store(store,"owner","pluralkit",forms_mode="members")
+
+
+def test_database_failure_after_first_record_rolls_back_everything(tmp_path):
+    store=Store(tmp_path / "late-failure.db"); store.create_system("owner","Existing")
+    store.add_member("owner","Existing","used:")
+    body={"tuppers":[{"name":"Would be created","brackets":["new:",""]},
+                       {"name":"Conflicting tag","brackets":["used:",""]}],"groups":[]}
+    with pytest.raises(sqlite3.IntegrityError):
+        import_system(store,"owner",json.dumps(body),"tupperbox")
+    assert [m.name for m in store.export_system("owner")[1]]==["Existing"]
+
+
+def test_empty_native_system_round_trip(tmp_path):
+    source=Store(tmp_path / "empty-source.db")
+    sid=source.create_system("source","Empty 🌌")
+    source.update_system("source",sid,description="",logo=None,banner=None,system_tag=None,
+                         show_system_tag=1)
+    document,_=export_store(source,"source")
+    target=Store(tmp_path / "empty-target.db")
+    report=import_system(target,"target",document)
+    restored=target.system_info(target.system_for("target"))
+    assert report.members_imported == 0
+    assert (restored.display_name,restored.description,restored.logo,restored.banner,
+            restored.system_tag,restored.show_system_tag)==("Empty 🌌","",None,None,None,1)
+    assert target.export_system("target")[1] == []

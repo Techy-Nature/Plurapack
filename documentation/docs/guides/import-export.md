@@ -1,32 +1,77 @@
 # Import, export, and backups
 
-## Import member data
+Plurapack's JSON transfer service is separate from its SQLite database. The native,
+versioned **Plurapack v1** format is the recommended lossless portable backup. It
+contains system metadata, members, every proxy tag, forms, groups and memberships,
+and portable presentation settings. Relationships use export-local IDs rather than
+database primary keys.
 
-Plurapack accepts pasted JSON from PluralKit, Tupperbox, and Plurapack:
-
-```text
-p;import pluralkit {"name":"My system","members":[]}
-p;import tupperbox {"tuppers":[]}
-p;import plurapack {"format":"plurapack",...}
-```
-
-A fenced JSON code block is also accepted. If your account has no system, the import creates one. Otherwise it adds members to the existing system.
-
-Imports are all-or-nothing when a name or proxy tag conflicts. External IDs are not reused; imported members receive new Plurapack IDs. Owner accounts, link codes, proxy-message history, and voice configuration are not imported.
-
-## Export portable metadata
+## Commands
 
 ```text
 p;export
+p;export plurapack
 p;export pluralkit
 p;export tupperbox
+p;export pluralkit --forms-members
+p;export tupperbox --forms-members
+
+p;import <attached JSON>
+p;import plurapack <attached JSON>
+p;import pluralkit <attached JSON>
+p;import tupperbox <attached JSON>
 ```
 
-The default format is Plurapack. The bot attaches a JSON document containing the system name and portable member metadata.
+`export` defaults to Plurapack. An omitted import format is detected from schema
+metadata; ambiguous files are rejected rather than guessed. Import conflict modes
+are `--merge` (safe default), `--skip-existing`, and explicit `--overwrite`.
 
-!!! warning
-    Exports contain names and proxy metadata. Store and transfer them as private files even though they exclude account IDs, link secrets, message content, and proxy-message records.
+- **Merge** preserves populated local scalar fields, fills empty fields, adds new
+  proxy tags and group memberships, and merges forms by case-insensitive display
+  name. Matching forms keep populated local fields while gaining missing fields
+  and proxy tags. Existing defaults, forms, tags, and relationships are retained.
+- **Skip existing** leaves matching members completely untouched and reports them;
+  only new records are created.
+- **Overwrite** replaces every portable field, proxy tag, form, default-form
+  selection, and group membership on matching imported members. Matching imported
+  groups receive the imported alias and avatar. Unrelated members and groups are
+  never deleted merely because they are absent from the file.
 
-## Back up the installation
+Create a native backup before an overwrite.
 
-Operators should also back up the SQLite database to preserve stable IDs and proxy-management records. An export is useful for portability, but it is not a complete replacement for the database. Test restoration rather than assuming a backup works.
+PluralKit and Tupperbox do not have Plurapack's form model. Compatibility exports
+therefore accept an explicit forms policy:
+
+- `--forms-loss` (the default) omits forms and reports how many were omitted.
+- `--forms-members` exports every form as a separate member/tupper, preserving its
+  display name (qualified with its parent member name), picture, description/soma,
+  pronouns where supported, banner, all proxy tags, and inherited groups/color
+  where the destination supports them.
+
+The dashboard API exposes the same policy as `forms=loss` or `forms=members` on
+the system/group export endpoint. Native Plurapack backups always retain forms in
+their original, lossless representation and do not need either option.
+
+The dashboard's **📤 Export backup** and **📥 Import backup** controls use the same
+transfer service. It offers the same merge, skip-existing, and overwrite choices.
+
+## Compatibility
+
+PluralKit compatibility targets its full JSON export v2 layout (`system`, `members`,
+`groups`, and `switches`). Tupperbox compatibility targets the documented root
+`tuppers` and `groups` arrays; its flat bracket sequence is read as prefix/suffix
+pairs. External service IDs are used only as temporary relationship references and
+never as Plurapack ownership or database IDs.
+
+Compatibility formats are for migration and can lose Plurapack-only information.
+PluralKit cannot represent forms as forms, aliases, speech settings, or system-tag
+visibility. Tupperbox cannot represent forms as forms, colors, pronouns, aliases,
+multiple group memberships, or Plurapack settings. Forms can instead be promoted
+to standalone members/tuppers with `--forms-members`. Usage counters, timestamps, switches,
+accounts, ownership IDs, and privacy fields without a safe equivalent are ignored.
+
+JSON backups never contain bot tokens, login/link challenges, session or OAuth
+credentials, server environment configuration, internal paths, temporary audio,
+proxied-message history, account ownership, or voice reference configuration. Treat
+the remaining personal metadata as private. SQLite backups remain appropriate for
+operator disaster recovery; JSON is the portable user-owned backup.
