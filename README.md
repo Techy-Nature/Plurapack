@@ -22,6 +22,22 @@ short per-operation connections allow safe concurrent access. The existing
 `owners.account_id` primary key intentionally limits each account to one linked
 system; the account response uses a `systems` list only as a stable API shape.
 
+### Railway deployment
+
+Railway automatically builds the included `Dockerfile`. It installs Plurapack
+and all declared Python dependencies (including Uvicorn), then starts the web
+service with `python -m plurapack.web`; no custom start command is required.
+Remove any existing Railway start-command override such as `uvicorn ...` so the
+image command is used. The server automatically listens on Railway's `PORT` and
+on all interfaces.
+
+At minimum, configure `PLURAPACK_SESSION_SECRET` as a stable random value of at
+least 32 characters. Configure `STOAT_BOT_TOKEN` and/or `FLUXER_BOT_TOKEN` on a
+separate Railway service whose start command is `python main.py` if you also
+want the chat bot process. Both services must use shared persistent storage for
+`PLURAPACK_DATABASE` (and browser audio, when enabled); an ephemeral SQLite file
+inside one service is not shared with the other service and is lost on redeploy.
+
 The API provides `/api/account`, authorized system/member/form CRUD, front
 retrieval and switching, and `/api/health`; interactive OpenAPI documentation is
 at `/docs`. Plurapack does not rely on Stoat OAuth. Instead, `/login` creates a
