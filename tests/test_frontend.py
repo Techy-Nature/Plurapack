@@ -26,3 +26,9 @@ def test_dashboard_exposes_transfer_formats_strategies_and_safe_defaults():
     assert 'name="importStrategy" value="merge" checked' in page
     assert "Creating a Plurapack backup first is strongly recommended" in script
     assert "report.proxyTagsImported" in script and "report.warnings" in script
+
+
+def test_login_page_offers_stoat_and_fluxer():
+    page = (Path(__file__).parent.parent / "login.html").read_text()
+    assert "Sign in with Stoat or Fluxer" in page
+    assert "Plurapack bot on Stoat or Fluxer" in page

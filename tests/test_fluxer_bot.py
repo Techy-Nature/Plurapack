@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 
-from plurapack.fluxer_bot import FluxerPlatform
+from plurapack.fluxer_bot import FluxerPlatform, create_fluxer_bot
+from plurapack.login import LoginService
+from plurapack.storage import Store
 from plurapack.proxy import Incoming
 
 
@@ -43,3 +45,45 @@ async def test_fluxer_platform_deletes_source_message():
 
     assert deleted
     assert platform.messages == {}
+
+
+async def test_fluxer_login_command_approves_dashboard_attempt(tmp_path, monkeypatch):
+    commands = {}
+
+    class Bot:
+        def __init__(self, **kwargs):
+            pass
+
+        def command(self, name):
+            def register(callback):
+                commands[name] = callback
+                return callback
+            return register
+
+        def event(self, callback):
+            return callback
+
+    fluxer = SimpleNamespace(
+        Bot=Bot,
+        Intents=SimpleNamespace(default=lambda: 0, MESSAGE_CONTENT=1),
+    )
+    monkeypatch.setattr("plurapack.fluxer_bot._load_fluxer", lambda: fluxer)
+    database = tmp_path / "fluxer-login.sqlite3"
+    create_fluxer_bot("p;", str(database))
+    attempt = LoginService(Store(database)).start()
+    replies = []
+
+    async def send(message):
+        replies.append(message)
+
+    ctx = SimpleNamespace(
+        author=SimpleNamespace(id="fluxer-user", display_name="Fluxer User"),
+        send=send,
+    )
+
+    await commands["login"](ctx, attempt.code)
+
+    user = LoginService(Store(database)).complete(attempt.id, attempt.browser_secret)
+    assert (user.id, user.username) == ("fluxer-user", "Fluxer User")
+    assert replies == ["Dashboard login approved. You can return to your browser."]
+    assert commands["lg"] is commands["login"]

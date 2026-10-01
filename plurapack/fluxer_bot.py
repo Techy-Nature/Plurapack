@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .bot import COMMAND_SHORTCUTS, _help_pages, _print_cli_status
+from .login import LoginError, LoginService
 from .proxy import Incoming, ProxyService
 from .storage import Member, Store
 
@@ -108,10 +109,24 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     store = Store(database)
     platform = FluxerPlatform(bot)
     service = ProxyService(store, platform, prefix)
+    login_service = LoginService(store)
 
     async def help_command(ctx: Any, *, command_name: str = "") -> None:
         for page in _help_pages(prefix, command_name):
             await ctx.send(page)
+
+    async def login_command(ctx: Any, code: str) -> None:
+        """Prove dashboard identity using the authenticated Fluxer author."""
+        username = (getattr(ctx.author, "display_name", None)
+                    or getattr(ctx.author, "name", None)
+                    or getattr(ctx.author, "username", None)
+                    or str(ctx.author.id))
+        try:
+            login_service.verify(code, str(ctx.author.id), str(username))
+        except LoginError as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send("Dashboard login approved. You can return to your browser.")
 
     async def setup_command(ctx: Any, name: str = "My system", *, description: str = "") -> None:
         try:
@@ -134,6 +149,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         await ctx.send(f"Added **{created.name}** (`{created.id}`); voice is Off.")
 
     _register_command(bot, "help", help_command)
+    _register_command(bot, "login", login_command)
     _register_command(bot, "setup", setup_command)
     _register_command(bot, "member", member_command)
 
