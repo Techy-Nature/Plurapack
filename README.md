@@ -2,6 +2,10 @@
 
 New to Plurapack? The text-only, website-ready user guide lives in [`documentation/`](documentation/README.md), with onboarding, everyday workflows, configuration, privacy, and troubleshooting documentation.
 
+Invites:
+Stoat: https://stoat.chat/bot/01M1ZB80QNH00RN1XEWH3D38TH
+Fluxer: https://web.fluxer.app/oauth2/authorize?client_id=1548168978344448000&scope=bot&permissions=536983552
+
 ## Dashboard and Web API
 
 The repository includes a dependency-free dashboard prototype that can be hosted on GitHub Pages or any static web server. It provides responsive desktop and mobile layouts, independently scrollable member and profile panels on larger screens, member search, profile switching, and an interactive new-member dialog.
@@ -121,12 +125,12 @@ object, deletes return `204`, validation errors return `422`, unauthenticated
 requests return `401`, unauthorized systems return `403`, and missing or
 mismatched nested resources return `404`.
 
-Plurapack is an early, self-hosted [Stoat](https://stoat.chat) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
+Plurapack is an early, self-hosted [Stoat](https://stoat.chat) and [Fluxer](https://web.fluxer.app/) member/headmate proxy. It welcomes plural systems of every origin and people who are questioning. It never asks for an origin, diagnosis, or proof of identity. It is a communication tool, **not** a diagnostic service.
 
 ## What works in this initial release
 
 - Persistent SQLite systems (random 10-character SHA-256 fragments), members (5 characters), display names, proxy tags, avatar URLs, username colors, and voice preferences. Names select members; IDs remain stable across renames.
-- Multiple authorized Stoat accounts can share one system and its stable IDs through a 15-character, one-use, 15-minute code. Only the hash of the code is stored.
+- Multiple authorized Stoat accounts (or one Fluxer and one Stoat account) can share one system and its stable IDs through a 15-character, one-use, 15-minute code. Only the hash of the code is stored.
 - Text proxying through stoat.py masquerades. The replacement is posted and recorded before the source is deleted. Bot messages, commands, in-flight messages, and persisted duplicate source IDs are ignored.
 - Every proxy record retains platform message IDs, system/member IDs, channel and initiating owner, but **not message content**.
 - React to one of your proxies with ✏️ or 📝, then send its replacement text in the same channel, to edit it. React with ❌ or 🗑️ to delete it. Shared-system owners may manage one another's proxies.
