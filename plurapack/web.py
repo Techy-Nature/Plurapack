@@ -75,9 +75,12 @@ def front_json(front: Front | None) -> dict[str, Any]:
 def create_app(store: Store | None = None, static_root: Path | None = ROOT,
                browser_audio: BrowserAudioStore | None = None) -> FastAPI:
     app = FastAPI(title="Plurapack Web API", version="1")
-    database = resolve_database_path()
-    app.state.store = store or Store(database)
-    database = getattr(app.state.store, "path", database)
+    if store is None:
+        database = resolve_database_path()
+        store = Store(database)
+    else:
+        database = store.path
+    app.state.store = store
     app.state.browser_audio = browser_audio or BrowserAudioStore.configured(database)
     app.state.login_service = LoginService(app.state.store)
     app.state.login_start_limiter = LoginStartLimiter(

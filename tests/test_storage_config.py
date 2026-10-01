@@ -68,6 +68,55 @@ def test_bot_and_dashboard_resolve_same_configured_database(tmp_path, monkeypatc
     assert bot.resolve_database_path() == expected
 
 
+def test_web_without_supplied_store_resolves_configured_database(tmp_path, monkeypatch):
+    from plurapack import web
+
+    database = tmp_path / "resolved" / "web.sqlite3"
+    calls = []
+
+    def resolve():
+        calls.append(True)
+        return str(database)
+
+    monkeypatch.setattr(web, "resolve_database_path", resolve)
+    app = web.create_app(static_root=None)
+
+    assert calls == [True]
+    assert app.state.store.path == str(database)
+    assert database.is_file()
+
+
+def test_web_supplied_store_skips_storage_resolution_and_keys_browser_audio(
+    tmp_path, monkeypatch
+):
+    from plurapack import web
+
+    invalid_data_dir = tmp_path / "not-a-directory"
+    invalid_data_dir.write_text("occupied", encoding="utf-8")
+    monkeypatch.setenv("PLURAPACK_DATA_DIR", str(invalid_data_dir))
+    monkeypatch.delenv("PLURAPACK_DATABASE", raising=False)
+
+    def unexpected_resolution():
+        pytest.fail("resolve_database_path must not run for an injected Store")
+
+    browser_audio = object()
+    configured_with = []
+
+    def configured(database):
+        configured_with.append(database)
+        return browser_audio
+
+    monkeypatch.setattr(web, "resolve_database_path", unexpected_resolution)
+    monkeypatch.setattr(web.BrowserAudioStore, "configured", configured)
+    supplied = Store(":memory:")
+
+    app = web.create_app(store=supplied, static_root=None)
+
+    assert app.state.store is supplied
+    assert app.state.browser_audio is browser_audio
+    assert configured_with == [":memory:"]
+
+
 def test_importing_config_does_not_touch_filesystem(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("PLURAPACK_DATA_DIR", str(tmp_path / "would-be-data"))
