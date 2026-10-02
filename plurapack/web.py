@@ -544,24 +544,30 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         return front_json(await run(store.switch_front, user.id, selector))
 
     if static_root:
+        dashboard_headers = {"Cache-Control": "no-store"}
+
         @app.get("/login", include_in_schema=False)
         async def login_page() -> FileResponse:
-            return FileResponse(static_root / "login.html")
+            return FileResponse(static_root / "login.html", headers=dashboard_headers)
+
         @app.get("/", include_in_schema=False)
         async def index() -> FileResponse:
-            return FileResponse(static_root / "index.html")
+            return FileResponse(static_root / "index.html", headers=dashboard_headers)
 
         @app.get("/app.js", include_in_schema=False)
         async def javascript() -> FileResponse:
-            return FileResponse(static_root / "app.js", media_type="text/javascript")
+            return FileResponse(static_root / "app.js", media_type="text/javascript",
+                                headers=dashboard_headers)
 
         @app.get("/dashboard_helpers.js", include_in_schema=False)
         async def dashboard_helpers() -> FileResponse:
-            return FileResponse(static_root / "dashboard_helpers.js", media_type="text/javascript")
+            return FileResponse(static_root / "dashboard_helpers.js", media_type="text/javascript",
+                                headers=dashboard_headers)
 
         @app.get("/styles.css", include_in_schema=False)
         async def stylesheet() -> FileResponse:
-            return FileResponse(static_root / "styles.css", media_type="text/css")
+            return FileResponse(static_root / "styles.css", media_type="text/css",
+                                headers=dashboard_headers)
 
     return app
 
