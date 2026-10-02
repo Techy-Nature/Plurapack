@@ -140,6 +140,20 @@ async def test_system_authorization_and_patch(api):
 
 
 @pytest.mark.asyncio
+async def test_api_responses_are_never_cached(api):
+    _, system_id, _, transport = api
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 cookies=cookie()) as client:
+        response = await client.get(f"/api/systems/{system_id}")
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store, private"
+
+        missing = await client.get("/api/systems/0000000000")
+        assert missing.status_code == 404
+        assert missing.headers["cache-control"] == "no-store, private"
+
+
+@pytest.mark.asyncio
 async def test_member_crud_patch_preserves_fields_and_validation(api):
     _, system_id, _, transport = api
     async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:

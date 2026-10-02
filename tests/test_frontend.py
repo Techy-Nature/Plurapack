@@ -28,6 +28,11 @@ def test_dashboard_exposes_transfer_formats_strategies_and_safe_defaults():
     assert "report.proxyTagsImported" in script and "report.warnings" in script
 
 
+def test_dashboard_api_requests_bypass_stale_browser_caches():
+    script = (Path(__file__).parent.parent / "app.js").read_text()
+    assert 'cache:"no-store"' in script
+
+
 def test_login_page_offers_stoat_and_fluxer():
     page = (Path(__file__).parent.parent / "login.html").read_text()
     assert "Sign in with Stoat or Fluxer" in page
