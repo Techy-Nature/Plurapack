@@ -41,8 +41,24 @@ test("edit mode exposes the entire current member profile", () => {
 });
 
 test("apply builds one consolidated profile patch", () => {
-  const patch = h.consolidatedPatch({ name: "Alex", pronouns: "they/them", ignored: "x" }, h.PROFILE_FIELDS.member);
-  assert.deepEqual(patch, { name: "Alex", pronouns: "they/them" });
+  const patch = h.consolidatedPatch({
+    name: "Alex", pronouns: "they/them", avatar: "https://example.com/avatar.png",
+    banner: null, ignored: "x",
+  }, h.PROFILE_FIELDS.member);
+  assert.deepEqual(patch, {
+    avatar: "https://example.com/avatar.png", name: "Alex", pronouns: "they/them", banner: null,
+  });
+});
+
+test("image fields are included in every profile patch", () => {
+  assert.deepEqual(
+    h.consolidatedPatch({ logo: "https://example.com/logo.png", banner: null }, h.PROFILE_FIELDS.system),
+    { logo: "https://example.com/logo.png", banner: null },
+  );
+  assert.deepEqual(
+    h.consolidatedPatch({ picture: "https://example.com/form.png", banner: null }, h.PROFILE_FIELDS.form),
+    { picture: "https://example.com/form.png", banner: null },
+  );
 });
 
 test("failed saves preserve the draft and editing state", () => {
