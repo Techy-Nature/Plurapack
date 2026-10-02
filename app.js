@@ -38,6 +38,78 @@ document.addEventListener("click",async e=>{if(e.target.closest("#exportSystem")
 $("#voiceEnable").addEventListener("click",async()=>{voiceEnabled=true;$("#voiceEnable").textContent="Voice playback enabled";$("#voiceStatus").textContent="New browser voice clips will play in order.";await pollVoice()});setInterval(()=>{if(voiceEnabled)pollVoice()},2000);
 function loadImage(url){return new Promise((resolve,reject)=>{const candidate=new Image(),timeout=setTimeout(()=>reject(new Error("Image loading timed out.")),10000);candidate.onload=()=>{clearTimeout(timeout);resolve()};candidate.onerror=()=>{clearTimeout(timeout);reject(new Error("The browser could not load an image from this URL."))};candidate.src=url})}
 $("#imageUrl").addEventListener("input",e=>$("#imagePreview").src=e.target.value);$("#imageApply").addEventListener("click",async e=>{e.preventDefault();const key=$("#imageDialog").dataset.key,v=$("#imageUrl").value.trim()||null;logEvent("info","Image validation started",{field:key,url:v});const validationError=Dashboard.imageUrlError(v);try{if(validationError)throw new Error(validationError);if(v)await loadImage(v);if(key.startsWith("form."))draft.form[key.slice(5)]=v;else draft[key]=v;logEvent("info","Image validation succeeded",{field:key,url:v,action:v?"linked":"removed"});$("#imageDialog").close("apply");view.kind==="system"?renderSystem():view.kind==="group"?renderGroup():renderMember()}catch(error){logEvent("error","Image validation failed",{field:key,url:v,error});toast(`Image not applied: ${error.message}`,true)}});
-$("#addGroup").onclick=()=>{$("#newGroupForm").reset();$("#groupCreateError").textContent="";$("#groupDialog").showModal()};$("#cancelGroup").onclick=()=>$("#groupDialog").close();$("#newGroupForm").onsubmit=async e=>{e.preventDefault();const values=Object.fromEntries(new FormData(e.currentTarget));if(!values.avatar)values.avatar=null;try{const group=await api(`/api/systems/${system.id}/groups`,{method:"POST",body:JSON.stringify(values)});$("#groupDialog").close();await refresh();view=Dashboard.selectGroup(group.id);groupMemberDraft=Dashboard.membershipDraft(group.memberIds);render();toast("Group created")}catch(error){$("#groupCreateError").textContent=error.message}};document.addEventListener("input",e=>{if(e.target.id==="groupMemberSearch"){groupMemberSearch=e.target.value;renderGroup();const input=$("#groupMemberSearch");input.focus();input.setSelectionRange(input.value.length,input.value.length)}});
+const addGroupButton=$("#addGroup");
+const groupDialog=$("#groupDialog");
+const newGroupForm=$("#newGroupForm");
+const groupCreateError=$("#groupCreateError");
+console.log("[Plurapack] group dialog controls",{
+  addGroupButton:Boolean(addGroupButton),
+  groupDialog:Boolean(groupDialog),
+  newGroupForm:Boolean(newGroupForm),
+  showModalSupported:Dashboard.dialogOpenMode(groupDialog)==="native",
+});
+function useGroupDialogFallback(){
+  console.warn("[Plurapack] showModal() is unavailable or failed; using dialog fallback.");
+  groupDialog.setAttribute("open","");
+  groupDialog.classList.add("dialog-fallback");
+  document.body.classList.add("dialog-fallback-open");
+}
+function closeGroupDialog(){
+  if(!groupDialog)return;
+  try{
+    if(typeof groupDialog.close==="function"&&groupDialog.open)groupDialog.close();
+    else groupDialog.removeAttribute("open");
+  }catch(error){
+    console.warn("[Plurapack] Native group dialog close failed; removing open state.",error);
+    groupDialog.removeAttribute("open");
+  }finally{
+    groupDialog.classList.remove("dialog-fallback");
+    document.body.classList.remove("dialog-fallback-open");
+  }
+}
+if(addGroupButton){
+  addGroupButton.addEventListener("click",()=>{
+    console.log("[Plurapack] New group clicked");
+    try{
+      newGroupForm?.reset();
+      if(groupCreateError)groupCreateError.textContent="";
+      if(!groupDialog)throw new Error("Group dialog element was not found.");
+      if(Dashboard.dialogOpenMode(groupDialog)==="native"){
+        try{groupDialog.showModal()}catch(error){
+          console.error("[Plurapack] Native group dialog open failed",error);
+          useGroupDialogFallback();
+        }
+      }else useGroupDialogFallback();
+      console.log("[Plurapack] group dialog opened",{mode:groupDialog.classList.contains("dialog-fallback")?"fallback":"native"});
+    }catch(error){
+      console.error("[Plurapack] Failed to open group dialog",error);
+      toast(`Could not open group editor: ${error.message}`,true);
+    }
+  });
+}
+if($("#cancelGroup"))$("#cancelGroup").addEventListener("click",closeGroupDialog);
+if(newGroupForm)newGroupForm.addEventListener("submit",async e=>{
+  e.preventDefault();
+  const values=Object.fromEntries(new FormData(e.currentTarget));
+  if(!values.avatar)values.avatar=null;
+  console.log("[Plurapack] group creation submitted",{name:values.name,alias:values.alias,hasAvatar:Boolean(values.avatar)});
+  try{
+    const group=await api(`/api/systems/${system.id}/groups`,{method:"POST",body:JSON.stringify(values)});
+    console.log("[Plurapack] group creation API request succeeded");
+    console.log("[Plurapack] group creation returned group ID",{groupId:group.id});
+    await refresh();
+    console.log("[Plurapack] group creation refresh succeeded");
+    closeGroupDialog();
+    view=Dashboard.selectGroup(group.id);
+    groupMemberDraft=Dashboard.membershipDraft(group.memberIds);
+    render();
+    toast("Group created");
+  }catch(error){
+    console.error("[Plurapack] group creation failed",error);
+    if(groupCreateError)groupCreateError.textContent=error.message;
+    toast(`Could not create group: ${error.message}`,true);
+  }
+});
+document.addEventListener("input",e=>{if(e.target.id==="groupMemberSearch"){groupMemberSearch=e.target.value;renderGroup();const input=$("#groupMemberSearch");input.focus();input.setSelectionRange(input.value.length,input.value.length)}});
 $("#addMember").onclick=async()=>{const proxy=prompt("Choose a proxy prefix for the new member (required):");if(!proxy)return;try{const name=Dashboard.nextMemberName(system.members),m=await api(`/api/systems/${system.id}/members`,{method:"POST",body:JSON.stringify({name,proxy})});await refresh();view=Dashboard.selectMember(m.id);editing=true;draft=structuredClone(system.members.find(x=>x.id===m.id));renderMember()}catch(e){toast(e.message,true)}};$("#memberSearch").oninput=renderSidebar;$("#logout").onclick=async()=>{await api("/api/auth/logout",{method:"POST"});location.assign("/login")};
 (async()=>{try{account=await api("/api/account");if(!account.systemId)throw Error("No system is linked to this account.");await refresh();$("#loading").hidden=true;$("#app").hidden=false}catch(e){if(e.status!==401){$("#loading").innerHTML=`<h1>Dashboard unavailable</h1><p>${esc(e.message)}</p>`}}})();
