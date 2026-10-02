@@ -68,6 +68,13 @@ class MemberPatch(APIModel):
     playback: Literal["off", "local", "send", "both"] | None = None
     voice_settings: dict[str, Any] | None = Field(None, alias="voiceSettings")
 
+    @field_validator("description", mode="before")
+    @classmethod
+    def null_description_clears_text(cls, value: Any) -> Any:
+        # Dashboard form fields use null for an empty input. The storage column
+        # is non-nullable, so treat an explicit null as clearing the text.
+        return "" if value is None else value
+
 
 class FormCreate(APIModel):
     display_name: str = Field(alias="displayName", min_length=1, max_length=80)
