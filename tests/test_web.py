@@ -1,9 +1,11 @@
+import re
+
 import httpx
 import pytest
 
 import plurapack.web as web
 from plurapack.storage import Store
-from plurapack.web import create_app
+from plurapack.web import asset_version, create_app
 from plurapack.web_auth import COOKIE_NAME, SESSION_LIFETIME, WebUser, create_session_cookie
 
 
@@ -168,6 +170,82 @@ async def test_dashboard_static_responses_are_never_cached(tmp_path, path):
         response = await client.get(path)
 
     assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+def write_dashboard_assets(root, app_javascript="app contents"):
+    (root / "index.html").write_text(
+        '<link rel="stylesheet" href="/styles.css?v={{STYLES_VERSION}}">'
+        '<meta name="plurapack-assets-version" content="{{APP_VERSION}}">'
+        '<script src="/dashboard_helpers.js?v={{HELPERS_VERSION}}"></script>'
+        '<script src="/app.js?v={{APP_VERSION}}"></script>',
+        encoding="utf-8",
+    )
+    (root / "login.html").write_text("login", encoding="utf-8")
+    (root / "app.js").write_text(app_javascript, encoding="utf-8")
+    (root / "dashboard_helpers.js").write_text("helper contents", encoding="utf-8")
+    (root / "styles.css").write_text("style contents", encoding="utf-8")
+
+
+@pytest.mark.asyncio
+async def test_dashboard_index_contains_content_versioned_assets(tmp_path):
+    write_dashboard_assets(tmp_path)
+    app = create_app(Store(tmp_path / "index.sqlite3"), static_root=tmp_path)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://test") as client:
+        response = await client.get("/")
+
+    assert response.status_code == 200
+    for asset in ("styles.css", "dashboard_helpers.js", "app.js"):
+        assert re.search(rf'/{re.escape(asset)}\?v=[0-9a-f]{{12}}', response.text)
+    app_hash = asset_version(tmp_path / "app.js")
+    assert f'<meta name="plurapack-assets-version" content="{app_hash}">' in response.text
+
+
+@pytest.mark.asyncio
+async def test_dashboard_asset_version_changes_with_contents(tmp_path):
+    write_dashboard_assets(tmp_path, "first app")
+    first_app = create_app(Store(tmp_path / "first.sqlite3"), static_root=tmp_path)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=first_app),
+                                 base_url="http://test") as client:
+        first_page = (await client.get("/")).text
+
+    (tmp_path / "app.js").write_text("second app", encoding="utf-8")
+    second_app = create_app(Store(tmp_path / "second.sqlite3"), static_root=tmp_path)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=second_app),
+                                 base_url="http://test") as client:
+        second_page = (await client.get("/")).text
+
+    first_version = re.search(r'/app\.js\?v=([0-9a-f]{12})', first_page).group(1)
+    second_version = re.search(r'/app\.js\?v=([0-9a-f]{12})', second_page).group(1)
+    assert first_version != second_version
+
+
+def test_asset_version_is_stable_for_same_contents(tmp_path):
+    asset = tmp_path / "asset.js"
+    asset.write_text("unchanged", encoding="utf-8")
+    first_version = asset_version(asset)
+    asset.write_text("unchanged", encoding="utf-8")
+    assert asset_version(asset) == first_version
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("path", "contents"), [
+    ("/app.js?v=test", "app contents"),
+    ("/dashboard_helpers.js?v=test", "helper contents"),
+    ("/styles.css?v=test", "style contents"),
+])
+async def test_versioned_dashboard_asset_routes_work(tmp_path, path, contents):
+    write_dashboard_assets(tmp_path)
+    app = create_app(Store(tmp_path / "assets.sqlite3"), static_root=tmp_path)
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://test") as client:
+        response = await client.get(path)
+
+    assert response.status_code == 200
+    assert response.text == contents
     assert response.headers["cache-control"] == "no-store"
 
 
