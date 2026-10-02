@@ -95,3 +95,68 @@ test("system is the initial and return view", () => {
   assert.deepEqual(h.initialView(), { kind: "system" });
   assert.deepEqual(h.selectSystem(), { kind: "system" });
 });
+
+test("groups have their own view and endpoint namespace", () => {
+  assert.deepEqual(h.selectGroup("abcd1234"), { kind: "group", groupId: "abcd1234" });
+  assert.equal(h.groupEndpoint("system id", "abcd1234"),
+    "/api/systems/system%20id/groups/abcd1234");
+  assert.deepEqual(h.deletionRequest("group", { systemId: "sys", groupId: "abcd1234" }), {
+    method: "DELETE", path: "/api/systems/sys/groups/abcd1234",
+  });
+});
+
+test("group patches contain only editable fields", () => {
+  assert.deepEqual(h.consolidatedPatch({ id: "fixed", name: "Crew", alias: "crew", avatar: null },
+    h.PROFILE_FIELDS.group), { avatar: null, name: "Crew", alias: "crew" });
+});
+
+test("member filtering preserves stable membership IDs", () => {
+  const members = [{ id: "abc12", name: "Alex" }, { id: "def34", name: "River" }];
+  const selected = new Set(["def34"]);
+  assert.deepEqual(h.filterMembers(members, "ale").map(member => member.id), ["abc12"]);
+  assert.deepEqual([...selected], ["def34"]);
+});
+
+test("membership draft supports checking and unchecking stable IDs", () => {
+  let draft = h.membershipDraft(["abc12"]);
+  draft = h.updateMembership(draft, "def34", true);
+  assert.deepEqual([...draft], ["abc12", "def34"]);
+  draft = h.updateMembership(draft, "abc12", false);
+  assert.deepEqual([...draft], ["def34"]);
+  assert.deepEqual(h.membershipPayload(draft), { memberIds: ["def34"] });
+});
+
+test("filtering visible members does not change the membership draft", () => {
+  const members = [
+    { id: "abc12", name: "Alex" },
+    { id: "def34", name: "River" },
+    { id: "fed43", name: "Nest" },
+  ];
+  const draft = h.membershipDraft(["abc12", "fed43"]);
+  assert.deepEqual(h.filterMembers(members, "river").map(member => member.id), ["def34"]);
+  assert.deepEqual(h.filterMembers(members, "").map(member => member.id),
+    ["abc12", "def34", "fed43"]);
+  assert.deepEqual(h.membershipPayload(draft), { memberIds: ["abc12", "fed43"] });
+});
+
+test("membership updates are independent from unsaved profile edits", () => {
+  const profileDraft = h.enterEdit("group", {
+    name: "Unsaved name", alias: "unsaved", avatar: null, memberIds: ["abc12"],
+  }).draft;
+  const membership = h.updateMembership(h.membershipDraft(profileDraft.memberIds), "def34", true);
+  assert.deepEqual(h.membershipPayload(membership), { memberIds: ["abc12", "def34"] });
+  assert.equal(profileDraft.name, "Unsaved name");
+  assert.equal(profileDraft.alias, "unsaved");
+});
+
+test("active-group refresh preserves profile and membership drafts", () => {
+  const refreshedSystem = { id: "system", activeGroupId: "abcd1234" };
+  const profileDraft = { name: "Unsaved name", alias: "unsaved" };
+  const memberDraft = h.membershipDraft(["abc12", "def34"]);
+  const state = h.preservedGroupRefresh(refreshedSystem, true, profileDraft, memberDraft);
+
+  assert.strictEqual(state.system, refreshedSystem);
+  assert.equal(state.editing, true);
+  assert.strictEqual(state.profileDraft, profileDraft);
+  assert.strictEqual(state.memberDraft, memberDraft);
+});

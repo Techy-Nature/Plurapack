@@ -17,12 +17,13 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from .storage import Form, Front, Member, ProxyTag, Store, System
+from .storage import Form, Front, Group, Member, ProxyTag, Store, System
 from .login import LOGIN_START_WINDOW, LoginError, LoginService, LoginStartLimiter
 from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
                        create_session_cookie, require_authenticated_user)
-from .web_models import (FormCreate, FormPatch, FrontUpdate, MemberCreate, MemberPatch,
-                         ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
+from .web_models import (ActiveGroupUpdate, FormCreate, FormPatch, FrontUpdate,
+                         GroupCreate, GroupMemberUpdate, GroupPatch, MemberCreate,
+                         MemberPatch, ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
 from .browser_audio import BrowserAudioStore
 from .config import resolve_database_path
 from .transfer import MAX_FILE_SIZE, TransferError, export_system, import_system
@@ -60,12 +61,23 @@ def member_json(store: Store, member: Member, front: Front | None = None) -> dic
                       "strikethroughSpeech": member.strikethrough_speech}}
 
 
+def group_json(store: Store, account_id: str, group: Group) -> dict[str, Any]:
+    members = store.group_members(account_id, group.id)
+    return {"id": group.id, "systemId": group.system_id, "name": group.name,
+            "alias": group.alias, "avatar": group.avatar,
+            "memberIds": [member.id for member in members]}
+
+
 def system_json(store: Store, account_id: str, system: System) -> dict[str, Any]:
     front, autoproxy = store.current_front(account_id), store.autoproxy(account_id)
+    active_group = store.active_group(account_id)
     return {"id": system.id, "displayName": system.display_name, "name": system.display_name,
             "description": system.description, "logo": system.logo, "banner": system.banner, "tag": system.system_tag,
             "showSystemTag": bool(system.show_system_tag),
             "members": [member_json(store, member, front) for member in store.members_for_system(system.id)],
+            "groups": [group_json(store, account_id, group)
+                       for group in store.groups_for_system(system.id)],
+            "activeGroupId": active_group.id if active_group else None,
             "front": front_json(front),
             "autoproxy": {"memberId": autoproxy.member.id if autoproxy.member else None,
                           "autofront": autoproxy.autofront}}
@@ -144,6 +156,14 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         if selected is None or selected[0].member_id != member_id:
             raise HTTPException(404, "Resource not found")
         return selected[0]
+
+    async def owned_group(system_id: str, group_id: str, user: WebUser,
+                          store: Store) -> Group:
+        await authorized(system_id, user, store)
+        group = await run(store.group_selected, user.id, group_id)
+        if group is None or group.id != group_id or group.system_id != system_id:
+            raise HTTPException(404, "Resource not found")
+        return group
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
@@ -287,6 +307,66 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         await authorized(system_id, user, store)
         await run(store.delete_system, user.id, system_id)
         return Response(status_code=204)
+
+    @app.get("/api/systems/{system_id}/groups")
+    async def list_groups(system_id: str,
+                          user: WebUser = Depends(require_authenticated_user),
+                          store: Store = Depends(db)) -> list[dict[str, Any]]:
+        await authorized(system_id, user, store)
+        groups = await run(store.groups_for_system, system_id)
+        return [await run(group_json, store, user.id, group) for group in groups]
+
+    @app.post("/api/systems/{system_id}/groups", status_code=201)
+    async def create_group(system_id: str, body: GroupCreate,
+                           user: WebUser = Depends(require_authenticated_user),
+                           store: Store = Depends(db)) -> dict[str, Any]:
+        await authorized(system_id, user, store)
+        group = await run(store.create_group, user.id, body.name, body.alias,
+                          str(body.avatar) if body.avatar else None)
+        return await run(group_json, store, user.id, group)
+
+    @app.get("/api/systems/{system_id}/groups/{group_id}")
+    async def get_group(system_id: str, group_id: str,
+                        user: WebUser = Depends(require_authenticated_user),
+                        store: Store = Depends(db)) -> dict[str, Any]:
+        group = await owned_group(system_id, group_id, user, store)
+        return await run(group_json, store, user.id, group)
+
+    @app.patch("/api/systems/{system_id}/groups/{group_id}")
+    async def patch_group(system_id: str, group_id: str, body: GroupPatch,
+                          user: WebUser = Depends(require_authenticated_user),
+                          store: Store = Depends(db)) -> dict[str, Any]:
+        await owned_group(system_id, group_id, user, store)
+        changes = body.model_dump(exclude_unset=True)
+        if "avatar" in changes and changes["avatar"]:
+            changes["avatar"] = str(changes["avatar"])
+        group = await run(store.update_group, user.id, group_id, **changes)
+        return await run(group_json, store, user.id, group)
+
+    @app.delete("/api/systems/{system_id}/groups/{group_id}", status_code=204)
+    async def remove_group(system_id: str, group_id: str,
+                           user: WebUser = Depends(require_authenticated_user),
+                           store: Store = Depends(db)) -> Response:
+        await owned_group(system_id, group_id, user, store)
+        await run(store.delete_group, user.id, group_id)
+        return Response(status_code=204)
+
+    @app.put("/api/systems/{system_id}/groups/{group_id}/members")
+    async def replace_group_members(system_id: str, group_id: str,
+                                    body: GroupMemberUpdate,
+                                    user: WebUser = Depends(require_authenticated_user),
+                                    store: Store = Depends(db)) -> dict[str, Any]:
+        await owned_group(system_id, group_id, user, store)
+        group, _ = await run(store.replace_group_members, user.id, group_id, body.member_ids)
+        return await run(group_json, store, user.id, group)
+
+    @app.put("/api/systems/{system_id}/active-group")
+    async def put_active_group(system_id: str, body: ActiveGroupUpdate,
+                               user: WebUser = Depends(require_authenticated_user),
+                               store: Store = Depends(db)) -> dict[str, Any]:
+        await owned_group(system_id, body.group_id, user, store)
+        group = await run(store.set_active_group, user.id, body.group_id)
+        return await run(group_json, store, user.id, group)
 
     @app.get("/api/systems/{system_id}/members")
     async def list_members(system_id: str, user: WebUser = Depends(require_authenticated_user),

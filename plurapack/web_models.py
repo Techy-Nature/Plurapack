@@ -1,6 +1,7 @@
 """Validated public representations for the dashboard API."""
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
@@ -99,3 +100,52 @@ class FormPatch(APIModel):
 class FrontUpdate(APIModel):
     member_id: str | None = Field(None, alias="memberId", pattern=r"^[0-9a-f]{5}$")
     form_id: str | None = Field(None, alias="formId", pattern=r"^[0-9a-f]{5}$")
+
+
+class GroupCreate(APIModel):
+    name: str = Field(min_length=1, max_length=80)
+    alias: str = Field(min_length=1, max_length=24, pattern=r"^[^\s:]+$")
+    avatar: HttpUrl | None = None
+
+    @field_validator("name", "alias")
+    @classmethod
+    def group_text_not_blank(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("value cannot be blank")
+        return value
+
+
+class GroupPatch(APIModel):
+    name: str | None = Field(None, min_length=1, max_length=80)
+    alias: str | None = Field(None, min_length=1, max_length=24, pattern=r"^[^\s:]+$")
+    avatar: HttpUrl | None = None
+
+    @field_validator("name", "alias", mode="before")
+    @classmethod
+    def group_text_not_blank(cls, value: Any) -> Any:
+        if value is None:
+            raise ValueError("value cannot be null")
+        if not isinstance(value, str):
+            return value
+        value = value.strip()
+        if not value:
+            raise ValueError("value cannot be blank")
+        return value
+
+
+class GroupMemberUpdate(APIModel):
+    member_ids: list[str] = Field(alias="memberIds")
+
+    @field_validator("member_ids")
+    @classmethod
+    def valid_member_ids(cls, values: list[str]) -> list[str]:
+        if len(values) != len(set(values)):
+            raise ValueError("memberIds must not contain duplicates")
+        if any(not re.fullmatch(r"[0-9a-f]{5}", value) for value in values):
+            raise ValueError("memberIds must contain five-character member IDs")
+        return values
+
+
+class ActiveGroupUpdate(APIModel):
+    group_id: str = Field(alias="groupId", pattern=r"^[0-9a-f]{8}$")

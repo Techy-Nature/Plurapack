@@ -314,3 +314,97 @@ def test_main_prefers_plurapack_port_override(monkeypatch):
 
     assert started["host"] == "127.0.0.1"
     assert started["port"] == 8765
+
+@pytest.mark.asyncio
+async def test_group_api_crud_membership_and_system_payload(api):
+    store, system_id, _, transport = api
+    member = store.add_member("owner", "Alex", "a:")
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
+        assert (await client.get(f"/api/systems/{system_id}/groups")).json() == []
+        created = await client.post(f"/api/systems/{system_id}/groups", json={
+            "name": "Main Crew", "alias": "main", "avatar": "https://example.com/group.png",
+        })
+        assert created.status_code == 201
+        group = created.json()
+        assert len(group["id"]) == 8 and group["memberIds"] == []
+        payload = (await client.get(f"/api/systems/{system_id}")).json()
+        assert payload["groups"] == [group]
+        assert payload["activeGroupId"] == group["id"]
+
+        changed = await client.patch(
+            f"/api/systems/{system_id}/groups/{group['id']}",
+            json={"name": "Core Crew", "alias": "core"},
+        )
+        assert changed.json()["name"] == "Core Crew"
+        members = await client.put(
+            f"/api/systems/{system_id}/groups/{group['id']}/members",
+            json={"memberIds": [member.id]},
+        )
+        assert members.json()["memberIds"] == [member.id]
+        assert (await client.put(f"/api/systems/{system_id}/active-group", json={
+            "groupId": group["id"],
+        })).status_code == 200
+        assert (await client.delete(
+            f"/api/systems/{system_id}/groups/{group['id']}"
+        )).status_code == 204
+        assert store.member_selected("owner", member.id) is not None
+        assert store.active_group("owner") is None
+
+
+@pytest.mark.asyncio
+async def test_group_api_enforces_system_ownership(api):
+    store, system_id, other_id, transport = api
+    own_member = store.add_member("owner", "Owner", "own:")
+    outsider = store.add_member("other", "Outsider", "out:")
+    foreign_group = store.create_group("other", "Foreign", "foreign")
+    path = f"/api/systems/{system_id}/groups/{foreign_group.id}"
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
+        assert (await client.get(path)).status_code == 404
+        assert (await client.patch(path, json={"name": "Stolen"})).status_code == 404
+        assert (await client.delete(path)).status_code == 404
+        assert (await client.put(path + "/members", json={"memberIds": [own_member.id]})).status_code == 404
+        assert (await client.put(f"/api/systems/{system_id}/active-group", json={
+            "groupId": foreign_group.id,
+        })).status_code == 404
+
+        own = (await client.post(f"/api/systems/{system_id}/groups", json={
+            "name": "Own", "alias": "own",
+        })).json()
+        rejected = await client.put(
+            f"/api/systems/{system_id}/groups/{own['id']}/members",
+            json={"memberIds": [outsider.id]},
+        )
+        assert rejected.status_code == 422
+        assert "not found in this system" in rejected.json()["message"]
+
+        # Supplying the other system in the URL is independently forbidden.
+        assert (await client.get(f"/api/systems/{other_id}/groups")).status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_group_api_requires_authentication(api):
+    _, system_id, _, transport = api
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.get(f"/api/systems/{system_id}/groups")).status_code == 401
+        assert (await client.post(f"/api/systems/{system_id}/groups", json={
+            "name": "No", "alias": "no",
+        })).status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("patch", [
+    {"name": None}, {"alias": None}, {"name": ""}, {"alias": ""},
+])
+async def test_group_patch_rejects_null_and_empty_identity_fields(api, patch):
+    store, system_id, _, transport = api
+    group = store.create_group("owner", "Group", "group")
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 cookies=cookie()) as client:
+        response = await client.patch(
+            f"/api/systems/{system_id}/groups/{group.id}", json=patch,
+        )
+        assert response.status_code == 422
+        assert response.json()["message"]
+        unchanged = store.group_selected("owner", group.id)
+        assert unchanged is not None
+        assert (unchanged.name, unchanged.alias) == ("Group", "group")
