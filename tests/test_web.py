@@ -166,6 +166,31 @@ async def test_member_crud_patch_preserves_fields_and_validation(api):
 
 
 @pytest.mark.asyncio
+async def test_member_patch_can_clear_dashboard_description(api):
+    _, system_id, _, transport = api
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
+        created = await client.post(f"/api/systems/{system_id}/members", json={
+            "name": "New member", "proxy": "new:", "description": "Temporary description",
+        })
+        member = created.json()
+
+        # Empty HTML form controls are serialized as null by the dashboard.
+        edited = await client.patch(f"/api/systems/{system_id}/members/{member['id']}", json={
+            "name": "Kellin Arwyn",
+            "color": "#7765A8",
+            "pronouns": None,
+            "description": None,
+            "alias": None,
+            "avatar": None,
+            "banner": None,
+        })
+
+        assert edited.status_code == 200
+        assert edited.json()["name"] == "Kellin Arwyn"
+        assert edited.json()["description"] == ""
+
+
+@pytest.mark.asyncio
 async def test_forms_relationships_crud_and_front(api):
     store, system_id, _, transport = api
     first = store.add_member("owner", "First", "f:")
