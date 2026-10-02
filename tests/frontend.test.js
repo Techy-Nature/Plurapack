@@ -116,3 +116,35 @@ test("member filtering preserves stable membership IDs", () => {
   assert.deepEqual(h.filterMembers(members, "ale").map(member => member.id), ["abc12"]);
   assert.deepEqual([...selected], ["def34"]);
 });
+
+test("membership draft supports checking and unchecking stable IDs", () => {
+  let draft = h.membershipDraft(["abc12"]);
+  draft = h.updateMembership(draft, "def34", true);
+  assert.deepEqual([...draft], ["abc12", "def34"]);
+  draft = h.updateMembership(draft, "abc12", false);
+  assert.deepEqual([...draft], ["def34"]);
+  assert.deepEqual(h.membershipPayload(draft), { memberIds: ["def34"] });
+});
+
+test("filtering visible members does not change the membership draft", () => {
+  const members = [
+    { id: "abc12", name: "Alex" },
+    { id: "def34", name: "River" },
+    { id: "fed43", name: "Nest" },
+  ];
+  const draft = h.membershipDraft(["abc12", "fed43"]);
+  assert.deepEqual(h.filterMembers(members, "river").map(member => member.id), ["def34"]);
+  assert.deepEqual(h.filterMembers(members, "").map(member => member.id),
+    ["abc12", "def34", "fed43"]);
+  assert.deepEqual(h.membershipPayload(draft), { memberIds: ["abc12", "fed43"] });
+});
+
+test("membership updates are independent from unsaved profile edits", () => {
+  const profileDraft = h.enterEdit("group", {
+    name: "Unsaved name", alias: "unsaved", avatar: null, memberIds: ["abc12"],
+  }).draft;
+  const membership = h.updateMembership(h.membershipDraft(profileDraft.memberIds), "def34", true);
+  assert.deepEqual(h.membershipPayload(membership), { memberIds: ["abc12", "def34"] });
+  assert.equal(profileDraft.name, "Unsaved name");
+  assert.equal(profileDraft.alias, "unsaved");
+});

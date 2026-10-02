@@ -121,11 +121,13 @@ class GroupPatch(APIModel):
     alias: str | None = Field(None, min_length=1, max_length=24, pattern=r"^[^\s:]+$")
     avatar: HttpUrl | None = None
 
-    @field_validator("name", "alias")
+    @field_validator("name", "alias", mode="before")
     @classmethod
-    def group_text_not_blank(cls, value: str | None) -> str | None:
+    def group_text_not_blank(cls, value: Any) -> Any:
         if value is None:
-            return None
+            raise ValueError("value cannot be null")
+        if not isinstance(value, str):
+            return value
         value = value.strip()
         if not value:
             raise ValueError("value cannot be blank")

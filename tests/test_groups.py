@@ -53,3 +53,29 @@ def test_group_storage_rejects_cross_system_operations(tmp_path):
         store.update_group("other", group.id, name="Stolen")
     with pytest.raises(ValueError, match="not found in this system"):
         store.add_members_to_group("owner", group.id, [outsider.id])
+
+
+def test_failed_membership_replacement_is_atomic(tmp_path):
+    store = Store(tmp_path / "groups.sqlite3")
+    store.create_system("owner", "Owner")
+    store.create_system("other", "Other")
+    original = store.add_member("owner", "Original", "original:")
+    replacement = store.add_member("owner", "Replacement", "replacement:")
+    outsider = store.add_member("other", "Outsider", "outsider:")
+    group = store.create_group("owner", "Group", "group")
+    store.replace_group_members("owner", group.id, [original.id])
+
+    with pytest.raises(ValueError, match="not found in this system"):
+        store.replace_group_members("owner", group.id, [replacement.id, outsider.id])
+
+    assert [member.id for member in store.group_members("owner", group.id)] == [original.id]
+
+
+def test_group_update_defensively_rejects_null_identity_fields(tmp_path):
+    store = Store(tmp_path / "groups.sqlite3")
+    store.create_system("owner", "Owner")
+    group = store.create_group("owner", "Group", "group")
+    with pytest.raises(ValueError, match="name cannot be null"):
+        store.update_group("owner", group.id, name=None)
+    with pytest.raises(ValueError, match="alias cannot be null"):
+        store.update_group("owner", group.id, alias=None)

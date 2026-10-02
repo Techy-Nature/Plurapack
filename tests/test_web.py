@@ -389,3 +389,22 @@ async def test_group_api_requires_authentication(api):
         assert (await client.post(f"/api/systems/{system_id}/groups", json={
             "name": "No", "alias": "no",
         })).status_code == 401
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("patch", [
+    {"name": None}, {"alias": None}, {"name": ""}, {"alias": ""},
+])
+async def test_group_patch_rejects_null_and_empty_identity_fields(api, patch):
+    store, system_id, _, transport = api
+    group = store.create_group("owner", "Group", "group")
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 cookies=cookie()) as client:
+        response = await client.patch(
+            f"/api/systems/{system_id}/groups/{group.id}", json=patch,
+        )
+        assert response.status_code == 422
+        assert response.json()["message"]
+        unchanged = store.group_selected("owner", group.id)
+        assert unchanged is not None
+        assert (unchanged.name, unchanged.alias) == ("Group", "group")

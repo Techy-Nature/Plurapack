@@ -75,6 +75,21 @@
     return members.filter((member) => member.name.toLowerCase().includes(normalized));
   }
 
+  function membershipDraft(memberIds) {
+    return new Set(memberIds || []);
+  }
+
+  function updateMembership(current, memberId, checked) {
+    const updated = new Set(current);
+    if (checked) updated.add(memberId);
+    else updated.delete(memberId);
+    return updated;
+  }
+
+  function membershipPayload(current) {
+    return { memberIds: [...current] };
+  }
+
   function imageUrlError(value) {
     if (!value) return null;
     let url;
@@ -105,5 +120,6 @@
   return { PROFILE_FIELDS, VOICE_MODES, nextFormName, nextMemberName, initialView, selectSystem,
     selectMember, selectGroup, selectForm, memberEndpoint, formEndpoint, groupEndpoint,
     deletionRequest, enterEdit, consolidatedPatch, failedSave, filterMembers,
+    membershipDraft, updateMembership, membershipPayload,
     imageUrlError, apiErrorMessage };
 });

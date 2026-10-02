@@ -805,10 +805,14 @@ class Store:
         if not changes or not set(changes) <= {"name", "alias", "avatar"}:
             raise ValueError("No supported group fields were supplied.")
         if "name" in changes:
+            if changes["name"] is None:
+                raise ValueError("Group name cannot be null.")
             changes["name"] = changes["name"].strip()
             if not changes["name"] or len(changes["name"]) > 80:
                 raise ValueError("Group name must be 1–80 characters.")
         if "alias" in changes:
+            if changes["alias"] is None:
+                raise ValueError("Group alias cannot be null.")
             changes["alias"] = changes["alias"].strip()
             if not re.fullmatch(r"[^\s:]{1,24}", changes["alias"]):
                 raise ValueError("Group alias must be 1–24 characters without spaces or colons.")
@@ -831,28 +835,29 @@ class Store:
         group = self.group_selected(account_id, group_id)
         if group is None or group.id != group_id:
             raise PermissionError("Group not found or not owned by this account.")
+        members = self._resolve_group_members(account_id, group, selectors)
+        with self.connect() as db:
+            db.executemany("INSERT OR IGNORE INTO group_members(group_id,member_id) VALUES (?,?)",
+                           ((group.id, member.id) for member in members))
+        return group, members
+
+    def _resolve_group_members(self, account_id: str, group: Group,
+                               selectors: Iterable[str]) -> list[Member]:
+        """Resolve group member selectors without mutating membership state."""
         members: list[Member] = []
         for selector in selectors:
             member = self.member_selected(account_id, selector)
             if member is None or member.system_id != group.system_id:
                 raise ValueError(f"Member `{selector}` was not found in this system.")
             members.append(member)
-        with self.connect() as db:
-            db.executemany("INSERT OR IGNORE INTO group_members(group_id,member_id) VALUES (?,?)",
-                           ((group.id, member.id) for member in members))
-        return group, members
+        return members
 
     def remove_members_from_group(self, account_id: str, group_id: str,
                                   selectors: Iterable[str]) -> tuple[Group, list[Member]]:
         group = self.group_selected(account_id, group_id)
         if group is None or group.id != group_id:
             raise PermissionError("Group not found or not owned by this account.")
-        members: list[Member] = []
-        for selector in selectors:
-            member = self.member_selected(account_id, selector)
-            if member is None or member.system_id != group.system_id:
-                raise ValueError(f"Member `{selector}` was not found in this system.")
-            members.append(member)
+        members = self._resolve_group_members(account_id, group, selectors)
         with self.connect() as db:
             db.executemany("DELETE FROM group_members WHERE group_id=? AND member_id=?",
                            ((group.id, member.id) for member in members))
@@ -860,7 +865,10 @@ class Store:
 
     def replace_group_members(self, account_id: str, group_id: str,
                               selectors: Iterable[str]) -> tuple[Group, list[Member]]:
-        group, members = self.add_members_to_group(account_id, group_id, selectors)
+        group = self.group_selected(account_id, group_id)
+        if group is None or group.id != group_id:
+            raise PermissionError("Group not found or not owned by this account.")
+        members = self._resolve_group_members(account_id, group, selectors)
         with self.connect() as db:
             db.execute("DELETE FROM group_members WHERE group_id=?", (group.id,))
             db.executemany("INSERT INTO group_members(group_id,member_id) VALUES (?,?)",
