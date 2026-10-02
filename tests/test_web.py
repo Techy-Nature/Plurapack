@@ -154,6 +154,24 @@ async def test_api_responses_are_never_cached(api):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("path", [
+    "/", "/login", "/app.js", "/dashboard_helpers.js", "/styles.css",
+])
+async def test_dashboard_static_responses_are_never_cached(tmp_path, path):
+    for filename in ("index.html", "login.html", "app.js", "dashboard_helpers.js",
+                     "styles.css"):
+        (tmp_path / filename).write_text("test", encoding="utf-8")
+    transport = httpx.ASGITransport(app=create_app(Store(tmp_path / "static.sqlite3"),
+                                                    static_root=tmp_path))
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
 async def test_member_crud_patch_preserves_fields_and_validation(api):
     _, system_id, _, transport = api
     async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
