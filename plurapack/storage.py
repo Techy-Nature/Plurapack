@@ -722,7 +722,8 @@ class Store:
             return member
         return self.form_selected(account_id, selector)
 
-    def create_group(self, account_id: str, name: str, alias: str) -> Group:
+    def create_group(self, account_id: str, name: str, alias: str,
+                     avatar: str | None = None) -> Group:
         system_id = self.system_for(account_id)
         if system_id is None:
             raise PermissionError("Create a system first.")
@@ -731,13 +732,16 @@ class Store:
             raise ValueError("Group name must be 1–80 characters.")
         if not re.fullmatch(r"[^\s:]{1,24}", alias):
             raise ValueError("Group alias must be 1–24 characters without spaces or colons.")
+        avatar = avatar.strip() if avatar else None
+        if avatar and not re.fullmatch(r"https?://\S+", avatar):
+            raise ValueError("Group avatar must be an HTTP or HTTPS URL.")
         try:
             with self.connect() as db:
                 while True:
                     group_id = new_group_id(db)
                     try:
-                        db.execute("INSERT INTO groups(id,system_id,name,alias) VALUES (?,?,?,?)",
-                                   (group_id, system_id, name, alias))
+                        db.execute("INSERT INTO groups(id,system_id,name,alias,avatar) VALUES (?,?,?,?,?)",
+                                   (group_id, system_id, name, alias, avatar))
                         db.execute("""INSERT INTO active_groups(system_id,group_id) VALUES (?,?)
                             ON CONFLICT(system_id) DO UPDATE SET group_id=excluded.group_id""",
                                    (system_id, group_id))
@@ -749,6 +753,128 @@ class Store:
             raise ValueError("That group name or alias is already in use.") from error
         return self.active_group(account_id)  # type: ignore[return-value]
 
+    def groups_for_system(self, system_id: str) -> list[Group]:
+        """List a system's groups without changing its active group."""
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT * FROM groups WHERE system_id=? ORDER BY name COLLATE NOCASE, id",
+                (system_id,),
+            ).fetchall()
+        return [Group(**dict(row)) for row in rows]
+
+    def group_selected(self, account_id: str, selector: str) -> Group | None:
+        """Resolve an ID, name, or alias only inside the caller's system."""
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            return None
+        selector = selector.strip()
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT * FROM groups WHERE system_id=? AND
+                   (id=? OR name=? COLLATE NOCASE OR alias=? COLLATE NOCASE)""",
+                (system_id, selector, selector, selector),
+            ).fetchone()
+        return Group(**dict(row)) if row else None
+
+    def group_members(self, account_id: str, group_id: str) -> list[Member]:
+        group = self.group_selected(account_id, group_id)
+        if group is None or group.id != group_id:
+            raise PermissionError("Group not found or not owned by this account.")
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT m.* FROM members m JOIN group_members gm ON gm.member_id=m.id
+                   WHERE gm.group_id=? ORDER BY m.name COLLATE NOCASE, m.id""",
+                (group.id,),
+            ).fetchall()
+        return [Member(**dict(row)) for row in rows]
+
+    def set_active_group(self, account_id: str, group_id: str) -> Group:
+        group = self.group_selected(account_id, group_id)
+        if group is None or group.id != group_id:
+            raise PermissionError("Group not found or not owned by this account.")
+        with self.connect() as db:
+            db.execute("""INSERT INTO active_groups(system_id,group_id) VALUES (?,?)
+                ON CONFLICT(system_id) DO UPDATE SET group_id=excluded.group_id""",
+                       (group.system_id, group.id))
+        return group
+
+    def update_group(self, account_id: str, group_id: str, **changes: Any) -> Group:
+        group = self.group_selected(account_id, group_id)
+        if group is None or group.id != group_id:
+            raise PermissionError("Group not found or not owned by this account.")
+        if not changes or not set(changes) <= {"name", "alias", "avatar"}:
+            raise ValueError("No supported group fields were supplied.")
+        if "name" in changes:
+            changes["name"] = changes["name"].strip()
+            if not changes["name"] or len(changes["name"]) > 80:
+                raise ValueError("Group name must be 1–80 characters.")
+        if "alias" in changes:
+            changes["alias"] = changes["alias"].strip()
+            if not re.fullmatch(r"[^\s:]{1,24}", changes["alias"]):
+                raise ValueError("Group alias must be 1–24 characters without spaces or colons.")
+        if "avatar" in changes:
+            changes["avatar"] = changes["avatar"].strip() if changes["avatar"] else None
+            if changes["avatar"] and not re.fullmatch(r"https?://\S+", changes["avatar"]):
+                raise ValueError("Group avatar must be an HTTP or HTTPS URL.")
+        try:
+            with self.connect() as db:
+                db.execute(f"UPDATE groups SET {','.join(f'{key}=?' for key in changes)} "
+                           "WHERE id=? AND system_id=?",
+                           (*changes.values(), group.id, group.system_id))
+        except sqlite3.IntegrityError as error:
+            duplicate = "name" if "name" in changes else "alias"
+            raise ValueError(f"That group {duplicate} is already in use.") from error
+        return self.group_selected(account_id, group.id)  # type: ignore[return-value]
+
+    def add_members_to_group(self, account_id: str, group_id: str,
+                             selectors: Iterable[str]) -> tuple[Group, list[Member]]:
+        group = self.group_selected(account_id, group_id)
+        if group is None or group.id != group_id:
+            raise PermissionError("Group not found or not owned by this account.")
+        members: list[Member] = []
+        for selector in selectors:
+            member = self.member_selected(account_id, selector)
+            if member is None or member.system_id != group.system_id:
+                raise ValueError(f"Member `{selector}` was not found in this system.")
+            members.append(member)
+        with self.connect() as db:
+            db.executemany("INSERT OR IGNORE INTO group_members(group_id,member_id) VALUES (?,?)",
+                           ((group.id, member.id) for member in members))
+        return group, members
+
+    def remove_members_from_group(self, account_id: str, group_id: str,
+                                  selectors: Iterable[str]) -> tuple[Group, list[Member]]:
+        group = self.group_selected(account_id, group_id)
+        if group is None or group.id != group_id:
+            raise PermissionError("Group not found or not owned by this account.")
+        members: list[Member] = []
+        for selector in selectors:
+            member = self.member_selected(account_id, selector)
+            if member is None or member.system_id != group.system_id:
+                raise ValueError(f"Member `{selector}` was not found in this system.")
+            members.append(member)
+        with self.connect() as db:
+            db.executemany("DELETE FROM group_members WHERE group_id=? AND member_id=?",
+                           ((group.id, member.id) for member in members))
+        return group, members
+
+    def replace_group_members(self, account_id: str, group_id: str,
+                              selectors: Iterable[str]) -> tuple[Group, list[Member]]:
+        group, members = self.add_members_to_group(account_id, group_id, selectors)
+        with self.connect() as db:
+            db.execute("DELETE FROM group_members WHERE group_id=?", (group.id,))
+            db.executemany("INSERT INTO group_members(group_id,member_id) VALUES (?,?)",
+                           ((group.id, member.id) for member in members))
+        return group, members
+
+    def delete_group(self, account_id: str, group_id: str) -> Group:
+        group = self.group_selected(account_id, group_id)
+        if group is None or group.id != group_id:
+            raise PermissionError("Group not found or not owned by this account.")
+        with self.connect() as db:
+            db.execute("DELETE FROM groups WHERE id=? AND system_id=?", (group.id, group.system_id))
+        return group
+
     def active_group(self, account_id: str) -> Group | None:
         with self.connect() as db:
             row = db.execute("""SELECT g.* FROM groups g JOIN active_groups a ON a.group_id=g.id
@@ -759,36 +885,16 @@ class Store:
         group = self.active_group(account_id)
         if group is None:
             raise PermissionError("Create a group first.")
-        members = []
-        for selector in selectors:
-            member = self.member_selected(account_id, selector)
-            if member is None:
-                raise ValueError(f"Member `{selector}` was not found.")
-            members.append(member)
-        if not members:
+        selectors = list(selectors)
+        if not selectors:
             raise ValueError("Supply at least one member alias or ID.")
-        with self.connect() as db:
-            db.executemany("INSERT OR IGNORE INTO group_members(group_id,member_id) VALUES (?,?)",
-                           ((group.id, member.id) for member in members))
-        return group, members
+        return self.add_members_to_group(account_id, group.id, selectors)
 
     def update_active_group(self, account_id: str, **changes: Any) -> Group:
         group = self.active_group(account_id)
         if group is None:
             raise PermissionError("Create a group first.")
-        if not changes or not set(changes) <= {"alias", "avatar"}:
-            raise ValueError("No supported group fields were supplied.")
-        if "alias" in changes and not re.fullmatch(r"[^\s:]{1,24}", changes["alias"].strip()):
-            raise ValueError("Group alias must be 1–24 characters without spaces or colons.")
-        if "avatar" in changes and not re.fullmatch(r"https?://\S+", changes["avatar"]):
-            raise ValueError("Group avatar must be an HTTP or HTTPS URL.")
-        try:
-            with self.connect() as db:
-                db.execute(f"UPDATE groups SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
-                           (*changes.values(), group.id))
-        except sqlite3.IntegrityError as error:
-            raise ValueError("That group alias is already in use.") from error
-        return self.active_group(account_id)  # type: ignore[return-value]
+        return self.update_group(account_id, group.id, **changes)
 
     def configure_alias(self, account_id: str, member_selector: str, alias: str | None) -> Member:
         """Set a short lookup name without changing the member's full display name."""

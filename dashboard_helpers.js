@@ -9,6 +9,7 @@
     system: ["logo", "displayName", "description", "tag", "showSystemTag", "banner"],
     member: ["avatar", "name", "color", "pronouns", "description", "alias", "prefix", "suffix", "banner"],
     form: ["picture", "displayName", "pronouns", "soma", "prefix", "suffix", "banner"],
+    group: ["avatar", "name", "alias"],
   });
   const VOICE_MODES = Object.freeze([
     { id: "off", label: "Off", enabled: true },
@@ -35,6 +36,7 @@
   function initialView() { return { kind: "system" }; }
   function selectSystem() { return initialView(); }
   function selectMember(memberId) { return { kind: "member", memberId }; }
+  function selectGroup(groupId) { return { kind: "group", groupId }; }
   function selectForm(view, formId) {
     if (view.kind !== "member") throw new Error("A form requires a selected member.");
     return { ...view, formId };
@@ -45,9 +47,13 @@
   function formEndpoint(systemId, memberId, formId) {
     return `${memberEndpoint(systemId, memberId)}/forms/${encodeURIComponent(formId)}`;
   }
+  function groupEndpoint(systemId, groupId) {
+    return `/api/systems/${encodeURIComponent(systemId)}/groups/${encodeURIComponent(groupId)}`;
+  }
   function deletionRequest(kind, ids) {
     const path = kind === "form"
       ? formEndpoint(ids.systemId, ids.memberId, ids.formId)
+      : kind === "group" ? groupEndpoint(ids.systemId, ids.groupId)
       : memberEndpoint(ids.systemId, ids.memberId);
     return { method: "DELETE", path };
   }
@@ -62,6 +68,11 @@
   }
   function failedSave(state, error) {
     return { ...state, editing: true, error, draft: state.draft };
+  }
+
+  function filterMembers(members, query) {
+    const normalized = query.trim().toLowerCase();
+    return members.filter((member) => member.name.toLowerCase().includes(normalized));
   }
 
   function imageUrlError(value) {
@@ -92,6 +103,7 @@
   }
 
   return { PROFILE_FIELDS, VOICE_MODES, nextFormName, nextMemberName, initialView, selectSystem,
-    selectMember, selectForm, memberEndpoint, formEndpoint, deletionRequest,
-    enterEdit, consolidatedPatch, failedSave, imageUrlError, apiErrorMessage };
+    selectMember, selectGroup, selectForm, memberEndpoint, formEndpoint, groupEndpoint,
+    deletionRequest, enterEdit, consolidatedPatch, failedSave, filterMembers,
+    imageUrlError, apiErrorMessage };
 });
