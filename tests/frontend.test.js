@@ -160,3 +160,12 @@ test("active-group refresh preserves profile and membership drafts", () => {
   assert.strictEqual(state.profileDraft, profileDraft);
   assert.strictEqual(state.memberDraft, memberDraft);
 });
+
+test("group dialogs use native modal support when it is available", () => {
+  assert.equal(h.dialogOpenMode({ showModal() {} }), "native");
+});
+
+test("group dialogs fall back when native modal support is unavailable", () => {
+  assert.equal(h.dialogOpenMode({}), "fallback");
+  assert.equal(h.dialogOpenMode(null), "fallback");
+});

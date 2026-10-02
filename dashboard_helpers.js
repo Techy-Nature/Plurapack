@@ -94,6 +94,10 @@
     return { system: refreshedSystem, editing, profileDraft, memberDraft };
   }
 
+  function dialogOpenMode(dialog) {
+    return dialog && typeof dialog.showModal === "function" ? "native" : "fallback";
+  }
+
   function imageUrlError(value) {
     if (!value) return null;
     let url;
@@ -126,5 +130,5 @@
     deletionRequest, enterEdit, consolidatedPatch, failedSave, filterMembers,
     membershipDraft, updateMembership, membershipPayload,
     preservedGroupRefresh,
-    imageUrlError, apiErrorMessage };
+    dialogOpenMode, imageUrlError, apiErrorMessage };
 });
