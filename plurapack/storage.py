@@ -378,6 +378,20 @@ class Store:
             raise ValueError("More than one system has that name; use the system ID instead.")
         return System(**dict(rows[0]))
 
+    def system_by_id(self, system_id: str) -> System | None:
+        """Resolve a public system using only its globally stable ID."""
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM systems WHERE id=?", (system_id.strip(),)).fetchone()
+        return System(**dict(row)) if row else None
+
+    def system_named_for(self, account_id: str, display_name: str) -> System | None:
+        """Resolve an exact display name only within the caller's linked system."""
+        with self.connect() as db:
+            row = db.execute("""SELECT s.* FROM systems s JOIN owners o ON o.system_id=s.id
+                WHERE o.account_id=? AND s.display_name=?""",
+                (account_id, display_name.strip())).fetchone()
+        return System(**dict(row)) if row else None
+
     def configure_system_tag(self, account_id: str, tag: str | None) -> System:
         """Set the tag owned by a system's stable ID, or clear it."""
         system_id = self.system_for(account_id)
@@ -466,6 +480,12 @@ class Store:
         if len(rows) > 1 and rows[0]["id"] != selector.strip():
             raise ValueError("More than one member has that name; use the member ID instead.")
         return Member(**dict(rows[0]))
+
+    def public_member_by_id(self, member_id: str) -> Member | None:
+        """Resolve a public member using only its globally stable ID."""
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM members WHERE id=?", (member_id.strip(),)).fetchone()
+        return Member(**dict(row)) if row else None
 
     def forms_for_member(self, member_id: str) -> list[Form]:
         with self.connect() as db:
@@ -605,6 +625,52 @@ class Store:
                     values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"))
         values.pop("member_id")
         return form, Member(**values)
+
+    def public_form_by_id(self, form_id: str) -> tuple[Form, Member] | None:
+        """Resolve a public form using only its globally stable ID."""
+        selector = form_id.strip()
+        with self.connect() as db:
+            row = db.execute("""SELECT f.id form_id, f.member_id, f.display_name,
+                f.avatar form_avatar, f.soma, f.pronouns form_pronouns,
+                f.prefix form_prefix, f.suffix form_suffix, f.banner form_banner, m.*
+                FROM forms f JOIN members m ON m.id=f.member_id WHERE f.id=?""",
+                (selector,)).fetchone()
+        if row is None:
+            return None
+        values = dict(row)
+        form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
+                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
+                    values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"))
+        values.pop("member_id")
+        return form, Member(**values)
+
+    def public_info_selected(
+        self, account_id: str, selector: str
+    ) -> System | Member | tuple[Form, Member] | None:
+        """Resolve stable IDs globally and human-readable selectors only locally."""
+        selector = selector.strip()
+
+        # An existing stable ID always wins, regardless of who owns its profile.
+        value = self.system_by_id(selector)
+        if value is not None:
+            return value
+        member = self.public_member_by_id(selector)
+        if member is not None:
+            return member
+        form = self.public_form_by_id(selector)
+        if form is not None:
+            return form
+
+        # Names and aliases are contextual to the caller's linked system.
+        value = self.system_named_for(account_id, selector)
+        if value is not None:
+            return value
+        member = self.member_selected(account_id, selector)
+        if member is not None and selector.casefold() in {
+            member.name.casefold(), (member.alias or "").casefold()
+        }:
+            return member
+        return self.form_selected(account_id, selector)
 
     def create_group(self, account_id: str, name: str, alias: str) -> Group:
         system_id = self.system_for(account_id)

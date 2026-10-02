@@ -69,6 +69,49 @@ def test_public_info_resolves_ids_and_rejects_ambiguous_names(tmp_path):
         store.public_member_selected("Alex")
 
 
+def test_info_resolution_keeps_ids_global_and_names_local(tmp_path):
+    store = Store(tmp_path / "local-info.sqlite3")
+    first = store.create_system("one", "Nest")
+    second = store.create_system("two", "Nest")
+    first_member = store.add_member("one", "Alex", "A:", alias="alexander")
+    second_member = store.add_member("two", "Alex", "B:", alias="lex")
+    first_form = store.create_form("one", first_member.id, "Happy")
+    second_form = store.create_form("two", second_member.id, "Happy")
+
+    assert store.public_info_selected("one", "  Alex  ").id == first_member.id
+    assert store.public_info_selected("one", "alexander").id == first_member.id
+    assert store.public_info_selected("one", "Happy")[0].id == first_form.id
+    assert store.public_info_selected("one", "Nest").id == first
+
+    assert store.public_info_selected("one", second_member.id).id == second_member.id
+    assert store.public_info_selected("one", second_form.id)[0].id == second_form.id
+    assert store.public_info_selected("one", second).id == second
+
+
+def test_info_resolution_does_not_fall_back_to_other_system_names(tmp_path):
+    store = Store(tmp_path / "no-global-names.sqlite3")
+    store.create_system("one", "First")
+    store.create_system("two", "Second")
+    member = store.add_member("two", "Alex", "B:", alias="alexander")
+    store.create_form("two", member.id, "Happy")
+
+    assert store.public_info_selected("one", "Alex") is None
+    assert store.public_info_selected("one", "alexander") is None
+    assert store.public_info_selected("one", "Happy") is None
+    assert store.public_info_selected("one", "Second") is None
+
+
+def test_info_exact_id_takes_precedence_over_local_human_readable_selector(tmp_path):
+    store = Store(tmp_path / "id-precedence.sqlite3")
+    store.create_system("one", "First")
+    store.create_system("two", "Second")
+    local = store.add_member("one", "Local", "A:")
+    remote = store.add_member("two", "Remote", "B:")
+    store.configure_alias("one", local.id, remote.id)
+
+    assert store.public_info_selected("one", remote.id).id == remote.id
+
+
 def test_info_embeds_include_profiles_default_form_and_preview(tmp_path):
     class Embed:
         def __init__(self, **values):

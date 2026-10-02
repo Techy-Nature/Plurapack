@@ -621,15 +621,7 @@ def create_bot(prefix: str, database: str) -> Any:
     @bot.command(aliases=[COMMAND_SHORTCUTS["info"]])
     async def info(ctx: commands.Context, *, selector: str) -> None:
         """Show a system, member, or form selected by nickname, alias, or ID."""
-        try:
-            value = store.system_info(selector)
-            if value is None:
-                value = store.public_member_selected(selector)
-            if value is None:
-                value = store.public_form_selected(selector)
-        except ValueError as error:
-            await ctx.send(str(error))
-            return
+        value = store.public_info_selected(str(ctx.author.id), selector)
         if value is None:
             await ctx.send("System, member, or form not found. Use an exact nickname, alias, or ID.")
             return
