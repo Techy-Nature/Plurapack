@@ -11,6 +11,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
 import urllib.request
 import wave
 from concurrent.futures import ThreadPoolExecutor
@@ -40,7 +41,12 @@ COMMAND_HELP = {
     "help": ("h", "[COMMAND]", "List every command or show details for one."),
     "login": ("lg", "CODE", "Approve a one-time dashboard login."),
     "setup": ("s", "[SYSTEM_NAME] [DESCRIPTION]", "Create your system."),
-    "member": ("m", "NAME PREFIX [SUFFIX] [DESCRIPTION]", "Add a member and proxy tag."),
+    "member": (
+        "m", "NAME PREFIX [SUFFIX] [--avatar URL|--a URL] [DESCRIPTION]",
+        "Add a member and proxy tag.",
+    ),
+    "avatar": ("av", "--member MEMBER URL|--form FORM URL|--system URL", "Change a profile avatar."),
+    "banner": ("bn", "--member MEMBER URL|--form FORM URL|--system URL", "Change a profile banner."),
     "memberproxy": ("mt", "MEMBER [PREFIX] [SUFFIX]", "Add or list member proxy tags."),
     "memberproxy-clear": ("mc", "MEMBER", "Clear every proxy tag from a member."),
     "alias": ("a", "MEMBER [ALIAS]", "Set or clear a member selector."),
@@ -80,6 +86,83 @@ COMMAND_ALIASES = {"front": ["fronter"], "viewinfo": ["view"]}
 
 PREVIOUS_EMOJI = "⬅️"
 NEXT_EMOJI = "➡️"
+
+
+_MEMBER_AVATAR_OPTION = re.compile(r"(?<!\S)(?:--avatar|--a)(?:\s+(\S+))?")
+_PROFILE_TARGETS = {
+    "--member": "member", "-m": "member", "--m": "member",
+    "--form": "form", "-f": "form", "--f": "form",
+    "--system": "system", "-s": "system", "--s": "system",
+}
+
+
+def _member_creation_options(suffix: str, description: str) -> tuple[str, str, str | None]:
+    """Extract the member avatar option without changing the command parser API."""
+    combined = f"{suffix} {description}".strip()
+    match = _MEMBER_AVATAR_OPTION.search(combined)
+    if match is None:
+        return suffix, description, None
+    avatar = match.group(1)
+    if not avatar:
+        raise ValueError("The avatar option requires an image URL.")
+    parsed = urllib.parse.urlsplit(avatar)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("The avatar must be a complete HTTP or HTTPS URL.")
+
+    # A flag in the suffix position means no suffix was supplied. Otherwise,
+    # only remove it from the free-form description.
+    if suffix in {"--avatar", "--a"}:
+        return "", description[len(avatar):].lstrip(), avatar
+    cleaned_description = _MEMBER_AVATAR_OPTION.sub("", description, count=1).strip()
+    return suffix, cleaned_description, avatar
+
+
+def _profile_image_options(arguments: str) -> tuple[str, str | None, str]:
+    """Parse one explicitly targeted avatar or banner update."""
+    try:
+        values = shlex.split(arguments)
+    except ValueError as error:
+        raise ValueError(f"Invalid arguments: {error}") from error
+    if not values or values[0] not in _PROFILE_TARGETS:
+        raise ValueError("Choose exactly one target: --member, --form, or --system.")
+    target = _PROFILE_TARGETS[values[0]]
+    expected = 2 if target == "system" else 3
+    if len(values) != expected:
+        raise ValueError(
+            f"{values[0]} requires {'a selector and an image URL' if target != 'system' else 'an image URL'}."
+        )
+    selector = None if target == "system" else values[1]
+    url = values[-1]
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("The image must be a complete HTTP or HTTPS URL.")
+    return target, selector, url
+
+
+def _update_profile_image(
+    store: Store, account_id: str, field: str, arguments: str
+) -> tuple[str, str]:
+    """Update an owned member, form, or current system image field."""
+    target, selector, url = _profile_image_options(arguments)
+    if target == "member":
+        member = store.member_selected(account_id, selector or "")
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        updated = store.update_member(account_id, member.id, **{field: url})
+        return updated.name, url
+    if target == "form":
+        selected = store.form_selected(account_id, selector or "")
+        if selected is None:
+            raise PermissionError("Form not found or not owned by this account.")
+        form, _ = selected
+        updated = store.update_form(account_id, form.id, **{field: url})
+        return updated.display_name, url
+    system_id = store.system_for(account_id)
+    if system_id is None:
+        raise PermissionError("Create a system first.")
+    system_field = "logo" if field == "avatar" else field
+    updated = store.update_system(account_id, system_id, **{system_field: url})
+    return updated.display_name, url
 
 
 def _help_pages(prefix: str, selector: str = "", limit: int = 1800) -> list[str]:
@@ -434,11 +517,30 @@ def create_bot(prefix: str, database: str) -> Any:
     async def member(ctx: commands.Context, name: str, member_prefix: str, suffix: str = "", *,
                      description: str = "") -> None:
         try:
-            created = store.add_member(ctx.author.id, name, member_prefix, suffix, description)
+            suffix, description, avatar = _member_creation_options(suffix, description)
+            created = store.add_member(
+                ctx.author.id, name, member_prefix, suffix, description, avatar=avatar
+            )
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return
         await ctx.send(f"Added **{created.name}** (`{created.id}`); voice is Off.")
+
+    async def update_image(ctx: commands.Context, field: str, arguments: str) -> None:
+        try:
+            name, _ = _update_profile_image(store, str(ctx.author.id), field, arguments)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"Updated the {field} for **{name}**.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["avatar"]])
+    async def avatar(ctx: commands.Context, *, arguments: str = "") -> None:
+        await update_image(ctx, "avatar", arguments)
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["banner"]])
+    async def banner(ctx: commands.Context, *, arguments: str = "") -> None:
+        await update_image(ctx, "banner", arguments)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["deletemember"]])
     async def deletemember(ctx: commands.Context, *, selector: str) -> None:

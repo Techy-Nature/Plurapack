@@ -6,7 +6,13 @@ import importlib.util
 from dataclasses import dataclass, field
 from typing import Any
 
-from .bot import COMMAND_SHORTCUTS, _help_pages, _print_cli_status
+from .bot import (
+    COMMAND_SHORTCUTS,
+    _help_pages,
+    _member_creation_options,
+    _print_cli_status,
+    _update_profile_image,
+)
 from .login import LoginError, LoginService
 from .proxy import Incoming, ProxyService
 from .storage import Member, Store
@@ -140,18 +146,35 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         ctx: Any, name: str, member_prefix: str, suffix: str = "", *, description: str = ""
     ) -> None:
         try:
+            suffix, description, avatar = _member_creation_options(suffix, description)
             created = store.add_member(
-                str(ctx.author.id), name, member_prefix, suffix, description
+                str(ctx.author.id), name, member_prefix, suffix, description, avatar=avatar
             )
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return
         await ctx.send(f"Added **{created.name}** (`{created.id}`); voice is Off.")
 
+    async def avatar_command(ctx: Any, *, arguments: str = "") -> None:
+        await image_command(ctx, "avatar", arguments)
+
+    async def banner_command(ctx: Any, *, arguments: str = "") -> None:
+        await image_command(ctx, "banner", arguments)
+
+    async def image_command(ctx: Any, field: str, arguments: str) -> None:
+        try:
+            name, _ = _update_profile_image(store, str(ctx.author.id), field, arguments)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(f"Updated the {field} for **{name}**.")
+
     _register_command(bot, "help", help_command)
     _register_command(bot, "login", login_command)
     _register_command(bot, "setup", setup_command)
     _register_command(bot, "member", member_command)
+    _register_command(bot, "avatar", avatar_command)
+    _register_command(bot, "banner", banner_command)
 
     @bot.event
     async def on_ready() -> None:

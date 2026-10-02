@@ -26,12 +26,72 @@ def test_help_lists_every_command_with_usage_and_shortcut():
 def test_help_details_accept_command_shortcuts_and_compatibility_aliases():
     assert bot._help_pages("!", "m") == [
         "**member** — Add a member and proxy tag.\n"
-        "Usage: `!member NAME PREFIX [SUFFIX] [DESCRIPTION]`\nAliases: `!m`"
+        "Usage: `!member NAME PREFIX [SUFFIX] [--avatar URL|--a URL] [DESCRIPTION]`\nAliases: `!m`"
     ]
     assert bot._help_pages("p;", "view")[0].startswith("**viewinfo**")
     assert bot._help_pages("p;", "missing") == [
         "Unknown command `missing`. Use `p;help` to list every command."
     ]
+
+
+@pytest.mark.parametrize(
+    ("suffix", "description", "expected"),
+    [
+        ("--avatar", "https://example.test/alex.png About Alex",
+         ("", "About Alex", "https://example.test/alex.png")),
+        ("--a", "https://example.test/alex.png", ("", "", "https://example.test/alex.png")),
+        (":a", "--avatar https://example.test/alex.png About Alex",
+         (":a", "About Alex", "https://example.test/alex.png")),
+        ("", "About Alex", ("", "About Alex", None)),
+    ],
+)
+def test_member_creation_avatar_options(suffix, description, expected):
+    assert bot._member_creation_options(suffix, description) == expected
+
+
+@pytest.mark.parametrize("value", ["--avatar", "--a relative/image.png"])
+def test_member_creation_avatar_option_requires_complete_url(value):
+    suffix, _, description = value.partition(" ")
+    with pytest.raises(ValueError, match="avatar"):
+        bot._member_creation_options(suffix, description)
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected"),
+    [
+        ("--member abc12 https://example.test/member.png",
+         ("member", "abc12", "https://example.test/member.png")),
+        ("-f 'Happy form' https://example.test/form.png",
+         ("form", "Happy form", "https://example.test/form.png")),
+        ("--s https://example.test/system.png",
+         ("system", None, "https://example.test/system.png")),
+    ],
+)
+def test_profile_image_options_accept_long_and_short_targets(arguments, expected):
+    assert bot._profile_image_options(arguments) == expected
+
+
+@pytest.mark.parametrize(
+    "arguments", ["", "--member abc12", "--system abc12 extra", "--group x https://example.test/x.png"]
+)
+def test_profile_image_options_require_exactly_one_complete_target(arguments):
+    with pytest.raises(ValueError):
+        bot._profile_image_options(arguments)
+
+
+def test_profile_images_update_members_forms_and_system(tmp_path):
+    store = Store(tmp_path / "images.sqlite3")
+    system_id = store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "A:")
+    form = store.create_form("owner", member.id, "Happy")
+
+    bot._update_profile_image(store, "owner", "avatar", f"-m {member.id} https://example.test/m.png")
+    bot._update_profile_image(store, "owner", "banner", f"--form {form.id} https://example.test/f.png")
+    bot._update_profile_image(store, "owner", "avatar", "--system https://example.test/s.png")
+
+    assert store.member_selected("owner", member.id).avatar == "https://example.test/m.png"
+    assert store.form_selected("owner", form.id)[0].banner == "https://example.test/f.png"
+    assert store.system_info(system_id).logo == "https://example.test/s.png"
 
 
 def test_bot_module_can_be_imported_without_stoat(monkeypatch):
