@@ -44,6 +44,57 @@ def test_store_creates_database_parent(tmp_path):
     assert database.is_file()
 
 
+def test_store_migrates_five_character_group_ids_without_losing_relationships(tmp_path):
+    database = tmp_path / "old-groups.sqlite3"
+    old_store = Store(database)
+    system_id = old_store.create_system("owner", "Crew")
+    member = old_store.add_member("owner", "Alex", "A:")
+    old_group_id = "abc12"
+
+    with old_store.connect() as db:
+        db.execute("DROP TABLE groups")
+        db.execute("""CREATE TABLE groups (
+            id TEXT PRIMARY KEY CHECK(length(id)=5),
+            system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+            name TEXT NOT NULL COLLATE NOCASE, alias TEXT NOT NULL COLLATE NOCASE,
+            avatar TEXT, UNIQUE(system_id,name), UNIQUE(system_id,alias)
+        )""")
+        db.execute(
+            "INSERT INTO groups(id,system_id,name,alias,avatar) VALUES (?,?,?,?,?)",
+            (old_group_id, system_id, "Friends", "friends", "https://example.test/group.png"),
+        )
+        db.execute("INSERT INTO group_members(group_id,member_id) VALUES (?,?)",
+                   (old_group_id, member.id))
+        db.execute("INSERT INTO active_groups(system_id,group_id) VALUES (?,?)",
+                   (system_id, old_group_id))
+
+    migrated_store = Store(database)
+    with migrated_store.connect() as db:
+        row = db.execute("SELECT * FROM groups WHERE name='Friends'").fetchone()
+        assert row is not None
+        migrated_group_id = row["id"]
+        assert len(migrated_group_id) == 8
+        assert (row["system_id"], row["name"], row["alias"], row["avatar"]) == (
+            system_id, "Friends", "friends", "https://example.test/group.png"
+        )
+        assert db.execute(
+            "SELECT 1 FROM group_members WHERE group_id=? AND member_id=?",
+            (migrated_group_id, member.id),
+        ).fetchone()
+        assert db.execute(
+            "SELECT group_id FROM active_groups WHERE system_id=?", (system_id,)
+        ).fetchone()[0] == migrated_group_id
+        assert db.execute("SELECT 1 FROM groups WHERE id=?", (old_group_id,)).fetchone() is None
+        assert db.execute("PRAGMA foreign_key_check").fetchall() == []
+
+    active = migrated_store.active_group("owner")
+    assert active is not None
+    assert active.id == migrated_group_id
+
+    reopened_store = Store(database)
+    assert reopened_store.active_group("owner").id == migrated_group_id
+
+
 def test_invalid_persistent_directory_fails_without_fallback(tmp_path):
     invalid = tmp_path / "not-a-directory"
     invalid.write_text("occupied", encoding="utf-8")

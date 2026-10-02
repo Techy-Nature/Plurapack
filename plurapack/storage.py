@@ -21,6 +21,24 @@ def short_hash(length: int) -> str:
     return hashlib.sha256(secrets.token_bytes(32)).hexdigest()[:length]
 
 
+def new_profile_id(db: sqlite3.Connection) -> str:
+    """Return an unused ID from the namespace shared by members and forms."""
+    while True:
+        value = short_hash(5)
+        member = db.execute("SELECT 1 FROM members WHERE id=?", (value,)).fetchone()
+        form = db.execute("SELECT 1 FROM forms WHERE id=?", (value,)).fetchone()
+        if member is None and form is None:
+            return value
+
+
+def new_group_id(db: sqlite3.Connection) -> str:
+    """Return an unused eight-character group code."""
+    while True:
+        value = short_hash(8)
+        if db.execute("SELECT 1 FROM groups WHERE id=?", (value,)).fetchone() is None:
+            return value
+
+
 @dataclass(frozen=True)
 class Member:
     id: str
@@ -207,7 +225,7 @@ class Store:
                     UNIQUE(system_id, prefix, suffix)
                 );
                 CREATE TABLE IF NOT EXISTS groups (
-                    id TEXT PRIMARY KEY CHECK(length(id)=5),
+                    id TEXT PRIMARY KEY CHECK(length(id)=8),
                     system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
                     name TEXT NOT NULL COLLATE NOCASE, alias TEXT NOT NULL COLLATE NOCASE,
                     avatar TEXT, UNIQUE(system_id,name), UNIQUE(system_id,alias)
@@ -259,6 +277,38 @@ class Store:
                 db.execute("ALTER TABLE systems ADD COLUMN show_system_tag INTEGER NOT NULL DEFAULT 1")
             if "banner" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN banner TEXT")
+            groups_sql = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='groups'"
+            ).fetchone()[0]
+            if "length(id)=5" in groups_sql.replace(" ", ""):
+                groups = db.execute("SELECT * FROM groups").fetchall()
+                memberships = db.execute("SELECT * FROM group_members").fetchall()
+                active = db.execute("SELECT * FROM active_groups").fetchall()
+                replacements: dict[str, str] = {}
+                for row in groups:
+                    replacement = short_hash(8)
+                    while replacement in replacements.values():
+                        replacement = short_hash(8)
+                    replacements[row["id"]] = replacement
+                db.execute("DELETE FROM active_groups")
+                db.execute("DELETE FROM group_members")
+                db.execute("DROP TABLE groups")
+                db.execute("""CREATE TABLE groups (
+                    id TEXT PRIMARY KEY CHECK(length(id)=8),
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL COLLATE NOCASE, alias TEXT NOT NULL COLLATE NOCASE,
+                    avatar TEXT, UNIQUE(system_id,name), UNIQUE(system_id,alias)
+                )""")
+                db.executemany("INSERT INTO groups VALUES (?,?,?,?,?)", (
+                    (replacements[row["id"]], row["system_id"], row["name"], row["alias"], row["avatar"])
+                    for row in groups
+                ))
+                db.executemany("INSERT INTO group_members VALUES (?,?)", (
+                    (replacements[row["group_id"]], row["member_id"]) for row in memberships
+                ))
+                db.executemany("INSERT INTO active_groups VALUES (?,?)", (
+                    (row["system_id"], replacements[row["group_id"]]) for row in active
+                ))
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
             # Seed the normalized table when opening an older database. The
             # legacy columns remain as the primary tag for API compatibility.
@@ -378,6 +428,20 @@ class Store:
             raise ValueError("More than one system has that name; use the system ID instead.")
         return System(**dict(rows[0]))
 
+    def system_by_id(self, system_id: str) -> System | None:
+        """Resolve a public system using only its globally stable ID."""
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM systems WHERE id=?", (system_id.strip(),)).fetchone()
+        return System(**dict(row)) if row else None
+
+    def system_named_for(self, account_id: str, display_name: str) -> System | None:
+        """Resolve an exact display name only within the caller's linked system."""
+        with self.connect() as db:
+            row = db.execute("""SELECT s.* FROM systems s JOIN owners o ON o.system_id=s.id
+                WHERE o.account_id=? AND s.display_name=?""",
+                (account_id, display_name.strip())).fetchone()
+        return System(**dict(row)) if row else None
+
     def configure_system_tag(self, account_id: str, tag: str | None) -> System:
         """Set the tag owned by a system's stable ID, or clear it."""
         system_id = self.system_for(account_id)
@@ -467,6 +531,12 @@ class Store:
             raise ValueError("More than one member has that name; use the member ID instead.")
         return Member(**dict(rows[0]))
 
+    def public_member_by_id(self, member_id: str) -> Member | None:
+        """Resolve a public member using only its globally stable ID."""
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM members WHERE id=?", (member_id.strip(),)).fetchone()
+        return Member(**dict(row)) if row else None
+
     def forms_for_member(self, member_id: str) -> list[Form]:
         with self.connect() as db:
             rows = db.execute("SELECT * FROM forms WHERE member_id=? ORDER BY display_name", (member_id,)).fetchall()
@@ -514,7 +584,7 @@ class Store:
             raise ValueError("Member description must be no more than 1000 characters.")
         with self.connect() as db:
             while True:
-                member_id = short_hash(5)
+                member_id = new_profile_id(db)
                 try:
                     db.execute(
                         """INSERT INTO members
@@ -541,7 +611,7 @@ class Store:
             for member in values:
                 while True:
                     try:
-                        member_id = short_hash(5)
+                        member_id = new_profile_id(db)
                         db.execute("""INSERT INTO members
                             (id,system_id,name,prefix,suffix,avatar,color,pronouns) VALUES (?,?,?,?,?,?,?,?)""",
                             (member_id, system_id, member.name, member.prefix, member.suffix,
@@ -606,6 +676,52 @@ class Store:
         values.pop("member_id")
         return form, Member(**values)
 
+    def public_form_by_id(self, form_id: str) -> tuple[Form, Member] | None:
+        """Resolve a public form using only its globally stable ID."""
+        selector = form_id.strip()
+        with self.connect() as db:
+            row = db.execute("""SELECT f.id form_id, f.member_id, f.display_name,
+                f.avatar form_avatar, f.soma, f.pronouns form_pronouns,
+                f.prefix form_prefix, f.suffix form_suffix, f.banner form_banner, m.*
+                FROM forms f JOIN members m ON m.id=f.member_id WHERE f.id=?""",
+                (selector,)).fetchone()
+        if row is None:
+            return None
+        values = dict(row)
+        form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
+                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
+                    values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"))
+        values.pop("member_id")
+        return form, Member(**values)
+
+    def public_info_selected(
+        self, account_id: str, selector: str
+    ) -> System | Member | tuple[Form, Member] | None:
+        """Resolve stable IDs globally and human-readable selectors only locally."""
+        selector = selector.strip()
+
+        # An existing stable ID always wins, regardless of who owns its profile.
+        value = self.system_by_id(selector)
+        if value is not None:
+            return value
+        member = self.public_member_by_id(selector)
+        if member is not None:
+            return member
+        form = self.public_form_by_id(selector)
+        if form is not None:
+            return form
+
+        # Names and aliases are contextual to the caller's linked system.
+        value = self.system_named_for(account_id, selector)
+        if value is not None:
+            return value
+        member = self.member_selected(account_id, selector)
+        if member is not None and selector.casefold() in {
+            member.name.casefold(), (member.alias or "").casefold()
+        }:
+            return member
+        return self.form_selected(account_id, selector)
+
     def create_group(self, account_id: str, name: str, alias: str) -> Group:
         system_id = self.system_for(account_id)
         if system_id is None:
@@ -618,7 +734,7 @@ class Store:
         try:
             with self.connect() as db:
                 while True:
-                    group_id = short_hash(5)
+                    group_id = new_group_id(db)
                     try:
                         db.execute("INSERT INTO groups(id,system_id,name,alias) VALUES (?,?,?,?)",
                                    (group_id, system_id, name, alias))
@@ -718,9 +834,7 @@ class Store:
                     if collision or member_collision:
                         raise ValueError("That proxy prefix and suffix are already in use.")
                 while True:
-                    form_id = short_hash(5)
-                    if db.execute("SELECT 1 FROM members WHERE id=?", (form_id,)).fetchone():
-                        continue
+                    form_id = new_profile_id(db)
                     try:
                         db.execute("""INSERT INTO forms
                             (id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner)

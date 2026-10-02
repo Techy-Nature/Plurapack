@@ -622,11 +622,7 @@ def create_bot(prefix: str, database: str) -> Any:
     async def info(ctx: commands.Context, *, selector: str) -> None:
         """Show a system, member, or form selected by nickname, alias, or ID."""
         try:
-            value = store.system_info(selector)
-            if value is None:
-                value = store.public_member_selected(selector)
-            if value is None:
-                value = store.public_form_selected(selector)
+            value = store.public_info_selected(str(ctx.author.id), selector)
         except ValueError as error:
             await ctx.send(str(error))
             return

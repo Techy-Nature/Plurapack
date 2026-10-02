@@ -1,6 +1,8 @@
+from types import SimpleNamespace
+
 import pytest
 
-from plurapack.bot import _member_embed, _system_embed
+from plurapack.bot import _member_embed, _system_embed, create_bot
 from plurapack.storage import Store
 
 
@@ -67,6 +69,116 @@ def test_public_info_resolves_ids_and_rejects_ambiguous_names(tmp_path):
         store.system_info("Crew")
     with pytest.raises(ValueError, match="member ID"):
         store.public_member_selected("Alex")
+
+
+def test_info_resolution_keeps_ids_global_and_names_local(tmp_path):
+    store = Store(tmp_path / "local-info.sqlite3")
+    first = store.create_system("one", "Nest")
+    second = store.create_system("two", "Nest")
+    first_member = store.add_member("one", "Alex", "A:", alias="alexander")
+    second_member = store.add_member("two", "Alex", "B:", alias="lex")
+    first_form = store.create_form("one", first_member.id, "Happy")
+    second_form = store.create_form("two", second_member.id, "Happy")
+
+    assert store.public_info_selected("one", "  Alex  ").id == first_member.id
+    assert store.public_info_selected("one", "alexander").id == first_member.id
+    assert store.public_info_selected("one", "Happy")[0].id == first_form.id
+    assert store.public_info_selected("one", "Nest").id == first
+
+    assert store.public_info_selected("one", second_member.id).id == second_member.id
+    assert store.public_info_selected("one", second_form.id)[0].id == second_form.id
+    assert store.public_info_selected("one", second).id == second
+
+
+def test_info_resolution_does_not_fall_back_to_other_system_names(tmp_path):
+    store = Store(tmp_path / "no-global-names.sqlite3")
+    store.create_system("one", "First")
+    store.create_system("two", "Second")
+    member = store.add_member("two", "Alex", "B:", alias="alexander")
+    store.create_form("two", member.id, "Happy")
+
+    assert store.public_info_selected("one", "Alex") is None
+    assert store.public_info_selected("one", "alexander") is None
+    assert store.public_info_selected("one", "Happy") is None
+    assert store.public_info_selected("one", "Second") is None
+
+
+def test_info_exact_id_takes_precedence_over_local_human_readable_selector(tmp_path):
+    store = Store(tmp_path / "id-precedence.sqlite3")
+    store.create_system("one", "First")
+    store.create_system("two", "Second")
+    local = store.add_member("one", "Local", "A:")
+    remote = store.add_member("two", "Remote", "B:")
+    store.configure_alias("one", local.id, remote.id)
+
+    assert store.public_info_selected("one", remote.id).id == remote.id
+
+
+async def test_info_reports_ambiguous_local_form_names(tmp_path):
+    database = tmp_path / "ambiguous-info.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    alex = store.add_member("owner", "Alex", "A:")
+    sam = store.add_member("owner", "Sam", "S:")
+    store.create_form("owner", alex.id, "Happy")
+    store.create_form("owner", sam.id, "Happy")
+
+    with pytest.raises(ValueError, match="More than one form has that name"):
+        store.public_info_selected("owner", "Happy")
+
+    replies = []
+
+    async def send(message):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    await bot.get_command("info").callback(ctx, selector="Happy")
+
+    assert replies == ["More than one form has that name; use the form ID instead."]
+
+
+def test_member_id_generation_retries_ids_already_used_by_forms(tmp_path, monkeypatch):
+    store = Store(tmp_path / "member-id-collision.sqlite3")
+    system_id = store.create_system("owner", "Crew")
+    existing = store.add_member("owner", "Existing", "E:")
+    with store.connect() as db:
+        db.execute(
+            "INSERT INTO forms(id,member_id,display_name) VALUES (?,?,?)",
+            ("abc12", existing.id, "Existing form"),
+        )
+    generated = iter(("abc12", "def34"))
+    monkeypatch.setattr("plurapack.storage.short_hash", lambda length: next(generated))
+
+    member = store.add_member("owner", "New", "N:")
+
+    assert member.id == "def34"
+    assert member.system_id == system_id
+
+
+def test_form_id_generation_retries_ids_already_used_by_members(tmp_path, monkeypatch):
+    store = Store(tmp_path / "form-id-collision.sqlite3")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "A:")
+    generated = iter((member.id, "def34"))
+    monkeypatch.setattr("plurapack.storage.short_hash", lambda length: next(generated))
+
+    form = store.create_form("owner", member.id, "Happy")
+
+    assert form.id == "def34"
+
+
+def test_group_ids_use_their_own_eight_character_namespace(tmp_path, monkeypatch):
+    store = Store(tmp_path / "group-ids.sqlite3")
+    store.create_system("owner", "Crew")
+    generated = iter(("12345678", "12345678", "abcdef01"))
+    monkeypatch.setattr("plurapack.storage.short_hash", lambda length: next(generated))
+
+    first = store.create_group("owner", "First", "first")
+    second = store.create_group("owner", "Second", "second")
+
+    assert first.id == "12345678"
+    assert second.id == "abcdef01"
 
 
 def test_info_embeds_include_profiles_default_form_and_preview(tmp_path):
