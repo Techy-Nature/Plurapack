@@ -91,6 +91,14 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         int(os.getenv("PLURAPACK_LOGIN_START_LIMIT", "10"))
     )
 
+    @app.middleware("http")
+    async def prevent_api_caching(request: Request, call_next: Callable[..., Any]) -> Response:
+        """Never let a browser or hosting proxy reuse account-specific API state."""
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store, private"
+        return response
+
     @app.exception_handler(HTTPException)
     async def api_http_error(request: Request, exc: HTTPException) -> Response:
         if request.url.path.startswith("/api/"):
