@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import sqlite3
@@ -14,7 +15,7 @@ import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import http_exception_handler
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
 from .storage import Form, Front, Group, Member, ProxyTag, Store, System
@@ -29,6 +30,24 @@ from .config import resolve_database_path
 from .transfer import MAX_FILE_SIZE, TransferError, export_system, import_system
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def asset_version(path: Path) -> str:
+    """Return a short, stable version identifier derived from an asset's contents."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()[:12]
+
+
+def render_dashboard_index(static_root: Path) -> str:
+    """Render the dashboard page with deployment-specific content hashes."""
+    versions = {
+        "{{STYLES_VERSION}}": asset_version(static_root / "styles.css"),
+        "{{HELPERS_VERSION}}": asset_version(static_root / "dashboard_helpers.js"),
+        "{{APP_VERSION}}": asset_version(static_root / "app.js"),
+    }
+    page = (static_root / "index.html").read_text(encoding="utf-8")
+    for placeholder, version in versions.items():
+        page = page.replace(placeholder, version)
+    return page
 
 
 class LoginCompletion(BaseModel):
@@ -545,14 +564,15 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
 
     if static_root:
         dashboard_headers = {"Cache-Control": "no-store"}
+        dashboard_index = render_dashboard_index(static_root)
 
         @app.get("/login", include_in_schema=False)
         async def login_page() -> FileResponse:
             return FileResponse(static_root / "login.html", headers=dashboard_headers)
 
         @app.get("/", include_in_schema=False)
-        async def index() -> FileResponse:
-            return FileResponse(static_root / "index.html", headers=dashboard_headers)
+        async def index() -> HTMLResponse:
+            return HTMLResponse(dashboard_index, headers=dashboard_headers)
 
         @app.get("/app.js", include_in_schema=False)
         async def javascript() -> FileResponse:
