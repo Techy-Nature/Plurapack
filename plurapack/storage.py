@@ -21,6 +21,24 @@ def short_hash(length: int) -> str:
     return hashlib.sha256(secrets.token_bytes(32)).hexdigest()[:length]
 
 
+def new_profile_id(db: sqlite3.Connection) -> str:
+    """Return an unused ID from the namespace shared by members and forms."""
+    while True:
+        value = short_hash(5)
+        member = db.execute("SELECT 1 FROM members WHERE id=?", (value,)).fetchone()
+        form = db.execute("SELECT 1 FROM forms WHERE id=?", (value,)).fetchone()
+        if member is None and form is None:
+            return value
+
+
+def new_group_id(db: sqlite3.Connection) -> str:
+    """Return an unused eight-character group code."""
+    while True:
+        value = short_hash(8)
+        if db.execute("SELECT 1 FROM groups WHERE id=?", (value,)).fetchone() is None:
+            return value
+
+
 @dataclass(frozen=True)
 class Member:
     id: str
@@ -207,7 +225,7 @@ class Store:
                     UNIQUE(system_id, prefix, suffix)
                 );
                 CREATE TABLE IF NOT EXISTS groups (
-                    id TEXT PRIMARY KEY CHECK(length(id)=5),
+                    id TEXT PRIMARY KEY CHECK(length(id)=8),
                     system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
                     name TEXT NOT NULL COLLATE NOCASE, alias TEXT NOT NULL COLLATE NOCASE,
                     avatar TEXT, UNIQUE(system_id,name), UNIQUE(system_id,alias)
@@ -259,6 +277,38 @@ class Store:
                 db.execute("ALTER TABLE systems ADD COLUMN show_system_tag INTEGER NOT NULL DEFAULT 1")
             if "banner" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN banner TEXT")
+            groups_sql = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='groups'"
+            ).fetchone()[0]
+            if "length(id)=5" in groups_sql.replace(" ", ""):
+                groups = db.execute("SELECT * FROM groups").fetchall()
+                memberships = db.execute("SELECT * FROM group_members").fetchall()
+                active = db.execute("SELECT * FROM active_groups").fetchall()
+                replacements: dict[str, str] = {}
+                for row in groups:
+                    replacement = short_hash(8)
+                    while replacement in replacements.values():
+                        replacement = short_hash(8)
+                    replacements[row["id"]] = replacement
+                db.execute("DELETE FROM active_groups")
+                db.execute("DELETE FROM group_members")
+                db.execute("DROP TABLE groups")
+                db.execute("""CREATE TABLE groups (
+                    id TEXT PRIMARY KEY CHECK(length(id)=8),
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL COLLATE NOCASE, alias TEXT NOT NULL COLLATE NOCASE,
+                    avatar TEXT, UNIQUE(system_id,name), UNIQUE(system_id,alias)
+                )""")
+                db.executemany("INSERT INTO groups VALUES (?,?,?,?,?)", (
+                    (replacements[row["id"]], row["system_id"], row["name"], row["alias"], row["avatar"])
+                    for row in groups
+                ))
+                db.executemany("INSERT INTO group_members VALUES (?,?)", (
+                    (replacements[row["group_id"]], row["member_id"]) for row in memberships
+                ))
+                db.executemany("INSERT INTO active_groups VALUES (?,?)", (
+                    (row["system_id"], replacements[row["group_id"]]) for row in active
+                ))
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
             # Seed the normalized table when opening an older database. The
             # legacy columns remain as the primary tag for API compatibility.
@@ -534,7 +584,7 @@ class Store:
             raise ValueError("Member description must be no more than 1000 characters.")
         with self.connect() as db:
             while True:
-                member_id = short_hash(5)
+                member_id = new_profile_id(db)
                 try:
                     db.execute(
                         """INSERT INTO members
@@ -561,7 +611,7 @@ class Store:
             for member in values:
                 while True:
                     try:
-                        member_id = short_hash(5)
+                        member_id = new_profile_id(db)
                         db.execute("""INSERT INTO members
                             (id,system_id,name,prefix,suffix,avatar,color,pronouns) VALUES (?,?,?,?,?,?,?,?)""",
                             (member_id, system_id, member.name, member.prefix, member.suffix,
@@ -684,7 +734,7 @@ class Store:
         try:
             with self.connect() as db:
                 while True:
-                    group_id = short_hash(5)
+                    group_id = new_group_id(db)
                     try:
                         db.execute("INSERT INTO groups(id,system_id,name,alias) VALUES (?,?,?,?)",
                                    (group_id, system_id, name, alias))
@@ -784,9 +834,7 @@ class Store:
                     if collision or member_collision:
                         raise ValueError("That proxy prefix and suffix are already in use.")
                 while True:
-                    form_id = short_hash(5)
-                    if db.execute("SELECT 1 FROM members WHERE id=?", (form_id,)).fetchone():
-                        continue
+                    form_id = new_profile_id(db)
                     try:
                         db.execute("""INSERT INTO forms
                             (id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner)

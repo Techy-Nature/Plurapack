@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
-from .storage import Member, Store, short_hash
+from .storage import Member, Store, new_group_id, new_profile_id, short_hash
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
 MAX_MEMBERS, MAX_GROUPS = 2000, 500
@@ -363,7 +363,7 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
                 elif strategy == "merge" and not row["avatar"] and g.avatar:
                     db.execute("UPDATE groups SET avatar=? WHERE id=?", (g.avatar, row["id"]))
             else:
-                gid=short_hash(5); alias=g.alias or f"group{i+1}"; db.execute("INSERT INTO groups(id,system_id,name,alias,avatar) VALUES (?,?,?,?,?)",(gid,sid,g.name,alias,g.avatar)); group_map[g.export_id]=gid; groups_count+=1
+                gid=new_group_id(db); alias=g.alias or f"group{i+1}"; db.execute("INSERT INTO groups(id,system_id,name,alias,avatar) VALUES (?,?,?,?,?)",(gid,sid,g.name,alias,g.avatar)); group_map[g.export_id]=gid; groups_count+=1
         member_map={}
         actions={}
         for m in data.members:
@@ -393,7 +393,7 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
                 db.execute("UPDATE members SET name=?,prefix=?,suffix=?,alias=?,description=?,pronouns=?,color=?,avatar=?,banner=?,speech_formatting=?,strikethrough_speech=?,default_form_id=NULL WHERE id=?",(m.name,m.prefix,m.suffix,m.alias,m.description,m.pronouns,m.color,m.avatar,m.banner,int(m.speech_formatting),m.strikethrough_speech,mid))
                 db.execute("DELETE FROM proxy_tags WHERE member_id=?",(mid,))
             else:
-                mid=short_hash(5); db.execute("INSERT INTO members(id,system_id,name,prefix,suffix,avatar,color,alias,description,pronouns,banner,speech_formatting,strikethrough_speech) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",(mid,sid,m.name,m.prefix,m.suffix,m.avatar,m.color,m.alias,m.description,m.pronouns,m.banner,int(m.speech_formatting),m.strikethrough_speech)); imported+=1
+                mid=new_profile_id(db); db.execute("INSERT INTO members(id,system_id,name,prefix,suffix,avatar,color,alias,description,pronouns,banner,speech_formatting,strikethrough_speech) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",(mid,sid,m.name,m.prefix,m.suffix,m.avatar,m.color,m.alias,m.description,m.pronouns,m.banner,int(m.speech_formatting),m.strikethrough_speech)); imported+=1
             member_map[m.export_id]=mid
             actions[m.export_id]="overwrite" if row else "create"
             for t in m.proxy_tags: db.execute("INSERT INTO proxy_tags(system_id,member_id,prefix,suffix) VALUES (?,?,?,?)",(sid,mid,t["prefix"],t["suffix"])); tags_count+=1
@@ -410,7 +410,7 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
                 db.execute("DELETE FROM forms WHERE member_id=?",(mid,))
             if action in {"create", "overwrite"}:
                 for f in m.forms:
-                    fid=short_hash(5); db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner) VALUES (?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner)); form_map[f.export_id]=fid
+                    fid=new_profile_id(db); db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner) VALUES (?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner)); form_map[f.export_id]=fid
                     for t in f.proxy_tags: db.execute("INSERT INTO proxy_tags(system_id,form_id,prefix,suffix) VALUES (?,?,?,?)",(sid,fid,t["prefix"],t["suffix"])); tags_count+=1
             elif action == "merge":
                 existing_forms={r["display_name"].casefold():r for r in db.execute(
@@ -431,7 +431,7 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
                                 db.execute("INSERT INTO proxy_tags(system_id,form_id,prefix,suffix) VALUES (?,?,?,?)",
                                            (sid,fid,*pair)); current_tags.add(pair); tags_count+=1
                     else:
-                        fid=short_hash(5)
+                        fid=new_profile_id(db)
                         db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner) VALUES (?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner))
                         for t in f.proxy_tags:
                             db.execute("INSERT INTO proxy_tags(system_id,form_id,prefix,suffix) VALUES (?,?,?,?)",
