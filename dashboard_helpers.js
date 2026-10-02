@@ -64,7 +64,34 @@
     return { ...state, editing: true, error, draft: state.draft };
   }
 
+  function imageUrlError(value) {
+    if (!value) return null;
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      return "Enter a complete image URL.";
+    }
+    if (!["http:", "https:"].includes(url.protocol)) return "Image URLs must use http or https.";
+    return null;
+  }
+
+  function apiErrorMessage(payload, fallback = "Something went wrong.") {
+    const detail = payload?.detail ?? payload?.message;
+    if (typeof detail === "string" && detail) return detail;
+    if (Array.isArray(detail)) {
+      const messages = detail.map((item) => {
+        if (typeof item === "string") return item;
+        const location = Array.isArray(item?.loc) ? item.loc.filter((part) => part !== "body").join(".") : "";
+        return `${location ? `${location}: ` : ""}${item?.msg || JSON.stringify(item)}`;
+      });
+      if (messages.length) return messages.join("; ");
+    }
+    if (detail && typeof detail === "object") return JSON.stringify(detail);
+    return fallback;
+  }
+
   return { PROFILE_FIELDS, VOICE_MODES, nextFormName, nextMemberName, initialView, selectSystem,
     selectMember, selectForm, memberEndpoint, formEndpoint, deletionRequest,
-    enterEdit, consolidatedPatch, failedSave };
+    enterEdit, consolidatedPatch, failedSave, imageUrlError, apiErrorMessage };
 });
