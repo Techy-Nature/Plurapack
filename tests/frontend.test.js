@@ -52,6 +52,24 @@ test("failed saves preserve the draft and editing state", () => {
   assert.strictEqual(failed.draft, draft);
 });
 
+test("image URL validation accepts hosted images and removal", () => {
+  assert.equal(h.imageUrlError(""), null);
+  assert.equal(h.imageUrlError("https://example.com/avatar.png"), null);
+  assert.equal(h.imageUrlError("http://example.com/banner.jpg"), null);
+});
+
+test("image URL validation rejects incomplete and unsafe URLs", () => {
+  assert.equal(h.imageUrlError("example.com/avatar.png"), "Enter a complete image URL.");
+  assert.equal(h.imageUrlError("data:image/png;base64,abc"), "Image URLs must use http or https.");
+});
+
+test("API error details are converted to readable messages", () => {
+  assert.equal(h.apiErrorMessage({ detail: "Proxy is already used" }), "Proxy is already used");
+  assert.equal(h.apiErrorMessage({ detail: [{ loc: ["body", "avatar"], msg: "Input should be a valid URL" }] }),
+    "avatar: Input should be a valid URL");
+  assert.equal(h.apiErrorMessage({ detail: { reason: "bad image" } }), '{"reason":"bad image"}');
+});
+
 test("all voice playback modes are enabled", () => {
   assert.deepEqual(h.VOICE_MODES.filter((mode) => mode.enabled).map((mode) => mode.id), ["off", "send", "local", "both"]);
   assert.deepEqual(h.VOICE_MODES.filter((mode) => !mode.enabled), []);
