@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from fastapi import HTTPException, Request, status
 
 COOKIE_NAME = "plurapack_session"
-SESSION_LIFETIME = 86400
+SESSION_LIFETIME = 7 * 24 * 60 * 60
 
 
 @dataclass(frozen=True)

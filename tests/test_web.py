@@ -4,7 +4,7 @@ import pytest
 import plurapack.web as web
 from plurapack.storage import Store
 from plurapack.web import create_app
-from plurapack.web_auth import COOKIE_NAME, WebUser, create_session_cookie
+from plurapack.web_auth import COOKIE_NAME, SESSION_LIFETIME, WebUser, create_session_cookie
 
 
 @pytest.fixture
@@ -77,11 +77,23 @@ async def test_bot_verified_login_session_and_logout(api):
         cookie_header = completed.headers["set-cookie"]
         assert "plurapack_session=" in cookie_header
         assert "HttpOnly" in cookie_header and "SameSite=lax" in cookie_header and "Path=/" in cookie_header
+        assert f"Max-Age={SESSION_LIFETIME}" in cookie_header
         account = await client.get("/api/account")
         assert account.status_code == 200
         assert account.json()["id"] == "owner"
         assert account.json()["systemId"] == system_id
         assert other_id not in [item["id"] for item in account.json()["systems"]]
+
+        # Signed sessions are independent of process memory and remain valid
+        # when the web application is restarted with the same secret.
+        restarted = httpx.ASGITransport(app=create_app(store, static_root=None))
+        async with httpx.AsyncClient(transport=restarted, base_url="http://test", cookies={
+            COOKIE_NAME: completed.cookies[COOKIE_NAME],
+        }) as restarted_client:
+            restarted_account = await restarted_client.get("/api/account")
+            assert restarted_account.status_code == 200
+            assert restarted_account.json()["id"] == "owner"
+
         assert (await client.post(path + "/complete", json={
             "browser_secret": login["browserSecret"]
         })).status_code == 400

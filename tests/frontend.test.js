@@ -8,6 +8,15 @@ test("automatic form names fill the first collision-free number", () => {
   assert.equal(h.nextFormName([{ displayName: "Custom form 0" }, { displayName: "Custom form 2" }]), "Custom form 1");
 });
 
+test("new members receive a collision-free placeholder name", () => {
+  assert.equal(h.nextMemberName([]), "New member");
+  assert.equal(h.nextMemberName([{ name: "Alex" }]), "New member");
+  assert.equal(h.nextMemberName([{ name: "New member" }]), "New member 2");
+  assert.equal(h.nextMemberName([
+    { name: "New member" }, { name: "New member 2" }, { name: "New member 4" },
+  ]), "New member 3");
+});
+
 test("form selection preserves the selected member", () => {
   const selected = h.selectForm(h.selectMember("mem01"), "form2");
   assert.deepEqual(selected, { kind: "member", memberId: "mem01", formId: "form2" });

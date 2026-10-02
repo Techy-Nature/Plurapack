@@ -24,6 +24,14 @@
     return `Custom form ${number}`;
   }
 
+  function nextMemberName(members) {
+    const names = new Set(members.map((member) => member.name));
+    if (!names.has("New member")) return "New member";
+    let number = 2;
+    while (names.has(`New member ${number}`)) number += 1;
+    return `New member ${number}`;
+  }
+
   function initialView() { return { kind: "system" }; }
   function selectSystem() { return initialView(); }
   function selectMember(memberId) { return { kind: "member", memberId }; }
@@ -56,7 +64,7 @@
     return { ...state, editing: true, error, draft: state.draft };
   }
 
-  return { PROFILE_FIELDS, VOICE_MODES, nextFormName, initialView, selectSystem,
+  return { PROFILE_FIELDS, VOICE_MODES, nextFormName, nextMemberName, initialView, selectSystem,
     selectMember, selectForm, memberEndpoint, formEndpoint, deletionRequest,
     enterEdit, consolidatedPatch, failedSave };
 });

@@ -86,8 +86,10 @@ removed when another login begins. `POST /api/auth/logout` removes the local
 session; it does not alter the user's Stoat account.
 
 The session secret must be at least 32 random, private characters and must remain
-stable across the bot-verified login. Session cookies are `HttpOnly`,
-`SameSite=Lax`, scoped to `/`, and last 24 hours. `PLURAPACK_COOKIE_SECURE`
+stable across host-process restarts; changing it immediately invalidates every
+existing login. Session cookies are `HttpOnly`, `SameSite=Lax`, scoped to `/`,
+and last seven days, including across browser and host-process restarts when the
+same secret is retained. `PLURAPACK_COOKIE_SECURE`
 defaults to `true`, as required for production HTTPS. For local HTTP development
 only, explicitly set `PLURAPACK_COOKIE_SECURE=false`; never use that setting on a
 public deployment. No Stoat token, password, account ID, login code, browser
