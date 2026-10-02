@@ -148,3 +148,15 @@ test("membership updates are independent from unsaved profile edits", () => {
   assert.equal(profileDraft.name, "Unsaved name");
   assert.equal(profileDraft.alias, "unsaved");
 });
+
+test("active-group refresh preserves profile and membership drafts", () => {
+  const refreshedSystem = { id: "system", activeGroupId: "abcd1234" };
+  const profileDraft = { name: "Unsaved name", alias: "unsaved" };
+  const memberDraft = h.membershipDraft(["abc12", "def34"]);
+  const state = h.preservedGroupRefresh(refreshedSystem, true, profileDraft, memberDraft);
+
+  assert.strictEqual(state.system, refreshedSystem);
+  assert.equal(state.editing, true);
+  assert.strictEqual(state.profileDraft, profileDraft);
+  assert.strictEqual(state.memberDraft, memberDraft);
+});

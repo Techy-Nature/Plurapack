@@ -90,6 +90,10 @@
     return { memberIds: [...current] };
   }
 
+  function preservedGroupRefresh(refreshedSystem, editing, profileDraft, memberDraft) {
+    return { system: refreshedSystem, editing, profileDraft, memberDraft };
+  }
+
   function imageUrlError(value) {
     if (!value) return null;
     let url;
@@ -121,5 +125,6 @@
     selectMember, selectGroup, selectForm, memberEndpoint, formEndpoint, groupEndpoint,
     deletionRequest, enterEdit, consolidatedPatch, failedSave, filterMembers,
     membershipDraft, updateMembership, membershipPayload,
+    preservedGroupRefresh,
     imageUrlError, apiErrorMessage };
 });
