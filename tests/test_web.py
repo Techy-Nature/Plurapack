@@ -319,6 +319,11 @@ async def test_forms_relationships_crud_and_front(api):
                                                 "picture": "https://example.com/form.png"})
         assert edited.json()["soma"] == "A form"
         assert edited.json()["picture"] == "https://example.com/form.png"
+        # Applying member changes can legitimately generate no form-profile
+        # fields for an already selected form. That PATCH is an idempotent no-op.
+        unchanged = await client.patch(path, json={})
+        assert unchanged.status_code == 200
+        assert unchanged.json() == edited.json()
         front_path = f"/api/systems/{system_id}/front"
         selected = await client.put(front_path, json={"memberId": first.id, "formId": form["id"]})
         assert selected.json() == {"memberId": first.id, "formId": form["id"]}

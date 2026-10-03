@@ -472,12 +472,14 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
     async def patch_form(system_id: str, member_id: str, form_id: str, body: FormPatch,
                          user: WebUser = Depends(require_authenticated_user),
                          store: Store = Depends(db)) -> dict[str, Any]:
-        await owned_form(system_id, member_id, form_id, user, store)
+        form = await owned_form(system_id, member_id, form_id, user, store)
         changes = body.model_dump(exclude_unset=True)
         if "picture" in changes:
             changes["avatar"] = str(changes.pop("picture")) if changes["picture"] else None
         if "banner" in changes and changes["banner"]:
             changes["banner"] = str(changes["banner"])
+        if not changes:
+            return form_json(form, store)
         return form_json(await run(store.update_form, user.id, form_id, **changes), store)
 
     @app.post("/api/systems/{system_id}/members/{member_id}/proxy-tags", status_code=201)

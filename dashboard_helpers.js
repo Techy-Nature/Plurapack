@@ -64,8 +64,10 @@
     return { editing: true, draft, editableFields: [...PROFILE_FIELDS[kind]] };
   }
   function consolidatedPatch(fields, allowedFields) {
+    if (!fields || typeof fields !== "object") return {};
     return Object.fromEntries(allowedFields.filter((key) => Object.hasOwn(fields, key)).map((key) => [key, fields[key]]));
   }
+  function hasPatchFields(patch) { return Object.keys(patch).length > 0; }
   function failedSave(state, error) {
     return { ...state, editing: true, error, draft: state.draft };
   }
@@ -127,7 +129,7 @@
 
   return { PROFILE_FIELDS, VOICE_MODES, nextFormName, nextMemberName, initialView, selectSystem,
     selectMember, selectGroup, selectForm, memberEndpoint, formEndpoint, groupEndpoint,
-    deletionRequest, enterEdit, consolidatedPatch, failedSave, filterMembers,
+    deletionRequest, enterEdit, consolidatedPatch, hasPatchFields, failedSave, filterMembers,
     membershipDraft, updateMembership, membershipPayload,
     preservedGroupRefresh,
     dialogOpenMode, imageUrlError, apiErrorMessage };
