@@ -312,11 +312,18 @@ class Store:
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
             # Seed the normalized table when opening an older database. The
             # legacy columns remain as the primary tag for API compatibility.
+            # Once an identity has normalized tags, those rows are authoritative;
+            # otherwise a stale legacy primary would be appended on every open.
             db.execute("""INSERT OR IGNORE INTO proxy_tags(system_id,member_id,prefix,suffix)
-                SELECT system_id,id,prefix,suffix FROM members WHERE prefix<>''""")
+                SELECT m.system_id,m.id,m.prefix,m.suffix FROM members m
+                WHERE m.prefix<>'' AND NOT EXISTS (
+                    SELECT 1 FROM proxy_tags t WHERE t.member_id=m.id
+                )""")
             db.execute("""INSERT OR IGNORE INTO proxy_tags(system_id,form_id,prefix,suffix)
                 SELECT m.system_id,f.id,f.prefix,f.suffix FROM forms f
-                JOIN members m ON m.id=f.member_id WHERE f.prefix<>''""")
+                JOIN members m ON m.id=f.member_id WHERE f.prefix<>'' AND NOT EXISTS (
+                    SELECT 1 FROM proxy_tags t WHERE t.form_id=f.id
+                )""")
 
     def systems_for_account(self, account_id: str) -> list[System]:
         """Return the account's linked system as a list (the schema permits at most one)."""
@@ -1291,11 +1298,24 @@ class Store:
             if values:
                 placeholders = ",".join("(?,?)" for _ in values)
                 parameters = [part for tag in values for part in (tag.prefix, tag.suffix)]
-                collision = db.execute(f"""SELECT 1 FROM proxy_tags
-                    WHERE system_id=? AND {column} IS NOT ? AND (prefix,suffix) IN ({placeholders})""",
+                # Exclude the complete ownership identity rather than relying on
+                # SQLite's null-safe ``IS NOT`` operator on one nullable column.
+                # Rows for every other member and form must remain candidates.
+                ownership = ("member_id=? AND form_id IS NULL" if not form else
+                             "form_id=? AND member_id IS NULL")
+                collision = db.execute(f"""SELECT prefix,suffix,member_id,form_id FROM proxy_tags
+                    WHERE system_id=? AND NOT ({ownership})
+                    AND (prefix,suffix) IN ({placeholders})
+                    ORDER BY id LIMIT 1""",
                     (member.system_id, target.id, *parameters)).fetchone()
                 if collision:
-                    raise ValueError("A proxy prefix and suffix are already in use.")
+                    owner_type = "form" if collision["form_id"] is not None else "member"
+                    owner_id = collision[f"{owner_type}_id"]
+                    rendered = f'{collision["prefix"]}{collision["suffix"]}'
+                    raise ValueError(
+                        f'Proxy tag "{rendered}" is already assigned to another '
+                        f'{owner_type} ({owner_id}).'
+                    )
             db.execute(f"DELETE FROM proxy_tags WHERE {column}=?", (target.id,))
             db.executemany(
                 f"INSERT INTO proxy_tags(system_id,{column},prefix,suffix) VALUES (?,?,?,?)",

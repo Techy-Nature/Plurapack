@@ -430,6 +430,51 @@ async def test_member_and_form_proxy_tags_can_be_replaced_up_to_limit(api):
 
 
 @pytest.mark.asyncio
+async def test_form_proxy_tag_replacement_ignores_only_the_edited_form(api):
+    store, system_id, _, transport = api
+    member = store.add_member("owner", "Proxy Owner", "member:")
+    form = store.create_form("owner", member.id, "Proxy Form", prefix="one:")
+    store.configure_form_proxy("owner", form.id, "two:", ":two")
+    other = store.add_member("owner", "Other Owner", "taken:")
+    other_form = store.create_form("owner", other.id, "Other Form", prefix="form-taken:")
+    path = f"/api/systems/{system_id}/members/{member.id}/forms/{form.id}/proxy-tags"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
+        original = {"proxyTags": [
+            {"prefix": "one:", "suffix": ""},
+            {"prefix": "two:", "suffix": ":two"},
+        ]}
+        response = await client.put(path, json=original)
+        assert response.status_code == 200
+        assert response.json()["proxyTags"] == original["proxyTags"]
+
+        reordered = {"proxyTags": list(reversed(original["proxyTags"]))}
+        response = await client.put(path, json=reordered)
+        assert response.status_code == 200
+        assert response.json()["proxyTags"] == reordered["proxyTags"]
+
+        partial_replacement = {"proxyTags": [
+            {"prefix": "two:", "suffix": ":two"},
+            {"prefix": "three:", "suffix": ""},
+        ]}
+        response = await client.put(path, json=partial_replacement)
+        assert response.status_code == 200
+        assert response.json()["proxyTags"] == partial_replacement["proxyTags"]
+
+        for prefix, owner_type, owner_id in (
+            ("taken:", "member", other.id),
+            ("form-taken:", "form", other_form.id),
+        ):
+            response = await client.put(path, json={"proxyTags": [{"prefix": prefix}]})
+            assert response.status_code == 422
+            assert response.json()["message"] == (
+                f'Proxy tag "{prefix}" is already assigned to another {owner_type} ({owner_id}).'
+            )
+
+        assert [tag.__dict__ for tag in store.proxy_tags(form_id=form.id)] == partial_replacement["proxyTags"]
+
+
+@pytest.mark.asyncio
 async def test_voice_modes_and_system_delete(api):
     store, system_id, _, transport = api
     member = store.add_member("owner", "Voice", "v:")
