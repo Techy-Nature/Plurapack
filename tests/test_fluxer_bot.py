@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from plurapack.fluxer_bot import FluxerPlatform, create_fluxer_bot
+from plurapack.bot import COMMAND_ALIASES, COMMAND_HELP, COMMAND_SHORTCUTS
 from plurapack.login import LoginService
 from plurapack.storage import Store
 from plurapack.proxy import Incoming
@@ -87,3 +88,82 @@ async def test_fluxer_login_command_approves_dashboard_attempt(tmp_path, monkeyp
     assert (user.id, user.username) == ("fluxer-user", "Fluxer User")
     assert replies == ["Dashboard login approved. You can return to your browser."]
     assert commands["lg"] is commands["login"]
+
+
+def make_fluxer_commands(monkeypatch, database):
+    commands = {}
+
+    class Bot:
+        def __init__(self, **kwargs): pass
+        def command(self, name):
+            def register(callback):
+                commands[name] = callback
+                return callback
+            return register
+        def event(self, callback): return callback
+
+    monkeypatch.setattr(
+        "plurapack.fluxer_bot._load_fluxer",
+        lambda: SimpleNamespace(Bot=Bot, Intents=SimpleNamespace(default=lambda: 0, MESSAGE_CONTENT=1),
+                                File=lambda data, filename: SimpleNamespace(data=data, filename=filename)),
+    )
+    create_fluxer_bot("p;", str(database))
+    return commands
+
+
+def test_every_public_fluxer_command_and_alias_is_registered(tmp_path, monkeypatch):
+    commands = make_fluxer_commands(monkeypatch, tmp_path / "registration.sqlite3")
+
+    assert set(COMMAND_HELP) <= commands.keys()
+    for name, shortcut in COMMAND_SHORTCUTS.items():
+        assert commands[shortcut] is commands[name]
+    for name, aliases in COMMAND_ALIASES.items():
+        for alias in aliases:
+            assert commands[alias] is commands[name]
+
+
+async def test_fluxer_profile_form_front_and_link_commands_share_storage(tmp_path, monkeypatch):
+    database = tmp_path / "commands.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    store.create_system("owner", "Our system")
+    store.add_member("owner", "Alex", "[a]", "")
+    replies = []
+
+    async def send(message, **kwargs): replies.append(message)
+    owner = SimpleNamespace(author=SimpleNamespace(id=123), send=send)
+    # Numeric platform IDs are always normalized before entering Store.
+    store.create_system("123", "Fluxer system")
+    created = store.add_member("123", "River", "[r]", "")
+
+    await commands["alias"](owner, created.id, "Riv")
+    await commands["pronouns"](owner, "Riv", value="they/them")
+    await commands["memberproxy"](owner, "Riv", "<r>", "")
+    await commands["form"](owner, "Riv", "Formal", "", soma="At work")
+    form = store.forms_for_member(created.id)[0]
+    await commands["formproxy"](owner, form.id, "{", "}")
+    await commands["formpronouns"](owner, form.id, value="")
+    await commands["front"](owner, form.id)
+    await commands["autoproxy"](owner, "Riv")
+    await commands["autofront"](owner, "on")
+    await commands["voiceformat"](owner, "Riv", "on", "skip")
+    await commands["voiceoff"](owner, "Riv")
+
+    updated = store.member_selected("123", "Riv")
+    assert updated.alias == "Riv"
+    assert updated.pronouns == "they/them"
+    assert store.current_front("123").form.id == form.id
+    assert store.autoproxy("123").member.id == created.id
+    assert updated.id == created.id
+
+    await commands["link"](owner)
+    token = replies[-1].split("`")[1]
+    other_replies = []
+    other = SimpleNamespace(author=SimpleNamespace(id=456),
+                            send=lambda message, **kwargs: _append(other_replies, message))
+    await commands["verify"](other, token)
+    assert store.system_for("456") == store.system_for("123")
+
+
+async def _append(values, value):
+    values.append(value)
