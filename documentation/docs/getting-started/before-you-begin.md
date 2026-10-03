@@ -21,9 +21,14 @@ You can be both. If someone already runs Plurapack in your server, skip installa
 - A plan for protecting and backing up the SQLite database.
 
 The bot needs permission in intended proxy channels to view and send messages,
-upload files if speech is enabled, add and read reactions, edit proxy messages,
-and delete invoking users' source messages. Stoat needs masquerade permission;
-Fluxer needs Manage Webhooks. Grant it only the permissions it needs.
+upload files if speech is enabled, add and read reactions, and edit proxy
+messages. Stoat needs masquerade permission; Fluxer needs Manage Webhooks.
+
+Stoat group DMs support the normal commands and proxies with member names and
+avatars. `ManageMessages` is not required for group-DM proxying. If the bot
+cannot delete another user's message, the original tagged message remains
+visible next to the successful proxy. Grant the bot only the permissions it
+needs.
 
 ## A few terms
 

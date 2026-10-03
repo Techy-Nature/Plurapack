@@ -234,6 +234,160 @@ async def test_stoat_platform_applies_form_name_and_avatar_to_masquerade():
     }
 
 
+class FakeStoatForbidden(Exception):
+    pass
+
+
+class FakeTextChannel:
+    def __init__(self):
+        self.sent = []
+
+    async def send(self, content, *, masquerade):
+        self.sent.append((content, masquerade))
+        return SimpleNamespace(id="group-proxy")
+
+
+class FakeGroupChannel(FakeTextChannel):
+    pass
+
+
+class FakeServerChannel(FakeTextChannel):
+    pass
+
+
+class FakeDMChannel(FakeTextChannel):
+    pass
+
+
+class FakeMasquerade:
+    def __init__(self, **values):
+        self.__dict__.update(values)
+
+
+FAKE_STOAT = SimpleNamespace(
+    GroupChannel=FakeGroupChannel,
+    Forbidden=FakeStoatForbidden,
+    MessageMasquerade=FakeMasquerade,
+)
+
+
+def test_stoat_group_detection_uses_sdk_model_not_missing_server_id():
+    assert bot._is_group_channel(FakeGroupChannel(), FAKE_STOAT)
+    assert not bot._is_group_channel(FakeDMChannel(), FAKE_STOAT)
+    assert not bot._is_group_channel(FakeServerChannel(), FAKE_STOAT)
+
+
+async def test_group_message_translation_reaches_shared_proxy_flow_and_preserves_reply(tmp_path):
+    store = Store(tmp_path / "group.sqlite3")
+    store.create_system("owner", "Crew")
+    store.add_member("owner", "Varinn", "[v]", avatar="https://example.test/v.png")
+    channel = FakeGroupChannel()
+    deleted = []
+
+    async def delete():
+        deleted.append("source")
+
+    message = SimpleNamespace(
+        id="source",
+        channel_id="group",
+        server_id=None,
+        content="[v]Hello",
+        replies=[SimpleNamespace(id="replied-to")],
+        get_channel=lambda: channel,
+        delete=delete,
+    )
+    incoming = bot._incoming_from_stoat_message(message, SimpleNamespace(id="owner", bot=False))
+    platform = bot.StoatPlatform({"source": message}, SimpleNamespace(), FAKE_STOAT)
+
+    assert incoming.reply_to_id == "replied-to"
+    assert await bot.ProxyService(store, platform).handle(incoming) == "group-proxy"
+    assert deleted == ["source"]
+    assert channel.sent[0][0] == "Hello"
+    assert channel.sent[0][1].name == "Varinn"
+    assert channel.sent[0][1].avatar == "https://example.test/v.png"
+    assert store.proxy_owned_by("group-proxy", "owner", "group")
+
+
+async def test_group_permission_denial_keeps_durable_masqueraded_proxy(tmp_path):
+    store = Store(tmp_path / "denied.sqlite3")
+    store.create_system("owner", "Crew")
+    store.add_member("owner", "Varinn", "[v]")
+    channel = FakeGroupChannel()
+
+    async def delete():
+        raise FakeStoatForbidden()
+
+    source = SimpleNamespace(get_channel=lambda: channel, delete=delete)
+    platform = bot.StoatPlatform({"source": source}, SimpleNamespace(), FAKE_STOAT)
+    incoming = Incoming("source", "group", "owner", "[v]Hello")
+
+    assert await bot.ProxyService(store, platform).handle(incoming) == "group-proxy"
+    assert "source" in platform.messages
+    assert channel.sent[0][0] == "Hello"
+    assert store.proxy_owned_by("group-proxy", "owner", "group")
+
+
+@pytest.mark.parametrize("channel", [FakeGroupChannel(), FakeServerChannel()])
+async def test_unexpected_stoat_source_deletion_failure_is_not_swallowed(channel, tmp_path):
+    store = Store(tmp_path / f"unexpected-{type(channel).__name__}.sqlite3")
+    store.create_system("owner", "Crew")
+    store.add_member("owner", "Varinn", "[v]")
+
+    async def delete():
+        raise RuntimeError("network failure")
+
+    source = SimpleNamespace(get_channel=lambda: channel, delete=delete)
+    platform = bot.StoatPlatform({"source": source}, SimpleNamespace(), FAKE_STOAT)
+
+    with pytest.raises(RuntimeError, match="network failure"):
+        await bot.ProxyService(store, platform).handle(Incoming("source", "channel", "owner", "[v]Hi"))
+
+
+async def test_server_permission_denial_remains_an_error():
+    channel = FakeServerChannel()
+
+    async def delete():
+        raise FakeStoatForbidden()
+
+    platform = bot.StoatPlatform(
+        {"source": SimpleNamespace(get_channel=lambda: channel, delete=delete)},
+        SimpleNamespace(),
+        FAKE_STOAT,
+    )
+    with pytest.raises(FakeStoatForbidden):
+        await platform.delete_source(Incoming("source", "server-channel", "owner", "[v]Hi"))
+
+
+async def test_server_source_deletion_still_succeeds():
+    channel = FakeServerChannel()
+    deleted = []
+
+    async def delete():
+        deleted.append("source")
+
+    platform = bot.StoatPlatform(
+        {"source": SimpleNamespace(get_channel=lambda: channel, delete=delete)},
+        SimpleNamespace(),
+        FAKE_STOAT,
+    )
+
+    assert await platform.delete_source(
+        Incoming("source", "server-channel", "owner", "[v]Hi", server_id="server")
+    )
+    assert deleted == ["source"]
+    assert "source" not in platform.messages
+
+
+def test_group_prefix_command_is_preserved_for_normal_command_processing():
+    message = SimpleNamespace(
+        id="command", channel_id="group", content="p;help", replies=[], server_id=None
+    )
+    incoming = bot._incoming_from_stoat_message(message, SimpleNamespace(id="owner", bot=False))
+
+    assert incoming.content == "p;help"
+    assert incoming.author_id == "owner"
+
+
 def test_voice_upload_installs_wav_and_replaces_same_name(monkeypatch, tmp_path):
     def wav_bytes(frames):
         output = io.BytesIO()

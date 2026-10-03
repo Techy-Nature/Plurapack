@@ -332,6 +332,29 @@ def _load_stoat() -> tuple[Any, Any]:
     return stoat, commands
 
 
+def _is_group_channel(channel: Any, sdk: Any) -> bool:
+    """Return whether *channel* is the SDK's explicit group-DM model."""
+    group_channel = getattr(sdk, "GroupChannel", None)
+    return group_channel is not None and isinstance(channel, group_channel)
+
+
+def _incoming_from_stoat_message(message: Any, author: Any) -> Incoming:
+    """Translate a Stoat message into the platform-neutral proxy model."""
+    reply_id = None
+    if message.replies:
+        reply = message.replies[0]
+        reply_id = reply if isinstance(reply, str) else getattr(reply, "id", None)
+    return Incoming(
+        message.id,
+        message.channel_id,
+        author.id,
+        message.content,
+        bool(getattr(author, "bot", None)),
+        reply_id,
+        getattr(message, "server_id", None),
+    )
+
+
 @dataclass
 class StoatPlatform:
     messages: dict[str, Any]
@@ -351,8 +374,19 @@ class StoatPlatform:
         )
         return posted.id
 
-    async def delete_source(self, incoming: Incoming) -> None:
-        await self.messages.pop(incoming.id).delete()
+    async def delete_source(self, incoming: Incoming) -> bool:
+        source = self.messages[incoming.id]
+        channel = source.get_channel()
+        try:
+            await source.delete()
+        except self.sdk.Forbidden:
+            # Group DMs normally grant Masquerade but not ManageMessages. The
+            # already-recorded proxy must survive that expected denial.
+            if _is_group_channel(channel, self.sdk):
+                return False
+            raise
+        self.messages.pop(incoming.id, None)
+        return True
 
     async def edit_proxy(self, channel_id: str, proxy_id: str, content: str) -> None:
         await self.state.http.edit_message(channel_id, proxy_id, content=content)
@@ -1047,10 +1081,8 @@ def create_bot(prefix: str, database: str) -> Any:
         author = message.get_author()
         if author is None:
             return
-        reply_id = None
-        if message.replies:
-            reply = message.replies[0]
-            reply_id = reply if isinstance(reply, str) else getattr(reply, "id", None)
+        incoming = _incoming_from_stoat_message(message, author)
+        reply_id = incoming.reply_to_id
         confirmation = delete_confirmations.get(reply_id) if reply_id else None
         if confirmation and confirmation[0] == author.id:
             try:
@@ -1061,15 +1093,6 @@ def create_bot(prefix: str, database: str) -> Any:
                 delete_confirmations.pop(reply_id, None)
                 await message.reply(f"System `{confirmation[1]}` and all associated data were permanently deleted.")
             return
-        incoming = Incoming(
-            message.id,
-            message.channel_id,
-            author.id,
-            message.content,
-            bool(getattr(author, "bot", None)),
-            message.replies[0] if message.replies else None,
-            getattr(message, "server_id", None),
-        )
         platform.messages[message.id] = message
         try:
             await service.handle(incoming)
