@@ -696,7 +696,7 @@ class Store:
 
     def public_info_selected(
         self, account_id: str, selector: str
-    ) -> System | Member | tuple[Form, Member] | None:
+    ) -> System | Group | Member | tuple[Form, Member] | None:
         """Resolve stable IDs globally and human-readable selectors only locally."""
         selector = selector.strip()
 
@@ -704,6 +704,9 @@ class Store:
         value = self.system_by_id(selector)
         if value is not None:
             return value
+        group = self.public_group_by_id(selector)
+        if group is not None:
+            return group
         member = self.public_member_by_id(selector)
         if member is not None:
             return member
@@ -715,6 +718,9 @@ class Store:
         value = self.system_named_for(account_id, selector)
         if value is not None:
             return value
+        group = self.group_selected(account_id, selector)
+        if group is not None:
+            return group
         member = self.member_selected(account_id, selector)
         if member is not None and selector.casefold() in {
             member.name.casefold(), (member.alias or "").casefold()
@@ -761,6 +767,12 @@ class Store:
                 (system_id,),
             ).fetchall()
         return [Group(**dict(row)) for row in rows]
+
+    def public_group_by_id(self, group_id: str) -> Group | None:
+        """Resolve a public group using only its globally stable ID."""
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM groups WHERE id=?", (group_id.strip(),)).fetchone()
+        return Group(**dict(row)) if row else None
 
     def group_selected(self, account_id: str, selector: str) -> Group | None:
         """Resolve an ID, name, or alias only inside the caller's system."""

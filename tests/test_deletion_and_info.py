@@ -79,14 +79,19 @@ def test_info_resolution_keeps_ids_global_and_names_local(tmp_path):
     second_member = store.add_member("two", "Alex", "B:", alias="lex")
     first_form = store.create_form("one", first_member.id, "Happy")
     second_form = store.create_form("two", second_member.id, "Happy")
+    first_group = store.create_group("one", "Friends", "pals")
+    second_group = store.create_group("two", "Work", "coworkers")
 
     assert store.public_info_selected("one", "  Alex  ").id == first_member.id
     assert store.public_info_selected("one", "alexander").id == first_member.id
     assert store.public_info_selected("one", "Happy")[0].id == first_form.id
+    assert store.public_info_selected("one", "Friends").id == first_group.id
+    assert store.public_info_selected("one", "pals").id == first_group.id
     assert store.public_info_selected("one", "Nest").id == first
 
     assert store.public_info_selected("one", second_member.id).id == second_member.id
     assert store.public_info_selected("one", second_form.id)[0].id == second_form.id
+    assert store.public_info_selected("one", second_group.id).id == second_group.id
     assert store.public_info_selected("one", second).id == second
 
 
@@ -96,10 +101,13 @@ def test_info_resolution_does_not_fall_back_to_other_system_names(tmp_path):
     store.create_system("two", "Second")
     member = store.add_member("two", "Alex", "B:", alias="alexander")
     store.create_form("two", member.id, "Happy")
+    store.create_group("two", "Friends", "pals")
 
     assert store.public_info_selected("one", "Alex") is None
     assert store.public_info_selected("one", "alexander") is None
     assert store.public_info_selected("one", "Happy") is None
+    assert store.public_info_selected("one", "Friends") is None
+    assert store.public_info_selected("one", "pals") is None
     assert store.public_info_selected("one", "Second") is None
 
 
@@ -274,3 +282,25 @@ async def test_info_system_includes_group_embeds(tmp_path):
     embeds = replies[0][1]["embeds"]
     assert [embed.title for embed in embeds] == ["Crew", "No Avatar"]
     assert embeds[1].icon_url is None
+
+
+@pytest.mark.parametrize("selector_kind", ["name", "alias", "id"])
+async def test_info_can_select_group_by_name_alias_or_id(tmp_path, selector_kind):
+    database = tmp_path / f"info-group-{selector_kind}.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    group = store.create_group("owner", "Friends", "pals")
+    selector = {"name": group.name, "alias": group.alias, "id": group.id}[selector_kind]
+    replies = []
+
+    async def send(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    await bot.get_command("info").callback(ctx, selector=selector)
+
+    embeds = replies[0][1]["embeds"]
+    assert len(embeds) == 1
+    assert embeds[0].title == group.name
+    assert f"`{group.id}`" in embeds[0].description

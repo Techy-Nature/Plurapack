@@ -67,7 +67,8 @@ COMMAND_HELP = {
     "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
     "export": ("x", "[FORMAT] [--forms-loss|--forms-members]", "Export portable system metadata."),
     "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]", "Show system or member information."),
-    "info": ("in", "SYSTEM_MEMBER_OR_FORM", "Show a system, its groups, a member, or a form profile."),
+    "info": ("in", "SYSTEM_GROUP_MEMBER_OR_FORM",
+             "Show a system, its groups, one group, a member, or a form profile."),
     "group": ("g", "create|add|alias|avatar ...", "Create and edit the current group."),
     "viewmembers": ("ml", "[SYSTEM]", "Show a system's member cards."),
     "viewmember": ("vm", "MEMBER", "Show one member card."),
@@ -676,14 +677,17 @@ def create_bot(prefix: str, database: str) -> Any:
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["info"]])
     async def info(ctx: commands.Context, *, selector: str) -> None:
-        """Show a system, member, or form selected by nickname, alias, or ID."""
+        """Show a system, group, member, or form selected by nickname, alias, or ID."""
         try:
             value = store.public_info_selected(str(ctx.author.id), selector)
         except ValueError as error:
             await ctx.send(str(error))
             return
         if value is None:
-            await ctx.send("System, member, or form not found. Use an exact nickname, alias, or ID.")
+            await ctx.send("System, group, member, or form not found. Use an exact nickname, alias, or ID.")
+            return
+        if isinstance(value, Group):
+            await ctx.send(embeds=[_group_embed(stoat, store, value)])
             return
         if isinstance(value, System):
             embeds = [_profile_embed(stoat, store, value)]
