@@ -165,5 +165,48 @@ async def test_fluxer_profile_form_front_and_link_commands_share_storage(tmp_pat
     assert store.system_for("456") == store.system_for("123")
 
 
+async def test_fluxer_info_can_show_a_group_and_its_members(tmp_path, monkeypatch):
+    database = tmp_path / "group-info.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "[a]", "", pronouns="they/them")
+    group = store.create_group("owner", "Friends", "pals")
+    store.add_group_members("owner", [member.id])
+    replies = []
+
+    async def send(message, **kwargs):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    await commands["info"](ctx, selector="pals")
+
+    assert len(replies) == 1
+    assert replies[0].startswith(f"**Friends**\nGroup ID: `{group.id}`")
+    assert f"**Alex** (`{member.id}`)" in replies[0]
+    assert "Pronouns: they/them" in replies[0]
+    assert "Proxies: `[a]text`" in replies[0]
+
+
+async def test_fluxer_info_includes_groups_with_a_system(tmp_path, monkeypatch):
+    database = tmp_path / "system-info.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    system_id = store.create_system("owner", "Crew")
+    group = store.create_group("owner", "Friends", "pals")
+    replies = []
+
+    async def send(message, **kwargs):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    await commands["info"](ctx, selector=system_id)
+
+    assert len(replies) == 1
+    assert replies[0].startswith("**Crew**")
+    assert f"**Friends**\nGroup ID: `{group.id}`" in replies[0]
+    assert "Members:\nNone" in replies[0]
+
+
 async def _append(values, value):
     values.append(value)
