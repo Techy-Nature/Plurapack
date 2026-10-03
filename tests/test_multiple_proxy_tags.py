@@ -43,3 +43,22 @@ def test_proxy_tag_limit_and_atomic_replacement(tmp_path):
     with pytest.raises(ValueError, match="at most 100"):
         store.replace_proxy_tags("owner", member.id, [ProxyTag(f"new-{index}:") for index in range(101)])
     assert len(store.proxy_tags(member_id=member.id)) == 100
+
+
+def test_reopening_legacy_columns_does_not_duplicate_or_self_collide(tmp_path):
+    database = tmp_path / "db.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "System")
+    member = store.add_member("owner", "Alex", "member:")
+    form = store.create_form("owner", member.id, "Formal", prefix="form:")
+
+    # Simulate an old database whose denormalized primary column is stale. The
+    # normalized rows remain authoritative once proxy_tags exists.
+    with store.connect() as db:
+        db.execute("UPDATE forms SET prefix='stale:',suffix='' WHERE id=?", (form.id,))
+
+    reopened = Store(database)
+    assert [(tag.prefix, tag.suffix) for tag in reopened.proxy_tags(form_id=form.id)] == [("form:", "")]
+    reopened.replace_proxy_tags("owner", form.id, [ProxyTag("form:")], form=True)
+    assert [(tag.prefix, tag.suffix) for tag in reopened.proxy_tags(form_id=form.id)] == [("form:", "")]
+    assert reopened.form_selected("owner", form.id)[0].prefix == "form:"
