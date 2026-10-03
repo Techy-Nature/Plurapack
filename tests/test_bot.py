@@ -235,7 +235,9 @@ async def test_stoat_platform_applies_form_name_and_avatar_to_masquerade():
 
 
 class FakeStoatForbidden(Exception):
-    pass
+    def __init__(self, error_type):
+        self.type = error_type
+        super().__init__(error_type)
 
 
 class FakeTextChannel:
@@ -315,7 +317,7 @@ async def test_group_permission_denial_keeps_durable_masqueraded_proxy(tmp_path)
     channel = FakeGroupChannel()
 
     async def delete():
-        raise FakeStoatForbidden()
+        raise FakeStoatForbidden("MissingPermission")
 
     source = SimpleNamespace(get_channel=lambda: channel, delete=delete)
     platform = bot.StoatPlatform({"source": source}, SimpleNamespace(), FAKE_STOAT)
@@ -347,7 +349,7 @@ async def test_server_permission_denial_remains_an_error():
     channel = FakeServerChannel()
 
     async def delete():
-        raise FakeStoatForbidden()
+        raise FakeStoatForbidden("MissingPermission")
 
     platform = bot.StoatPlatform(
         {"source": SimpleNamespace(get_channel=lambda: channel, delete=delete)},
@@ -356,6 +358,21 @@ async def test_server_permission_denial_remains_an_error():
     )
     with pytest.raises(FakeStoatForbidden):
         await platform.delete_source(Incoming("source", "server-channel", "owner", "[v]Hi"))
+
+
+async def test_unrelated_group_forbidden_remains_an_error():
+    channel = FakeGroupChannel()
+
+    async def delete():
+        raise FakeStoatForbidden("Unknown")
+
+    platform = bot.StoatPlatform(
+        {"source": SimpleNamespace(get_channel=lambda: channel, delete=delete)},
+        SimpleNamespace(),
+        FAKE_STOAT,
+    )
+    with pytest.raises(FakeStoatForbidden, match="Unknown"):
+        await platform.delete_source(Incoming("source", "group", "owner", "[v]Hi"))
 
 
 async def test_server_source_deletion_still_succeeds():
@@ -378,7 +395,7 @@ async def test_server_source_deletion_still_succeeds():
     assert "source" not in platform.messages
 
 
-def test_group_prefix_command_is_preserved_for_normal_command_processing():
+def test_group_message_translation_preserves_prefix_command_text_and_author():
     message = SimpleNamespace(
         id="command", channel_id="group", content="p;help", replies=[], server_id=None
     )

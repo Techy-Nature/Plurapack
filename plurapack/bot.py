@@ -379,10 +379,13 @@ class StoatPlatform:
         channel = source.get_channel()
         try:
             await source.delete()
-        except self.sdk.Forbidden:
+        except self.sdk.Forbidden as error:
             # Group DMs normally grant Masquerade but not ManageMessages. The
             # already-recorded proxy must survive that expected denial.
-            if _is_group_channel(channel, self.sdk):
+            if (
+                _is_group_channel(channel, self.sdk)
+                and getattr(error, "type", None) == "MissingPermission"
+            ):
                 return False
             raise
         self.messages.pop(incoming.id, None)
