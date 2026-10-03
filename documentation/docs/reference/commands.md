@@ -28,6 +28,7 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `verify CODE` | `v` | Connect an account using a code. |
 | `import FORMAT JSON` | `i` | Import PluralKit, Tupperbox, or Plurapack JSON. |
 | `export [FORMAT]` | `x` | Export portable metadata. |
+| `info SYSTEM_MEMBER_OR_FORM` | `in` | Show a system and its groups, a member, or a form profile. |
 | `viewinfo [SYSTEM_OR_MEMBER]` | `vi` | Show a system card, then its member cards, or one member card. |
 | `viewmembers [SYSTEM]` | `ml` | Show only a system's paginated member cards. |
 | `viewmember MEMBER` | `vm` | Show one embedded member card. |
@@ -64,6 +65,11 @@ reported in chat with the missing argument and a pointer to the command's help
 instead of only producing an operator-side traceback.
 
 ## Viewing and deleting data
+
+`info` accepts a nickname, alias, or stable ID. A system result includes an
+embed for each group, with its optional avatar, name, stable ID, and member
+list. Each listed member includes their name, ID, pronouns, and proxy tags; the
+embed's read-more control keeps longer group lists compact until expanded.
 
 `viewinfo` without an argument uses the system connected to your account. A
 system ID or exact system name shows that system; a member ID or exact member

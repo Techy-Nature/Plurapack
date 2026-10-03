@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plurapack.bot import _member_embed, _system_embed, create_bot
+from plurapack.bot import _group_embed, _member_embed, _system_embed, create_bot
 from plurapack.storage import Store
 
 
@@ -228,3 +228,49 @@ def test_member_embed_falls_back_to_default_form_description(tmp_path):
     card = _member_embed(SDK, store, member)
 
     assert card.description.startswith("First line\nSecond line\n\n**ID:**")
+
+
+def test_group_embed_lists_public_group_profile_and_member_details(tmp_path):
+    class Embed:
+        def __init__(self, **values):
+            self.__dict__.update(values)
+
+    class SDK:
+        SendableEmbed = Embed
+
+    store = Store(tmp_path / "group-embed.sqlite3")
+    store.create_system("owner", "Crew")
+    alex = store.add_member("owner", "Alex", "A:")
+    store.configure_pronouns("owner", alex.id, "they/them")
+    store.configure_member_proxy("owner", alex.id, "[a]", "")
+    group = store.create_group("owner", "Friends", "friends", "https://example.test/friends.png")
+    store.add_group_members("owner", [alex.id])
+
+    card = _group_embed(SDK, store, group)
+
+    assert card.title == "Friends"
+    assert card.icon_url == "https://example.test/friends.png"
+    assert f"**Group ID:** `{group.id}`" in card.description
+    assert f"**Alex** (`{alex.id}`)" in card.description
+    assert "Pronouns: they/them" in card.description
+    assert "Proxies: `A:text`, `[a]text`" in card.description
+
+
+async def test_info_system_includes_group_embeds(tmp_path):
+    database = tmp_path / "info-groups.sqlite3"
+    store = Store(database)
+    system_id = store.create_system("owner", "Crew")
+    store.create_group("owner", "No Avatar", "none")
+    replies = []
+
+    async def send(*args, **kwargs):
+        replies.append((args, kwargs))
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    await bot.get_command("info").callback(ctx, selector=system_id)
+
+    embeds = replies[0][1]["embeds"]
+    assert [embed.title for embed in embeds] == ["Crew", "No Avatar"]
+    assert embeds[1].icon_url is None

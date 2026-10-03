@@ -788,6 +788,16 @@ class Store:
             ).fetchall()
         return [Member(**dict(row)) for row in rows]
 
+    def public_group_members(self, group_id: str) -> list[Member]:
+        """List a group's members for public profile displays."""
+        with self.connect() as db:
+            rows = db.execute(
+                """SELECT m.* FROM members m JOIN group_members gm ON gm.member_id=m.id
+                   WHERE gm.group_id=? ORDER BY m.name COLLATE NOCASE, m.id""",
+                (group_id,),
+            ).fetchall()
+        return [Member(**dict(row)) for row in rows]
+
     def set_active_group(self, account_id: str, group_id: str) -> Group:
         group = self.group_selected(account_id, group_id)
         if group is None or group.id != group_id:

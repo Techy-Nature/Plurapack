@@ -23,7 +23,7 @@ from .proxy import Incoming, ProxyService
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .browser_audio import BrowserAudioStore
-from .storage import Member, Store, System
+from .storage import Group, Member, Store, System
 from .login import LoginError, LoginService
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
 from .config import StorageConfigurationError, resolve_database_path
@@ -67,7 +67,7 @@ COMMAND_HELP = {
     "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
     "export": ("x", "[FORMAT] [--forms-loss|--forms-members]", "Export portable system metadata."),
     "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]", "Show system or member information."),
-    "info": ("in", "SYSTEM_MEMBER_OR_FORM", "Show a system, member, or form profile."),
+    "info": ("in", "SYSTEM_MEMBER_OR_FORM", "Show a system, its groups, a member, or a form profile."),
     "group": ("g", "create|add|alias|avatar ...", "Create and edit the current group."),
     "viewmembers": ("ml", "[SYSTEM]", "Show a system's member cards."),
     "viewmember": ("vm", "MEMBER", "Show one member card."),
@@ -272,6 +272,21 @@ def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, M
         f"\n\n**ID:** `{identifier}`\n**Pronouns:** {pronouns or 'Not set'}\n**Proxies:** {proxies}"
     )
     return sdk.SendableEmbed(title=name, description=body, icon_url=avatar, media=banner)
+
+
+def _group_embed(sdk: Any, store: Store, group: Group) -> Any:
+    """Build a group card whose member details stay inside the expandable embed."""
+    member_lines = []
+    for member in store.public_group_members(group.id):
+        tags = store.proxy_tags(member_id=member.id)
+        proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags) or "None"
+        member_lines.append(
+            f"**{member.name}** (`{member.id}`)\n"
+            f"Pronouns: {member.pronouns or 'Not set'}\nProxies: {proxies}"
+        )
+    description = f"**Group ID:** `{group.id}`\n\n**Members:**\n"
+    description += "\n\n".join(member_lines) if member_lines else "None"
+    return sdk.SendableEmbed(title=group.name, description=description, icon_url=group.avatar)
 
 
 def _install_voice_attachment(attachment: Any, reference_dir: Path, max_bytes: int = 25 * 1024 * 1024) -> str:
@@ -669,6 +684,15 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         if value is None:
             await ctx.send("System, member, or form not found. Use an exact nickname, alias, or ID.")
+            return
+        if isinstance(value, System):
+            embeds = [_profile_embed(stoat, store, value)]
+            embeds.extend(_group_embed(stoat, store, group)
+                          for group in store.groups_for_system(value.id))
+            # Stoat accepts at most ten embeds per message. Keep every group in
+            # the same expandable embed format while paging unusually large lists.
+            pages = [embeds[index:index + 10] for index in range(0, len(embeds), 10)]
+            await send_pages(ctx, pages)
             return
         await ctx.send(embeds=[_profile_embed(stoat, store, value)])
 
