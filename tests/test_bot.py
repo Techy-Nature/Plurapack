@@ -282,7 +282,9 @@ def test_stoat_group_detection_uses_sdk_model_not_missing_server_id():
 async def test_group_message_translation_reaches_shared_proxy_flow_and_preserves_reply(tmp_path):
     store = Store(tmp_path / "group.sqlite3")
     store.create_system("owner", "Crew")
-    store.add_member("owner", "Varinn", "[v]", avatar="https://example.test/v.png")
+    store.add_member(
+        "owner", "Varinn", "[v]", avatar="https://example.test/v.png", color="#7b68ee"
+    )
     channel = FakeGroupChannel()
     deleted = []
 
@@ -307,7 +309,26 @@ async def test_group_message_translation_reaches_shared_proxy_flow_and_preserves
     assert channel.sent[0][0] == "Hello"
     assert channel.sent[0][1].name == "Varinn"
     assert channel.sent[0][1].avatar == "https://example.test/v.png"
+    assert channel.sent[0][1].color is None
     assert store.proxy_owned_by("group-proxy", "owner", "group")
+
+
+async def test_server_proxy_preserves_member_color(tmp_path):
+    store = Store(tmp_path / "server-color.sqlite3")
+    store.create_system("owner", "Crew")
+    store.add_member("owner", "Varinn", "[v]", color="#7b68ee")
+    channel = FakeServerChannel()
+
+    async def delete():
+        pass
+
+    message = SimpleNamespace(get_channel=lambda: channel, delete=delete)
+    platform = bot.StoatPlatform({"source": message}, SimpleNamespace(), FAKE_STOAT)
+
+    assert await bot.ProxyService(store, platform).handle(
+        Incoming("source", "server", "owner", "[v]Hello")
+    ) == "group-proxy"
+    assert channel.sent[0][1].color == "#7b68ee"
 
 
 async def test_group_permission_denial_keeps_durable_masqueraded_proxy(tmp_path):

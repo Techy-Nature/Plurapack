@@ -369,7 +369,9 @@ class StoatPlatform:
         posted = await channel.send(
             content,
             masquerade=self.sdk.MessageMasquerade(
-                name=member.name, avatar=member.avatar, color=member.color
+                name=member.name,
+                avatar=member.avatar,
+                color=None if _is_group_channel(channel, self.sdk) else member.color,
             ),
         )
         return posted.id
@@ -405,7 +407,9 @@ class StoatPlatform:
         posted = await channel.send(
             old.content,
             masquerade=self.sdk.MessageMasquerade(
-                name=member.name, avatar=member.avatar, color=member.color
+                name=member.name,
+                avatar=member.avatar,
+                color=None if _is_group_channel(channel, self.sdk) else member.color,
             ),
         )
         return posted.id
