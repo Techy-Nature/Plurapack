@@ -137,6 +137,7 @@ mismatched nested resources return `404`.
 - Persistent SQLite systems (random 10-character SHA-256 fragments), members (5 characters), display names, proxy tags, avatar URLs, username colors, and voice preferences. Names select members; IDs remain stable across renames.
 - Multiple authorized Stoat accounts (or one Fluxer and one Stoat account) can share one system and its stable IDs through a 15-character, one-use, 15-minute code. Only the hash of the code is stored.
 - Text proxying through stoat.py masquerades. The replacement is posted and recorded before the source is deleted. Bot messages, commands, in-flight messages, and persisted duplicate source IDs are ignored.
+- Stoat group DMs support the normal prefix commands and masqueraded proxies, including member/form names and avatars. If the bot lacks permission to delete another user's message, the original tagged message remains visible beside the successful proxy.
 - Every proxy record retains platform message IDs, system/member IDs, channel and initiating owner, but **not message content**.
 - React to one of your proxies with ✏️ or 📝, then send its replacement text in the same channel, to edit it. React with ❌ or 🗑️ to delete it. Shared-system owners may manage one another's proxies.
 - Re-proxy an existing message by replying to it with only the new member's display name, stable five-character ID, or proxy prefix. The replacement is posted and recorded before the old proxy and selector reply are removed.
@@ -185,10 +186,11 @@ Never commit `.env`, the SQLite database, or reference voice files. On Fluxer,
 Plurapack uses a channel webhook named **Plurapack Proxy**, so it also needs
 Manage Webhooks. The bot needs permission in each target channel to view/send
 messages, upload files (when speech delivery is enabled), add/read reactions,
-edit its own messages, and delete the invoking user's source message. Stoat
-also requires masquerade permission. If deletion is denied, the proxy remains
-posted and the source is preserved; operators should grant only the permissions
-needed in intended proxy channels.
+and edit its own messages. Stoat also requires masquerade permission. In Stoat
+group DMs, `ManageMessages` is optional: it enables seamless source cleanup,
+but proxying still succeeds without it and leaves the original tagged message
+visible. Operators should grant only the permissions needed in intended proxy
+channels.
 
 Initial commands:
 

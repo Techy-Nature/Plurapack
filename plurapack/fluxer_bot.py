@@ -78,8 +78,9 @@ class FluxerPlatform:
     async def send_proxy(self, incoming: Incoming, member: Member, content: str) -> str:
         return await self._send(incoming, member, content)
 
-    async def delete_source(self, incoming: Incoming) -> None:
+    async def delete_source(self, incoming: Incoming) -> bool:
         await self.messages.pop(incoming.id).delete()
+        return True
 
     async def _request_webhook_message(
         self, method: str, channel_id: str, proxy_id: str, **kwargs: Any
