@@ -234,6 +234,69 @@ async def test_stoat_platform_applies_form_name_and_avatar_to_masquerade():
     }
 
 
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("M" * 27 + " " + "T" * 4, "M" * 27 + " " + "T" * 4),  # exactly 32
+        ("M" * 27 + " " + "T" * 5, "M" * 27 + " " + "T" * 4),  # 33, tag shortened
+        ("Member" * 6, ("Member" * 6)[:32]),
+        ("Form name " * 5, ("Form name " * 5)[:32].rstrip()),
+        ("M" * 29 + " 🪶CQD📗", "M" * 29 + " 🪶C"),
+        ("M" * 28 + " 👩‍👩‍👧‍👧", "M" * 28),
+    ],
+)
+async def test_stoat_masquerade_names_are_limited_without_splitting_unicode(name, expected):
+    captured = []
+
+    class Channel:
+        async def send(self, content, *, masquerade):
+            captured.append(masquerade.name)
+            return SimpleNamespace(id=f"proxy-{len(captured)}")
+
+    class HTTP:
+        async def get_message(self, channel_id, proxy_id):
+            return SimpleNamespace(content="original")
+
+    channel = Channel()
+    source = SimpleNamespace(get_channel=lambda: channel)
+    state = SimpleNamespace(http=HTTP())
+    platform = bot.StoatPlatform(
+        {"source": source}, state, SimpleNamespace(MessageMasquerade=FakeMasquerade)
+    )
+    identity = SimpleNamespace(name=name, avatar=None, color=None)
+
+    await platform.send_proxy(Incoming("source", "channel", "owner", "hello"), identity, "hello")
+    await platform.send_reproxy(
+        Incoming("source", "channel", "owner", "selector"), "old-proxy", identity
+    )
+
+    assert captured == [expected, expected]
+    assert all(len(value) <= 32 for value in captured)
+
+
+def test_stoat_name_limit_does_not_mutate_stored_member_form_or_system_tag(tmp_path):
+    store = Store(tmp_path / "names.sqlite3")
+    store.create_system("owner", "Crew")
+    member_name = "Member with a deliberately very long name"
+    tag = "🪶CQD📗"
+    member = store.add_member("owner", member_name, "m:")
+    form_name = "Form with a deliberately very long display name"
+    form = store.create_form("owner", member.id, form_name, prefix="f:")
+    store.configure_system_tag("owner", tag)
+
+    assert store.member_selected("owner", member.id).name == member_name
+    assert store.form_selected("owner", form.id)[0].display_name == form_name
+    assert store.system_info(store.system_for("owner")).system_tag == tag
+    assert bot._stoat_presentation_name(store.proxy_name(member)) == member_name[:32].rstrip()
+
+
+def test_stoat_validation_failure_has_specific_user_message():
+    error = RuntimeError("FailedValidation masquerade.name: Validation error: length max: 32")
+    assert bot._stoat_proxy_failure_message(error) == (
+        "Could not proxy: the Stoat display name exceeded the 32-character limit."
+    )
+
+
 class FakeStoatForbidden(Exception):
     def __init__(self, error_type):
         self.type = error_type
@@ -271,6 +334,33 @@ FAKE_STOAT = SimpleNamespace(
     Forbidden=FakeStoatForbidden,
     MessageMasquerade=FakeMasquerade,
 )
+
+
+async def test_stoat_autoproxy_and_autofront_use_limited_presentation_names(tmp_path):
+    store = Store(tmp_path / "autoproxy-names.sqlite3")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Member " + "M" * 30, "m:")
+    form = store.create_form("owner", member.id, "Form " + "F" * 35, prefix="f:")
+    store.configure_system_tag("owner", "🪶CQD📗")
+    store.configure_autoproxy("owner", member.id)
+    channel = FakeServerChannel()
+
+    async def delete():
+        pass
+
+    source = SimpleNamespace(get_channel=lambda: channel, delete=delete)
+    platform = bot.StoatPlatform({"auto": source, "front": source}, SimpleNamespace(), FAKE_STOAT)
+    service = bot.ProxyService(store, platform)
+
+    await service.handle(Incoming("auto", "channel", "owner", "autoproxy"))
+    store.switch_front("owner", form.id)
+    store.configure_autofront("owner", True)
+    await service.handle(Incoming("front", "channel", "owner", "autofront"))
+
+    assert channel.sent[0][1].name == ("Member " + "M" * 30)[:32]
+    assert channel.sent[1][1].name == ("Form " + "F" * 35)[:32]
+    assert store.member_selected("owner", member.id).name == "Member " + "M" * 30
+    assert store.form_selected("owner", form.id)[0].display_name == "Form " + "F" * 35
 
 
 def test_stoat_group_detection_uses_sdk_model_not_missing_server_id():
