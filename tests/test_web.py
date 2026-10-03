@@ -317,6 +317,7 @@ async def test_forms_relationships_crud_and_front(api):
         path = f"/api/systems/{system_id}/members/{first.id}/forms/{form['id']}"
         edited = await client.patch(path, json={"displayName": "Ceremonial",
                                                 "picture": "https://example.com/form.png"})
+        assert edited.status_code == 200
         assert edited.json()["soma"] == "A form"
         assert edited.json()["picture"] == "https://example.com/form.png"
         # Applying member changes can legitimately generate no form-profile
@@ -331,6 +332,75 @@ async def test_forms_relationships_crud_and_front(api):
         assert (await client.put(front_path, json={"memberId": None})).json()["memberId"] is None
         assert (await client.delete(path)).status_code == 204
         assert (await client.get(path)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_form_patch_accepts_dashboard_payload_with_null_picture(api):
+    store, system_id, _, transport = api
+    member = store.add_member("owner", "Dashboard User", "dashboard:")
+    form = store.create_form(
+        "owner", member.id, "Old Form", avatar="https://example.com/old.png",
+        soma="Old soma", pronouns="they/them",
+        banner="https://example.com/old-banner.png",
+    )
+    path = f"/api/systems/{system_id}/members/{member.id}/forms/{form.id}"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 cookies=cookie()) as client:
+        response = await client.patch(path, json={
+            "picture": None,
+            "displayName": "Dashboard Form",
+            "pronouns": None,
+            "soma": None,
+            "prefix": None,
+            "suffix": None,
+            "banner": None,
+        })
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "id": form.id,
+        "memberId": member.id,
+        "displayName": "Dashboard Form",
+        "picture": None,
+        "soma": "",
+        "pronouns": None,
+        "prefix": "",
+        "suffix": "",
+        "banner": None,
+        "proxyTags": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_form_patch_can_clear_soma_with_explicit_null(api):
+    store, system_id, _, transport = api
+    member = store.add_member("owner", "Soma User", "soma:")
+    form = store.create_form("owner", member.id, "Soma Form", soma="Previously set")
+    path = f"/api/systems/{system_id}/members/{member.id}/forms/{form.id}"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 cookies=cookie()) as client:
+        response = await client.patch(path, json={"soma": None})
+
+    assert response.status_code == 200
+    assert response.json()["soma"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("display_name", [None, "", "   "])
+async def test_form_patch_rejects_null_or_blank_display_name(api, display_name):
+    store, system_id, _, transport = api
+    member = store.add_member("owner", "Named User", "named:")
+    form = store.create_form("owner", member.id, "Named Form")
+    path = f"/api/systems/{system_id}/members/{member.id}/forms/{form.id}"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 cookies=cookie()) as client:
+        response = await client.patch(path, json={"displayName": display_name})
+
+    assert response.status_code == 422
+    assert response.json()["message"] == "displayName: Value error, display name cannot be blank"
 
 
 @pytest.mark.asyncio

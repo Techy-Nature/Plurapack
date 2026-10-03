@@ -475,7 +475,8 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         form = await owned_form(system_id, member_id, form_id, user, store)
         changes = body.model_dump(exclude_unset=True)
         if "picture" in changes:
-            changes["avatar"] = str(changes.pop("picture")) if changes["picture"] else None
+            picture = changes.pop("picture")
+            changes["avatar"] = str(picture) if picture else None
         if "banner" in changes and changes["banner"]:
             changes["banner"] = str(changes["banner"])
         if not changes:

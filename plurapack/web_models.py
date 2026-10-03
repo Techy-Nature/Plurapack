@@ -96,6 +96,20 @@ class FormPatch(APIModel):
     suffix: str | None = Field(None, max_length=32)
     banner: HttpUrl | None = None
 
+    @field_validator("soma", "prefix", "suffix", mode="before")
+    @classmethod
+    def null_text_clears_text(cls, value: Any) -> Any:
+        # Dashboard blank inputs are serialized as null, but these storage
+        # columns are non-nullable.
+        return "" if value is None else value
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def display_name_not_blank(cls, value: Any) -> Any:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError("display name cannot be blank")
+        return value
+
 
 class FrontUpdate(APIModel):
     member_id: str | None = Field(None, alias="memberId", pattern=r"^[0-9a-f]{5}$")
