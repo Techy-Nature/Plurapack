@@ -351,9 +351,9 @@ async def test_form_patch_accepts_dashboard_payload_with_null_picture(api):
             "picture": None,
             "displayName": "Dashboard Form",
             "pronouns": None,
-            "soma": "",
-            "prefix": "",
-            "suffix": "",
+            "soma": None,
+            "prefix": None,
+            "suffix": None,
             "banner": None,
         })
 
@@ -370,6 +370,37 @@ async def test_form_patch_accepts_dashboard_payload_with_null_picture(api):
         "banner": None,
         "proxyTags": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_form_patch_can_clear_soma_with_explicit_null(api):
+    store, system_id, _, transport = api
+    member = store.add_member("owner", "Soma User", "soma:")
+    form = store.create_form("owner", member.id, "Soma Form", soma="Previously set")
+    path = f"/api/systems/{system_id}/members/{member.id}/forms/{form.id}"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 cookies=cookie()) as client:
+        response = await client.patch(path, json={"soma": None})
+
+    assert response.status_code == 200
+    assert response.json()["soma"] == ""
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("display_name", [None, "", "   "])
+async def test_form_patch_rejects_null_or_blank_display_name(api, display_name):
+    store, system_id, _, transport = api
+    member = store.add_member("owner", "Named User", "named:")
+    form = store.create_form("owner", member.id, "Named Form")
+    path = f"/api/systems/{system_id}/members/{member.id}/forms/{form.id}"
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://test",
+                                 cookies=cookie()) as client:
+        response = await client.patch(path, json={"displayName": display_name})
+
+    assert response.status_code == 422
+    assert response.json()["message"] == "displayName: Value error, display name cannot be blank"
 
 
 @pytest.mark.asyncio
