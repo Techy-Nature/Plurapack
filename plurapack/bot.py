@@ -5,12 +5,14 @@ import asyncio
 import importlib
 import importlib.util
 import json
+import logging
 import os
 import re
 import shlex
 import shutil
 import subprocess
 import tempfile
+import unicodedata
 import urllib.parse
 import urllib.request
 import wave
@@ -33,6 +35,40 @@ STOAT_INSTALL_MESSAGE = (
     "The Stoat client dependency is not installed. Install Plurapack and its "
     "dependencies with `python -m pip install -e .`, then try again."
 )
+
+STOAT_MASQUERADE_NAME_LIMIT = 32
+
+
+def _stoat_presentation_name(name: str, limit: int = STOAT_MASQUERADE_NAME_LIMIT) -> str:
+    """Fit a presentation name to Stoat without splitting an emoji-like cluster.
+
+    Proxy names are assembled with the member/form name first and the optional
+    system tag last, so removing clusters from the end naturally preserves the
+    profile name before the tag.  This only changes the transient masquerade.
+    """
+    if len(name) <= limit:
+        return name
+    end = limit
+    # Do not leave combining marks, variation selectors, emoji modifiers, or a
+    # partial zero-width-joiner sequence at the end of the outgoing name.
+    while end and end < len(name) and (
+        unicodedata.combining(name[end])
+        or name[end] in {"\ufe0e", "\ufe0f", "\u200d"}
+        or "\U0001f3fb" <= name[end] <= "\U0001f3ff"
+        or name[end - 1] == "\u200d"
+    ):
+        end -= 1
+    while end and name[end - 1] == "\u200d":
+        end -= 1
+    return name[:end].rstrip()
+
+
+def _stoat_proxy_failure_message(error: Exception) -> str:
+    detail = str(error).casefold()
+    if "masquerade.name" in detail and ("length" in detail or "32" in detail):
+        return "Could not proxy: the Stoat display name exceeded the 32-character limit."
+    return "Could not proxy because Stoat rejected the masquerade or its permissions."
+
 
 # This is the canonical public-command catalogue. Command registration, in-chat
 # help, and tests all consume it so adding a command without documenting it is
@@ -385,7 +421,7 @@ class StoatPlatform:
         posted = await channel.send(
             content,
             masquerade=self.sdk.MessageMasquerade(
-                name=member.name,
+                name=_stoat_presentation_name(member.name),
                 avatar=member.avatar,
                 color=None if _is_group_channel(channel, self.sdk) else member.color,
             ),
@@ -423,7 +459,7 @@ class StoatPlatform:
         posted = await channel.send(
             old.content,
             masquerade=self.sdk.MessageMasquerade(
-                name=member.name,
+                name=_stoat_presentation_name(member.name),
                 avatar=member.avatar,
                 color=None if _is_group_channel(channel, self.sdk) else member.color,
             ),
@@ -1130,7 +1166,25 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         platform.messages[message.id] = message
         try:
-            await service.handle(incoming)
+            try:
+                await service.handle(incoming)
+            except tuple(
+                error_type for error_type in (
+                    getattr(stoat, "HTTPException", None), getattr(stoat, "Forbidden", None)
+                ) if isinstance(error_type, type)
+            ) as error:
+                notice = _stoat_proxy_failure_message(error)
+                logging.getLogger(__name__).warning(
+                    "Stoat proxy rejected for source %s (%s): %s",
+                    message.id, type(error).__name__, str(error),
+                )
+                try:
+                    await message.reply(notice)
+                except Exception as reply_error:
+                    logging.getLogger(__name__).warning(
+                        "Could not report Stoat proxy failure for source %s (%s)",
+                        message.id, type(reply_error).__name__,
+                    )
         finally:
             platform.messages.pop(message.id, None)
 
