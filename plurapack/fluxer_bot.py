@@ -426,7 +426,6 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     @bot.event
     async def on_message(message: Any) -> None:
         # fluxer.py permits replacing its dispatcher event, so explicitly retain it.
-        await bot._process_commands(message)
         reply = getattr(message, "referenced_message", None)
         incoming = Incoming(
             str(message.id),
