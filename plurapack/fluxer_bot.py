@@ -25,7 +25,7 @@ from .bot import (
 )
 from .login import LoginError, LoginService
 from .proxy import Incoming, ProxyService
-from .storage import Member, Store
+from .storage import Group, Member, Store, System
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
 
 
@@ -309,6 +309,18 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         form_lines = ", ".join(f"{f.display_name} (`{f.id}`, pronouns: {f.pronouns if f.pronouns is not None else member.pronouns or 'not set'}, proxy: `{f.prefix}text{f.suffix}`)" for f in forms) or "None"
         return f"**{member.name}**\n{member.description or 'No member description provided.'}\nID: `{member.id}` | Color: `{member.color or 'default'}` | Pronouns: {member.pronouns or 'Not set'}\nAvatar: {member.avatar or 'None'} | Banner: {member.banner or 'None'}\nProxies: " + (", ".join(f"`{t.prefix}text{t.suffix}`" for t in tags) or "None") + f"\nForms: {form_lines}"
 
+    def group_card(group: Group) -> str:
+        member_lines = []
+        for member in store.public_group_members(group.id):
+            tags = store.proxy_tags(member_id=member.id)
+            proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags) or "None"
+            member_lines.append(
+                f"**{member.name}** (`{member.id}`)\n"
+                f"Pronouns: {member.pronouns or 'Not set'}\nProxies: {proxies}"
+            )
+        members = "\n\n".join(member_lines) if member_lines else "None"
+        return f"**{group.name}**\nGroup ID: `{group.id}`\nAvatar: {group.avatar or 'None'}\n\nMembers:\n{members}"
+
     async def viewmember_command(ctx: Any, *, selector: str) -> None:
         try: member = store.public_member_selected(selector)
         except ValueError as error: await ctx.send(str(error)); return
@@ -332,11 +344,15 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     async def info_command(ctx: Any, *, selector: str) -> None:
         try: value = store.public_info_selected(account(ctx), selector)
         except ValueError as error: await ctx.send(str(error)); return
-        if value is None: await ctx.send("System, member, or form not found. Use an exact nickname, alias, or ID."); return
+        if value is None: await ctx.send("System, group, member, or form not found. Use an exact nickname, alias, or ID."); return
+        if isinstance(value, Group): await ctx.send(group_card(value)); return
         if isinstance(value, Member): await ctx.send(member_card(value)); return
         if isinstance(value, tuple):
             form, member = value; await ctx.send(f"**{form.display_name}**\n{form.soma or member.description or 'No description provided.'}\nID: `{form.id}` | Pronouns: {form.pronouns if form.pronouns is not None else member.pronouns or 'Not set'}\nAvatar: {form.avatar or member.avatar or 'None'} | Banner: {form.banner or member.banner or 'None'}\nProxies: " + (", ".join(f"`{t.prefix}text{t.suffix}`" for t in store.proxy_tags(form_id=form.id)) or "None")); return
-        await ctx.send(f"**{value.display_name}**\n{value.description or 'No description provided.'}\nID: `{value.id}`\nAvatar: {value.logo or 'None'} | Banner: {value.banner or 'None'}")
+        if isinstance(value, System):
+            groups = store.groups_for_system(value.id)
+            group_details = "\n\n".join(group_card(group) for group in groups)
+            await ctx.send(f"**{value.display_name}**\n{value.description or 'No description provided.'}\nID: `{value.id}`\nAvatar: {value.logo or 'None'} | Banner: {value.banner or 'None'}" + (f"\n\n{group_details}" if group_details else ""))
 
     async def deletemember_command(ctx: Any, *, selector: str) -> None:
         await run(ctx, lambda: store.delete_member(account(ctx), selector), lambda m: f"Deleted **{m.name}** (`{m.id}`) and all of their forms and records.")
