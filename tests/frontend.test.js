@@ -61,6 +61,25 @@ test("image fields are included in every profile patch", () => {
   );
 });
 
+test("an existing form with no profile fields produces an empty patch that can be skipped", () => {
+  // A form draft can contain only relationship data when its profile controls did
+  // not contribute values (for example, only its existing proxy tags survived).
+  const existingFormDraft = {
+    id: "form1", memberId: "member1", proxyTags: [{ prefix: "formal:", suffix: "" }],
+  };
+  const patch = h.consolidatedPatch(existingFormDraft, h.PROFILE_FIELDS.form);
+  assert.deepEqual(patch, {});
+  assert.equal(h.hasPatchFields(patch), false);
+});
+
+test("a populated existing form profile patch is not skipped", () => {
+  const patch = h.consolidatedPatch({
+    id: "form1", displayName: "Formal", soma: "Existing form", proxyTags: [],
+  }, h.PROFILE_FIELDS.form);
+  assert.deepEqual(patch, { displayName: "Formal", soma: "Existing form" });
+  assert.equal(h.hasPatchFields(patch), true);
+});
+
 test("failed saves preserve the draft and editing state", () => {
   const draft = { name: "Unsaved name", description: "Unsaved text" };
   const failed = h.failedSave({ editing: true, draft }, "Couldn't save");
