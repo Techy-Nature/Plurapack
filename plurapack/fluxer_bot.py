@@ -298,10 +298,15 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         action = action.casefold()
         if action == "create" and len(values) == 2:
             await run(ctx, lambda: store.create_group(account(ctx), values[0], values[1]), lambda g: f"Created group **{g.name}** (`{g.id}`), alias `{g.alias}`.")
+        elif action == "select":
+            if len(values) != 1:
+                await ctx.send(f"Usage: `{prefix}group select GROUP`")
+            else:
+                await run(ctx, lambda: store.set_active_group(account(ctx), values[0]), lambda g: f"Selected group **{g.name}** (`{g.id}`).")
         elif action == "add": await run(ctx, lambda: store.add_group_members(account(ctx), values), lambda pair: f"Added {len(pair[1])} member(s) to **{pair[0].name}**.")
         elif action == "alias" and len(values) == 1: await run(ctx, lambda: store.update_active_group(account(ctx), alias=values[0].strip()), lambda g: f"Group alias is now `{g.alias}`.")
         elif action == "avatar" and len(values) == 1: await run(ctx, lambda: store.update_active_group(account(ctx), avatar=values[0]), lambda g: f"Avatar updated for **{g.name}**.")
-        else: await ctx.send("Group action must be create, add, alias, or avatar with the documented arguments.")
+        else: await ctx.send("Group action must be create, select, add, alias, or avatar with the documented arguments.")
 
     def member_card(member: Any) -> str:
         forms = store.forms_for_member(member.id)

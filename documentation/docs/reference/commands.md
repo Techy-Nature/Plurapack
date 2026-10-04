@@ -29,6 +29,7 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `import FORMAT JSON` | `i` | Import PluralKit, Tupperbox, or Plurapack JSON. |
 | `export [FORMAT]` | `x` | Export portable metadata. |
 | `info SYSTEM_GROUP_MEMBER_OR_FORM` | `in` | Show a system and its groups, a single group, a member, or a form profile. |
+| `group create\|select\|add\|alias\|avatar ...` | `g` | Create, select, and edit the active group. |
 | `viewinfo [SYSTEM_OR_MEMBER]` | `vi` | Show a system card, then its member cards, or one member card. |
 | `viewmembers [SYSTEM]` | `ml` | Show only a system's paginated member cards. |
 | `viewmember MEMBER` | `vm` | Show one embedded member card. |
@@ -58,6 +59,23 @@ See [Proxy messages](../guides/proxying.md#autoproxy) for a walkthrough.
 ## Selector rules
 
 Where a command accepts `MEMBER`, use a stable member ID, full display name, alias, or proxy prefix. Where it accepts `MEMBER_OR_FORM`, a form ID is also valid.
+
+## Groups
+
+```text
+p;group create "NAME" ALIAS
+p;group select GROUP
+p;group add MEMBER [MEMBER...]
+p;group alias NEW_ALIAS
+p;group avatar IMAGE_URL
+```
+
+Creating a group makes it the active group. Use `group select` to choose which
+existing group later `group add`, `group alias`, and `group avatar` commands
+change. A group selector may be its stable ID, full name, or alias. Quote group
+names containing spaces. Member selectors may likewise be IDs, names, or
+aliases, and member names containing spaces must be quoted. The `g` shortcut
+supports all of the same operations (for example, `p;g select GROUP`).
 
 `view` is accepted as a compatibility alias for `viewinfo`, and `fronter` is
 accepted as a compatibility alias for `front`. Missing command arguments are

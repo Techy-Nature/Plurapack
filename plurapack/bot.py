@@ -105,7 +105,10 @@ COMMAND_HELP = {
     "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]", "Show system or member information."),
     "info": ("in", "SYSTEM_GROUP_MEMBER_OR_FORM",
              "Show a system, its groups, one group, a member, or a form profile."),
-    "group": ("g", "create|add|alias|avatar ...", "Create and edit the current group."),
+    "group": (
+        "g", "create|select|add|alias|avatar ...",
+        "Create, select, and edit the active group.",
+    ),
     "viewmembers": ("ml", "[SYSTEM]", "Show a system's member cards."),
     "viewmember": ("vm", "MEMBER", "Show one member card."),
     "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
@@ -751,6 +754,11 @@ def create_bot(prefix: str, database: str) -> Any:
                     raise ValueError(f'Usage: `{prefix}group create "name" alias`')
                 configured = store.create_group(ctx.author.id, values[0], values[1])
                 await ctx.send(f"Created group **{configured.name}** (`{configured.id}`), alias `{configured.alias}`.")
+            elif action == "select":
+                if len(values) != 1:
+                    raise ValueError(f"Usage: `{prefix}group select GROUP`")
+                configured = store.set_active_group(ctx.author.id, values[0])
+                await ctx.send(f"Selected group **{configured.name}** (`{configured.id}`).")
             elif action == "add":
                 configured, members = store.add_group_members(ctx.author.id, values)
                 await ctx.send(f"Added {len(members)} member(s) to **{configured.name}**.")
@@ -765,7 +773,7 @@ def create_bot(prefix: str, database: str) -> Any:
                 configured = store.update_active_group(ctx.author.id, avatar=values[0])
                 await ctx.send(f"Avatar updated for **{configured.name}**.")
             else:
-                raise ValueError("Group action must be create, add, alias, or avatar.")
+                raise ValueError("Group action must be create, select, add, alias, or avatar.")
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
 
