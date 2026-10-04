@@ -77,6 +77,11 @@ class MemberPatch(APIModel):
         return "" if value is None else value
 
 
+class VoicePatch(APIModel):
+    name: str | None = Field(None, min_length=1, max_length=80)
+    is_default: bool | None = Field(None, alias="isDefault")
+
+
 class FormCreate(APIModel):
     display_name: str = Field(alias="displayName", min_length=1, max_length=80)
     picture: HttpUrl | None = None

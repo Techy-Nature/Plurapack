@@ -585,3 +585,8 @@ def test_groups_create_add_and_update_active_group(tmp_path):
     assert [member.id for member in members] == [first.id, second.id]
     assert renamed.alias == "coworkers"
     assert pictured.avatar == "https://example.test/group.png"
+
+
+def test_voice_help_and_attachment_formats_are_consistent():
+    assert "VOICE_NAME" in bot.COMMAND_HELP["voice"][1]
+    assert "WAV/MP3" in bot.COMMAND_HELP["voice"][1]

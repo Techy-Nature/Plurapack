@@ -21,8 +21,10 @@ from .bot import (
     _member_creation_options,
     _print_cli_status,
     _update_profile_image,
-    _install_voice_attachment,
+    _download_voice_attachment,
 )
+from .voice_service import VoiceService
+from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .login import LoginError, LoginService
 from .proxy import Incoming, ProxyService
 from .storage import Group, Member, Store, System
@@ -127,6 +129,11 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     intents = fluxer.Intents.default() | fluxer.Intents.MESSAGE_CONTENT
     bot = fluxer.Bot(command_prefix=prefix, intents=intents)
     store = Store(database)
+    try:
+        voice_service = VoiceService(store, ForgejoVoiceStorage.configured(),
+                                     int(os.getenv("VOICE_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))))
+    except ValueError:
+        voice_service = None
     platform = FluxerPlatform(bot)
     service = ProxyService(store, platform, prefix)
     login_service = LoginService(store)
@@ -190,7 +197,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         """Common platform-neutral Store invocation/error-to-chat boundary."""
         try:
             value = operation()
-        except (PermissionError, ValueError, TransferError, json.JSONDecodeError) as error:
+        except (PermissionError, ValueError, VoiceStorageError, TransferError, json.JSONDecodeError) as error:
             await ctx.send(str(error))
             return None
         if success is not None:
@@ -360,14 +367,26 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
             await ctx.send(f"**{value.display_name}**\n{value.description or 'No description provided.'}\nID: `{value.id}`\nAvatar: {value.logo or 'None'} | Banner: {value.banner or 'None'}" + (f"\n\n{group_details}" if group_details else ""))
 
     async def deletemember_command(ctx: Any, *, selector: str) -> None:
-        await run(ctx, lambda: store.delete_member(account(ctx), selector), lambda m: f"Deleted **{m.name}** (`{m.id}`) and all of their forms and records.")
+        def remove():
+            member = store.member_selected(account(ctx), selector)
+            if member and store.member_voices(member.id):
+                if voice_service is None: raise ValueError("Custom voice storage is unavailable.")
+                return voice_service.delete_member(account(ctx), member.id)
+            return store.delete_member(account(ctx), selector)
+        await run(ctx, remove, lambda m: f"Deleted **{m.name}** (`{m.id}`) and all of their forms and records.")
 
     async def deletesystem_command(ctx: Any, confirmation: str = "") -> None:
         system_id = store.system_for(account(ctx))
         if not system_id: await ctx.send("Create a system first."); return
         if confirmation != system_id:
             await ctx.send(f"⚠️ **Permanent system deletion** This erases all associated data. Export first if needed. To confirm, run `{prefix}deletesystem {system_id}`."); return
-        await run(ctx, lambda: store.delete_system(account(ctx), confirmation), lambda sid: f"System `{sid}` and all associated data were permanently deleted.")
+        def remove():
+            members = store.members_for_system(system_id)
+            if any(store.member_voices(member.id) for member in members):
+                if voice_service is None: raise ValueError("Custom voice storage is unavailable.")
+                return voice_service.delete_system(account(ctx), confirmation)
+            return store.delete_system(account(ctx), confirmation)
+        await run(ctx, remove, lambda sid: f"System `{sid}` and all associated data were permanently deleted.")
 
     async def voiceoff_command(ctx: Any, selector: str) -> None:
         await run(ctx, lambda: store.configure_voice(account(ctx), selector, None, "{}", "off"), lambda m: f"Voice for **{m.name}** is Off.")
@@ -376,15 +395,48 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         if enabled.casefold() not in {"on", "off"}: await ctx.send("Formatting must be on or off."); return
         await run(ctx, lambda: store.configure_speech_formatting(account(ctx), selector, enabled.casefold() == "on", strikethrough.casefold()), lambda m: f"Speech formatting for **{m.name}** is {'On' if m.speech_formatting else 'Off'}; crossed-out text is `{m.strikethrough_speech}`.")
 
-    async def voice_command(ctx: Any, selector: str, playback: str = "send", *, settings: str = "{}") -> None:
-        directory = os.environ.get("PLURAPACK_VOICE_REFERENCE_DIR")
-        if not directory: await ctx.send("Voice configuration is disabled until the operator sets PLURAPACK_VOICE_REFERENCE_DIR."); return
+    async def voice_command(ctx: Any, *, arguments: str = "") -> None:
+        if voice_service is None: await ctx.send("Custom voice storage is not configured."); return
+        try: parts = shlex.split(arguments)
+        except ValueError as error: await ctx.send(str(error)); return
+        action = parts.pop(0).casefold() if parts and parts[0].casefold() in {"upload", "list", "default", "rename", "delete", "settings", "generic"} else "upload"
+        if not parts: await ctx.send(f"Use `{prefix}voice upload MEMBER VOICE_NAME` with a WAV/MP3 attachment, or list/default/rename/delete."); return
+        selector = parts.pop(0)
+        try:
+            member = store.member_selected(account(ctx), selector)
+            if member is None: raise PermissionError("Member not found or permission denied.")
+            if action == "list":
+                listed = voice_service.list_member_voices(account(ctx), member.id)
+                await ctx.send("\n".join(f"{'★ ' if item.is_default else ''}{item.name} (`{item.id}`)" for item in listed) or "No custom voices."); return
+            if action == "settings":
+                if len(parts) != 1: raise ValueError(f"Use `{prefix}voice settings MEMBER JSON` (quote the JSON).")
+                configured = store.configure_voice(account(ctx), member.id, member.voice_reference, parts[0], member.playback)
+                await ctx.send(f"Voice settings for **{configured.name}** were updated."); return
+            if action == "generic":
+                if len(parts) != 1: raise ValueError(f"Use `{prefix}voice generic MEMBER FILENAME.wav`.")
+                configured = voice_service.select_generic_voice(account(ctx), member.id, parts[0])
+                await ctx.send(f"Generic voice `{configured.voice_reference}` is now selected."); return
+            if action in {"default", "delete"}:
+                if len(parts) != 1: raise ValueError(f"Use `{prefix}voice {action} MEMBER VOICE`.")
+                selected = voice_service.select_member_voice(account(ctx), member.id, parts[0])
+                result = voice_service.set_default_member_voice(account(ctx), member.id, selected.id) if action == "default" else voice_service.delete_member_voice(account(ctx), member.id, selected.id)
+                await ctx.send(f"Voice **{result.name}** {'is now default' if action == 'default' else 'was deleted'}."); return
+            if action == "rename":
+                if len(parts) != 2: raise ValueError(f"Use `{prefix}voice rename MEMBER VOICE NEW_NAME` (quote names containing spaces).")
+                selected = voice_service.select_member_voice(account(ctx), member.id, parts[0])
+                renamed = voice_service.rename_member_voice(account(ctx), member.id, selected.id, parts[1])
+                await ctx.send(f"Voice renamed to **{renamed.name}**."); return
+            if not parts: raise ValueError(f"Use `{prefix}voice upload MEMBER VOICE_NAME` (quote names containing spaces).")
+            voice_name = parts.pop(0); playback = parts.pop(0) if parts else "send"; settings = "{}"
+            if parts: raise ValueError("Too many voice upload arguments.")
+        except (PermissionError, ValueError, VoiceStorageError) as error: await ctx.send(str(error)); return
         attachments = list(getattr(getattr(ctx, "message", ctx), "attachments", ()) or ())
         if len(attachments) != 1: await ctx.send("Attach exactly one WAV or MP3 voice reference."); return
         try:
-            reference = await asyncio.to_thread(_install_voice_attachment, attachments[0], Path(directory).expanduser().resolve())
-        except (OSError, TimeoutError, ValueError) as error: await ctx.send(str(error)); return
-        await run(ctx, lambda: store.configure_voice(account(ctx), selector, reference, settings, playback), lambda m: f"Voice for **{m.name}** is configured for `{m.playback}` playback.")
+            audio = await asyncio.to_thread(_download_voice_attachment, attachments[0], voice_service.max_bytes)
+            uploaded = await asyncio.to_thread(voice_service.upload_member_voice, account(ctx), member.id, voice_name, audio, make_default=True)
+        except (OSError, TimeoutError, ValueError, VoiceStorageError) as error: await ctx.send(str(error)); return
+        await run(ctx, lambda: store.configure_voice(account(ctx), selector, uploaded.storage_id + ".wav", settings, playback), lambda m: f"Voice for **{m.name}** is configured for `{m.playback}` playback.")
 
     async def import_command(ctx: Any, source: str = "", *, document: str = "") -> None:
         strategy = next((w[2:] for w in (source + " " + document).split() if w in {"--merge", "--skip-existing", "--overwrite"}), "merge")
