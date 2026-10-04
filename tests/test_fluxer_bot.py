@@ -208,5 +208,55 @@ async def test_fluxer_info_includes_groups_with_a_system(tmp_path, monkeypatch):
     assert "Members:\nNone" in replies[0]
 
 
+async def test_fluxer_group_select_and_add_multiple_quoted_members(tmp_path, monkeypatch):
+    database = tmp_path / "group-select.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    kellin = store.add_member("owner", "Kellin Jaden", "[k]")
+    varinn = store.add_member("owner", "Varinn Toft", "[v]")
+    mereid = store.add_member("owner", "Mereid", "[m]")
+    selected = store.create_group("owner", "Drakongaru", "dragon")
+    store.create_group("owner", "Other", "other")
+    replies = []
+
+    async def send(message, **kwargs):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    await commands["group"](ctx, "select", arguments="dragon")
+    await commands["g"](
+        ctx, "add", arguments='"Kellin Jaden" "Varinn Toft" Mereid'
+    )
+
+    assert store.active_group("owner") == selected
+    assert {member.id for member in store.group_members("owner", selected.id)} == {
+        kellin.id, varinn.id, mereid.id
+    }
+    assert replies == [
+        f"Selected group **Drakongaru** (`{selected.id}`).",
+        "Added 3 member(s) to **Drakongaru**.",
+    ]
+
+
+async def test_fluxer_group_select_reports_usage_and_unknown_group(tmp_path, monkeypatch):
+    database = tmp_path / "group-select-errors.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    Store(database).create_system("owner", "Crew")
+    replies = []
+
+    async def send(message, **kwargs):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    await commands["group"](ctx, "select")
+    await commands["group"](ctx, "select", arguments="missing")
+
+    assert replies == [
+        "Usage: `p;group select GROUP`",
+        "Group not found or not owned by this account.",
+    ]
+
+
 async def _append(values, value):
     values.append(value)

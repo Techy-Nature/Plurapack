@@ -817,9 +817,10 @@ class Store:
             ).fetchall()
         return [Member(**dict(row)) for row in rows]
 
-    def set_active_group(self, account_id: str, group_id: str) -> Group:
-        group = self.group_selected(account_id, group_id)
-        if group is None or group.id != group_id:
+    def set_active_group(self, account_id: str, selector: str) -> Group:
+        """Select an owned group by its stable ID, name, or alias."""
+        group = self.group_selected(account_id, selector)
+        if group is None:
             raise PermissionError("Group not found or not owned by this account.")
         with self.connect() as db:
             db.execute("""INSERT INTO active_groups(system_id,group_id) VALUES (?,?)
@@ -921,7 +922,9 @@ class Store:
     def add_group_members(self, account_id: str, selectors: Iterable[str]) -> tuple[Group, list[Member]]:
         group = self.active_group(account_id)
         if group is None:
-            raise PermissionError("Create a group first.")
+            raise PermissionError(
+                "No active group. Create a group or select an existing group first."
+            )
         selectors = list(selectors)
         if not selectors:
             raise ValueError("Supply at least one member alias or ID.")

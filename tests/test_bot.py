@@ -34,6 +34,31 @@ def test_help_details_accept_command_shortcuts_and_compatibility_aliases():
     ]
 
 
+def test_group_help_advertises_selection():
+    detail = bot._help_pages("p;", "group")[0]
+    assert "create|select|add|alias|avatar" in detail
+    assert "Create, select, and edit the active group." in detail
+
+
+async def test_stoat_group_select_changes_the_active_group(tmp_path):
+    database = tmp_path / "stoat-group-select.sqlite3"
+    client = bot.create_bot("p;", str(database))
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    first = store.create_group("owner", "Main Crew", "main")
+    store.create_group("owner", "Work", "work")
+    replies = []
+
+    async def send(message):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    await client.get_command("group").callback(ctx, "select", arguments="main")
+
+    assert store.active_group("owner") == first
+    assert replies == [f"Selected group **Main Crew** (`{first.id}`)."]
+
+
 @pytest.mark.parametrize(
     ("suffix", "description", "expected"),
     [

@@ -79,3 +79,42 @@ def test_group_update_defensively_rejects_null_identity_fields(tmp_path):
         store.update_group("owner", group.id, name=None)
     with pytest.raises(ValueError, match="alias cannot be null"):
         store.update_group("owner", group.id, alias=None)
+
+
+def test_active_group_can_be_selected_by_id_name_and_alias(tmp_path):
+    store = Store(tmp_path / "selection.sqlite3")
+    store.create_system("owner", "Owner")
+    first = store.create_group("owner", "Main Crew", "main")
+    assert store.active_group("owner") == first
+
+    second = store.create_group("owner", "Work", "work")
+    assert store.active_group("owner") == second
+
+    for selector in (first.id, "Main Crew", "main"):
+        assert store.set_active_group("owner", selector) == first
+        assert store.active_group("owner") == first
+        store.set_active_group("owner", second.id)
+
+
+def test_active_group_selection_rejects_missing_and_foreign_groups(tmp_path):
+    store = Store(tmp_path / "selection-permissions.sqlite3")
+    store.create_system("owner", "Owner")
+    store.create_system("other", "Other")
+    foreign = store.create_group("other", "Foreign", "foreign")
+
+    with pytest.raises(PermissionError, match="not found or not owned"):
+        store.set_active_group("owner", "missing")
+    for selector in (foreign.id, foreign.name, foreign.alias):
+        with pytest.raises(PermissionError, match="not found or not owned"):
+            store.set_active_group("owner", selector)
+
+
+def test_missing_active_group_error_is_command_prefix_neutral(tmp_path):
+    store = Store(tmp_path / "missing-active.sqlite3")
+    store.create_system("owner", "Owner")
+
+    with pytest.raises(
+        PermissionError,
+        match=r"^No active group\. Create a group or select an existing group first\.$",
+    ):
+        store.add_group_members("owner", ["member"])
