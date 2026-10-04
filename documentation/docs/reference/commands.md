@@ -73,9 +73,10 @@ p;group avatar IMAGE_URL
 Creating a group makes it the active group. Use `group select` to choose which
 existing group later `group add`, `group alias`, and `group avatar` commands
 change. A group selector may be its stable ID, full name, or alias. Quote group
-names containing spaces. Member selectors may likewise be IDs, names, or
-aliases, and member names containing spaces must be quoted. The `g` shortcut
-supports all of the same operations (for example, `p;g select GROUP`).
+names containing spaces. Member selectors may be stable IDs, full names,
+aliases, or proxy prefixes; member names containing spaces must be quoted. The
+`g` shortcut supports all of the same operations (for example,
+`p;g select GROUP`).
 
 `view` is accepted as a compatibility alias for `viewinfo`, and `fronter` is
 accepted as a compatibility alias for `front`. Missing command arguments are

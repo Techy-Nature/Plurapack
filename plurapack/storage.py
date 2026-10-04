@@ -923,8 +923,7 @@ class Store:
         group = self.active_group(account_id)
         if group is None:
             raise PermissionError(
-                "No active group. Create one with `p;group create ...` or select one with "
-                "`p;group select GROUP`."
+                "No active group. Create a group or select an existing group first."
             )
         selectors = list(selectors)
         if not selectors:

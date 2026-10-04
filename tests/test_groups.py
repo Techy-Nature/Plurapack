@@ -107,3 +107,14 @@ def test_active_group_selection_rejects_missing_and_foreign_groups(tmp_path):
     for selector in (foreign.id, foreign.name, foreign.alias):
         with pytest.raises(PermissionError, match="not found or not owned"):
             store.set_active_group("owner", selector)
+
+
+def test_missing_active_group_error_is_command_prefix_neutral(tmp_path):
+    store = Store(tmp_path / "missing-active.sqlite3")
+    store.create_system("owner", "Owner")
+
+    with pytest.raises(
+        PermissionError,
+        match=r"^No active group\. Create a group or select an existing group first\.$",
+    ):
+        store.add_group_members("owner", ["member"])
