@@ -260,3 +260,26 @@ async def test_fluxer_group_select_reports_usage_and_unknown_group(tmp_path, mon
 
 async def _append(values, value):
     values.append(value)
+
+async def test_fluxer_sanitizes_voice_storage_errors(tmp_path, monkeypatch):
+    from plurapack.voice_storage import StoredVoice, VoiceStorageError
+
+    class FailedStorage:
+        def put_voice(self, voice_id, audio): raise VoiceStorageError("Custom voice storage is unavailable.")
+        def get_voice(self, voice_id): raise VoiceStorageError("Custom voice storage is unavailable.")
+        def delete_voice(self, voice_id): raise VoiceStorageError("Custom voice storage is unavailable.")
+        def exists(self, voice_id): raise VoiceStorageError("Custom voice storage is unavailable.")
+
+    monkeypatch.setattr("plurapack.fluxer_bot.ForgejoVoiceStorage.configured", lambda: FailedStorage())
+    monkeypatch.setattr("plurapack.fluxer_bot._download_voice_attachment", lambda attachment, maximum: __import__("tests.test_custom_voices", fromlist=["wav_bytes"]).wav_bytes())
+    database = tmp_path / "voice-error.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database); store.create_system("owner", "System")
+    member = store.add_member("owner", "Member", "m:")
+    replies = []
+    async def send(message, **kwargs): replies.append(message)
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send,
+                          message=SimpleNamespace(attachments=[SimpleNamespace(url="https://invalid", filename="x.wav")]))
+    await commands["voice"](ctx, arguments=f'upload {member.id} Normal')
+    # VoiceStorageError is converted into a sanitized chat response.
+    assert replies == ["Custom voice storage is unavailable."]

@@ -175,3 +175,36 @@ def test_importing_config_does_not_touch_filesystem(tmp_path, monkeypatch):
     sys.modules.pop("plurapack.config", None)
     importlib.import_module("plurapack.config")
     assert set(tmp_path.iterdir()) == before
+
+
+def test_voice_duration_configuration_is_shared_and_positive():
+    from plurapack.config import resolve_voice_max_reference_seconds
+
+    assert resolve_voice_max_reference_seconds({}) == 30
+    assert resolve_voice_max_reference_seconds({"VOICE_MAX_REFERENCE_SECONDS": "30.5"}) == 30.5
+    for value in ("0", "-1", "not-a-number", "3601"):
+        with pytest.raises(ValueError, match="VOICE_MAX_REFERENCE_SECONDS"):
+            resolve_voice_max_reference_seconds({"VOICE_MAX_REFERENCE_SECONDS": value})
+
+
+def test_existing_voice_reference_migrates_as_legacy_clone(tmp_path):
+    database = tmp_path / "legacy-voice.sqlite3"
+    original = Store(database)
+    original.create_system("owner", "System")
+    member = original.add_member("owner", "Member", "m:")
+    original.configure_voice("owner", member.id, "legacy-reference.wav", {}, "send")
+    with original.connect() as db:
+        db.execute("ALTER TABLE members DROP COLUMN voice_source")
+
+    migrated = Store(database).member_selected("owner", member.id)
+
+    assert migrated.voice_reference == "legacy-reference.wav"
+    assert migrated.voice_source == "legacy_clone"
+
+
+def test_dashboard_rejects_invalid_shared_voice_duration(tmp_path, monkeypatch):
+    from plurapack.web import create_app
+
+    monkeypatch.setenv("VOICE_MAX_REFERENCE_SECONDS", "0")
+    with pytest.raises(ValueError, match="VOICE_MAX_REFERENCE_SECONDS"):
+        create_app(Store(tmp_path / "invalid-duration.sqlite3"), static_root=None)

@@ -12,10 +12,28 @@ from pathlib import Path
 
 
 DEFAULT_DATABASE = "plurapack.sqlite3"
+DEFAULT_VOICE_MAX_REFERENCE_SECONDS = 30.0
 
 
 class StorageConfigurationError(RuntimeError):
     """Raised when configured persistent storage cannot be prepared."""
+
+
+def resolve_voice_max_reference_seconds(
+    environ: Mapping[str, str] | None = None,
+) -> float:
+    """Return one consistently parsed positive duration for every component."""
+    environment = os.environ if environ is None else environ
+    raw = environment.get(
+        "VOICE_MAX_REFERENCE_SECONDS", str(DEFAULT_VOICE_MAX_REFERENCE_SECONDS)
+    )
+    try:
+        value = float(raw)
+    except ValueError as error:
+        raise ValueError("VOICE_MAX_REFERENCE_SECONDS must be a positive number.") from error
+    if not 0 < value <= 3600:
+        raise ValueError("VOICE_MAX_REFERENCE_SECONDS must be greater than 0 and at most 3600.")
+    return value
 
 
 def _prepare_directory(directory: Path, description: str) -> None:
