@@ -49,6 +49,7 @@ class Member:
     avatar: str | None
     color: str | None
     voice_reference: str | None
+    voice_source: str
     voice_settings: str
     playback: str
     speech_formatting: int
@@ -114,6 +115,19 @@ class Group:
     avatar: str | None
 
 
+@dataclass(frozen=True)
+class Voice:
+    id: str
+    member_id: str
+    name: str
+    storage_id: str
+    storage_provider: str
+    is_default: bool
+    created_at: int
+    updated_at: int
+    created_by: str
+
+
 class Store:
     def __init__(self, path: str | Path):
         self.path = str(path)
@@ -161,7 +175,10 @@ class Store:
                 CREATE TABLE IF NOT EXISTS members (
                     id TEXT PRIMARY KEY CHECK(length(id)=5), system_id TEXT NOT NULL REFERENCES systems(id),
                     name TEXT NOT NULL COLLATE NOCASE, prefix TEXT NOT NULL, suffix TEXT NOT NULL,
-                    avatar TEXT, color TEXT, voice_reference TEXT, voice_settings TEXT NOT NULL DEFAULT '{}',
+                    avatar TEXT, color TEXT, voice_reference TEXT,
+                    voice_source TEXT NOT NULL DEFAULT 'legacy_clone'
+                        CHECK(voice_source IN ('generic','custom','legacy_clone')),
+                    voice_settings TEXT NOT NULL DEFAULT '{}',
                     playback TEXT NOT NULL DEFAULT 'off' CHECK(playback IN ('off','local','send','both')),
                     speech_formatting INTEGER NOT NULL DEFAULT 0,
                     strikethrough_speech TEXT NOT NULL DEFAULT 'normal',
@@ -239,10 +256,26 @@ class Store:
                     system_id TEXT PRIMARY KEY REFERENCES systems(id) ON DELETE CASCADE,
                     group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS voices (
+                    id TEXT PRIMARY KEY, member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL, storage_id TEXT NOT NULL UNIQUE,
+                    storage_provider TEXT NOT NULL, is_default INTEGER NOT NULL DEFAULT 0,
+                    created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, created_by TEXT NOT NULL,
+                    CHECK(is_default IN (0,1)), UNIQUE(member_id, name COLLATE NOCASE)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS one_default_voice_per_member
+                    ON voices(member_id) WHERE is_default=1;
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
             if "color" not in columns:
                 db.execute("ALTER TABLE members ADD COLUMN color TEXT")
+            if "voice_source" not in columns:
+                # Existing non-null references predate source tracking and were
+                # historically Chatterbox clone references.
+                db.execute("ALTER TABLE members ADD COLUMN voice_source TEXT NOT NULL DEFAULT 'legacy_clone'")
+                db.execute("""UPDATE members SET voice_source='custom'
+                    WHERE EXISTS (SELECT 1 FROM voices v WHERE v.member_id=members.id
+                    AND members.voice_reference=v.storage_id || '.wav')""")
             if "speech_formatting" not in columns:
                 db.execute("ALTER TABLE members ADD COLUMN speech_formatting INTEGER NOT NULL DEFAULT 0")
             if "strikethrough_speech" not in columns:
@@ -1330,7 +1363,8 @@ class Store:
         return self.proxy_tags(form_id=target.id) if form else self.proxy_tags(member_id=target.id)
 
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
-                        voice_settings: str | dict[str, Any] = "{}", playback: str = "send") -> Member:
+                        voice_settings: str | dict[str, Any] = "{}", playback: str = "send",
+                        source_type: str | None = None) -> Member:
         """Configure an owned member's synthesis and playback destinations."""
         if playback not in {"off", "local", "send", "both"}:
             raise ValueError("Playback must be off, local, send, or both.")
@@ -1340,9 +1374,12 @@ class Store:
             raise PermissionError("Member not found or not owned by this account.")
         if playback != "off" and not voice_reference:
             raise ValueError("Voice playback requires a voice reference.")
+        if source_type is not None and source_type not in {"generic", "custom", "legacy_clone"}:
+            raise ValueError("Voice source type is invalid.")
+        selected_source = source_type or member.voice_source
         with self.connect() as db:
-            db.execute("UPDATE members SET voice_reference=?, voice_settings=?, playback=? WHERE id=?",
-                       (voice_reference, normalized, playback, member.id))
+            db.execute("UPDATE members SET voice_reference=?, voice_source=?, voice_settings=?, playback=? WHERE id=?",
+                       (voice_reference, selected_source, normalized, playback, member.id))
         return self.member_selected(account_id, member.id)  # type: ignore[return-value]
 
     def configure_speech_formatting(self, account_id: str, member_selector: str, enabled: bool,
@@ -1468,3 +1505,86 @@ class Store:
                 WHERE proxy_message_id=? AND deleted_at IS NULL AND system_id=(
                     SELECT system_id FROM owners WHERE account_id=?)""", (proxy_id, account_id))
             return cursor.rowcount == 1
+
+    @staticmethod
+    def _voice(row: sqlite3.Row) -> Voice:
+        return Voice(str(row["id"]), str(row["member_id"]), str(row["name"]),
+                     str(row["storage_id"]), str(row["storage_provider"]),
+                     bool(row["is_default"]), int(row["created_at"]),
+                     int(row["updated_at"]), str(row["created_by"]))
+
+    def create_member_voice(self, account_id: str, member_id: str, voice_id: str,
+                            name: str, storage_id: str, provider: str,
+                            make_default: bool = False) -> Voice:
+        member = self.member_selected(account_id, member_id)
+        if member is None:
+            raise PermissionError("Member not found or permission denied.")
+        now = int(time.time())
+        try:
+            with self.connect() as db:
+                has_voice = db.execute("SELECT 1 FROM voices WHERE member_id=?", (member.id,)).fetchone()
+                default = make_default or has_voice is None
+                if default:
+                    db.execute("UPDATE voices SET is_default=0, updated_at=? WHERE member_id=?", (now, member.id))
+                db.execute("""INSERT INTO voices
+                    (id,member_id,name,storage_id,storage_provider,is_default,created_at,updated_at,created_by)
+                    VALUES (?,?,?,?,?,?,?,?,?)""",
+                    (voice_id, member.id, name, storage_id, provider, int(default), now, now, account_id))
+                row = db.execute("SELECT * FROM voices WHERE id=?", (voice_id,)).fetchone()
+        except sqlite3.IntegrityError as error:
+            raise ValueError("That voice name is already used for this member.") from error
+        return self._voice(row)
+
+    def member_voices(self, member_id: str) -> list[Voice]:
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM voices WHERE member_id=? ORDER BY is_default DESC, created_at, id",
+                              (member_id,)).fetchall()
+        return [self._voice(row) for row in rows]
+
+    def member_voice(self, account_id: str, member_id: str, voice_id: str) -> Voice:
+        if self.member_selected(account_id, member_id) is None:
+            raise PermissionError("Member not found or permission denied.")
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM voices WHERE id=? AND member_id=?", (voice_id, member_id)).fetchone()
+        if row is None:
+            raise ValueError("Voice not found.")
+        return self._voice(row)
+
+    def update_member_voice(self, account_id: str, member_id: str, voice_id: str,
+                            *, name: str | None = None, make_default: bool = False) -> Voice:
+        self.member_voice(account_id, member_id, voice_id)
+        now = int(time.time())
+        try:
+            with self.connect() as db:
+                if make_default:
+                    db.execute("UPDATE voices SET is_default=0, updated_at=? WHERE member_id=?", (now, member_id))
+                if name is not None:
+                    name = name.strip()
+                    if not name or len(name) > 80:
+                        raise ValueError("Voice name must contain 1 to 80 characters.")
+                db.execute("UPDATE voices SET name=COALESCE(?,name), is_default=CASE WHEN ? THEN 1 ELSE is_default END, updated_at=? WHERE id=?",
+                           (name, int(make_default), now, voice_id))
+                row = db.execute("SELECT * FROM voices WHERE id=?", (voice_id,)).fetchone()
+        except sqlite3.IntegrityError as error:
+            raise ValueError("That voice name is already used for this member.") from error
+        return self._voice(row)
+
+    def delete_member_voice(self, account_id: str, member_id: str, voice_id: str) -> None:
+        voice = self.member_voice(account_id, member_id, voice_id)
+        with self.connect() as db:
+            db.execute("DELETE FROM voices WHERE id=?", (voice_id,))
+            if voice.is_default:
+                replacement = db.execute("SELECT id FROM voices WHERE member_id=? ORDER BY created_at,id LIMIT 1",
+                                         (member_id,)).fetchone()
+                if replacement:
+                    db.execute("UPDATE voices SET is_default=1, updated_at=? WHERE id=?",
+                               (int(time.time()), replacement["id"]))
+
+    def restore_member_voice(self, voice: Voice) -> None:
+        with self.connect() as db:
+            if voice.is_default:
+                db.execute("UPDATE voices SET is_default=0 WHERE member_id=?", (voice.member_id,))
+            db.execute("INSERT INTO voices VALUES (?,?,?,?,?,?,?,?,?)",
+                       (voice.id, voice.member_id, voice.name, voice.storage_id,
+                        voice.storage_provider, int(voice.is_default), voice.created_at,
+                        voice.updated_at, voice.created_by))
