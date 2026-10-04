@@ -29,6 +29,8 @@ from .storage import Group, Member, Store, System
 from .login import LoginError, LoginService
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
 from .config import StorageConfigurationError, resolve_database_path
+from .voice_service import VoiceService
+from .voice_storage import ForgejoVoiceStorage
 
 
 STOAT_INSTALL_MESSAGE = (
@@ -370,7 +372,20 @@ def _install_voice_attachment(attachment: Any, reference_dir: Path, max_bytes: i
         temporary_target = reference_dir / (target_name + ".new")
         shutil.copyfile(converted, temporary_target)
         os.replace(temporary_target, reference_dir / target_name)
-    return target_name
+        return target_name
+
+
+def _download_voice_attachment(attachment: Any, max_bytes: int = 25 * 1024 * 1024) -> bytes:
+    """Download an attachment without trusting or retaining its supplied filename."""
+    url = str(getattr(attachment, "url", ""))
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("The attached voice reference has no downloadable URL.")
+    request = urllib.request.Request(url, headers={"User-Agent": "Plurapack/voice-upload"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = response.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("Voice reference exceeds the configured maximum size.")
+    return data
 
 
 class StoatDependencyError(RuntimeError):
@@ -541,6 +556,11 @@ def create_bot(prefix: str, database: str) -> Any:
     bot_class = _plurapack_bot_class(commands)
     bot = bot_class(command_prefix=prefix, description="Plural communication proxy")
     store = Store(database)
+    try:
+        voice_service = VoiceService(store, ForgejoVoiceStorage.configured(),
+            _positive_environment_integer("VOICE_MAX_UPLOAD_BYTES", 25 * 1024 * 1024, 1024 * 1024 * 1024))
+    except ValueError:
+        voice_service = None
     platform = StoatPlatform({}, bot.state, stoat)
     speech_queue = None
     tts_url = os.environ.get("PLURAPACK_TTS_URL")
@@ -905,21 +925,21 @@ def create_bot(prefix: str, database: str) -> Any:
     @bot.command(aliases=[COMMAND_SHORTCUTS["voice"]])
     async def voice(ctx: commands.Context, selector: str, playback: str = "send", *,
                     settings: str = "{}") -> None:
-        """Install an attached WAV/MP3, replacing an earlier upload with the same name."""
-        reference_dir_value = os.environ.get("PLURAPACK_VOICE_REFERENCE_DIR")
-        if not reference_dir_value:
-            await ctx.send("Voice configuration is disabled until the operator sets PLURAPACK_VOICE_REFERENCE_DIR.")
+        """Upload a private UUID-named WAV through the shared voice service."""
+        if voice_service is None:
+            await ctx.send("Custom voice storage is not configured.")
             return
         attachments = list(getattr(ctx.message, "attachments", ()) or ())
         if len(attachments) != 1:
             await ctx.send("Attach exactly one WAV or MP3 voice reference.")
             return
-        reference_dir = Path(reference_dir_value).expanduser().resolve()
         try:
-            reference = await asyncio.to_thread(_install_voice_attachment, attachments[0], reference_dir)
-            configured = store.configure_voice(
-                ctx.author.id, selector, reference, settings, playback
-            )
+            member = store.member_selected(ctx.author.id, selector)
+            if member is None: raise PermissionError("Member not found or permission denied.")
+            audio = await asyncio.to_thread(_download_voice_attachment, attachments[0], voice_service.max_bytes)
+            uploaded = await asyncio.to_thread(voice_service.upload_member_voice,
+                str(ctx.author.id), member.id, "Custom voice", audio, make_default=True)
+            configured = store.configure_voice(ctx.author.id, selector, uploaded.storage_id + ".wav", settings, playback)
         except (OSError, TimeoutError, PermissionError, ValueError, json.JSONDecodeError) as error:
             await ctx.send(str(error))
             return

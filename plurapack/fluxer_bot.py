@@ -21,8 +21,10 @@ from .bot import (
     _member_creation_options,
     _print_cli_status,
     _update_profile_image,
-    _install_voice_attachment,
+    _download_voice_attachment,
 )
+from .voice_service import VoiceService
+from .voice_storage import ForgejoVoiceStorage
 from .login import LoginError, LoginService
 from .proxy import Incoming, ProxyService
 from .storage import Group, Member, Store, System
@@ -127,6 +129,11 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     intents = fluxer.Intents.default() | fluxer.Intents.MESSAGE_CONTENT
     bot = fluxer.Bot(command_prefix=prefix, intents=intents)
     store = Store(database)
+    try:
+        voice_service = VoiceService(store, ForgejoVoiceStorage.configured(),
+                                     int(os.getenv("VOICE_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))))
+    except ValueError:
+        voice_service = None
     platform = FluxerPlatform(bot)
     service = ProxyService(store, platform, prefix)
     login_service = LoginService(store)
@@ -377,14 +384,16 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         await run(ctx, lambda: store.configure_speech_formatting(account(ctx), selector, enabled.casefold() == "on", strikethrough.casefold()), lambda m: f"Speech formatting for **{m.name}** is {'On' if m.speech_formatting else 'Off'}; crossed-out text is `{m.strikethrough_speech}`.")
 
     async def voice_command(ctx: Any, selector: str, playback: str = "send", *, settings: str = "{}") -> None:
-        directory = os.environ.get("PLURAPACK_VOICE_REFERENCE_DIR")
-        if not directory: await ctx.send("Voice configuration is disabled until the operator sets PLURAPACK_VOICE_REFERENCE_DIR."); return
+        if voice_service is None: await ctx.send("Custom voice storage is not configured."); return
         attachments = list(getattr(getattr(ctx, "message", ctx), "attachments", ()) or ())
         if len(attachments) != 1: await ctx.send("Attach exactly one WAV or MP3 voice reference."); return
         try:
-            reference = await asyncio.to_thread(_install_voice_attachment, attachments[0], Path(directory).expanduser().resolve())
+            member = store.member_selected(account(ctx), selector)
+            if member is None: raise PermissionError("Member not found or permission denied.")
+            audio = await asyncio.to_thread(_download_voice_attachment, attachments[0], voice_service.max_bytes)
+            uploaded = await asyncio.to_thread(voice_service.upload_member_voice, account(ctx), member.id, "Custom voice", audio, make_default=True)
         except (OSError, TimeoutError, ValueError) as error: await ctx.send(str(error)); return
-        await run(ctx, lambda: store.configure_voice(account(ctx), selector, reference, settings, playback), lambda m: f"Voice for **{m.name}** is configured for `{m.playback}` playback.")
+        await run(ctx, lambda: store.configure_voice(account(ctx), selector, uploaded.storage_id + ".wav", settings, playback), lambda m: f"Voice for **{m.name}** is configured for `{m.playback}` playback.")
 
     async def import_command(ctx: Any, source: str = "", *, document: str = "") -> None:
         strategy = next((w[2:] for w in (source + " " + document).split() if w in {"--merge", "--skip-existing", "--overwrite"}), "merge")

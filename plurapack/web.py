@@ -12,7 +12,7 @@ from typing import Any, Callable
 from urllib.parse import quote
 
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
+from fastapi import Depends, FastAPI, File, Form as FormField, HTTPException, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -25,6 +25,9 @@ from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
 from .web_models import (ActiveGroupUpdate, FormCreate, FormPatch, FrontUpdate,
                          GroupCreate, GroupMemberUpdate, GroupPatch, MemberCreate,
                          MemberPatch, ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
+from .web_models import VoicePatch
+from .voice_service import VoiceService, voice_json
+from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .browser_audio import BrowserAudioStore
 from .config import resolve_database_path
 from .transfer import MAX_FILE_SIZE, TransferError, export_system, import_system
@@ -75,6 +78,7 @@ def member_json(store: Store, member: Member, front: Front | None = None) -> dic
             "forms": [form_json(form, store) for form in store.forms_for_member(member.id)],
             "voice": {"configured": member.voice_reference is not None,
                       "settings": json.loads(member.voice_settings), "playback": member.playback,
+                      "customVoices": [voice_json(voice) for voice in store.member_voices(member.id)],
                       "supportedPlayback": ["off", "local", "send", "both"],
                       "speechFormatting": bool(member.speech_formatting),
                       "strikethroughSpeech": member.strikethrough_speech}}
@@ -108,7 +112,8 @@ def front_json(front: Front | None) -> dict[str, Any]:
 
 
 def create_app(store: Store | None = None, static_root: Path | None = ROOT,
-               browser_audio: BrowserAudioStore | None = None) -> FastAPI:
+               browser_audio: BrowserAudioStore | None = None,
+               voice_service: VoiceService | None = None) -> FastAPI:
     app = FastAPI(title="Plurapack Web API", version="1")
     if store is None:
         database = resolve_database_path()
@@ -117,6 +122,13 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         database = store.path
     app.state.store = store
     app.state.browser_audio = browser_audio or BrowserAudioStore.configured(database)
+    if voice_service is None:
+        try:
+            maximum = int(os.getenv("VOICE_MAX_UPLOAD_BYTES", str(25 * 1024 * 1024)))
+            voice_service = VoiceService(store, ForgejoVoiceStorage.configured(), maximum)
+        except ValueError:
+            voice_service = None
+    app.state.voice_service = voice_service
     app.state.login_service = LoginService(app.state.store)
     app.state.login_start_limiter = LoginStartLimiter(
         int(os.getenv("PLURAPACK_LOGIN_START_LIMIT", "10"))
@@ -183,6 +195,12 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         if group is None or group.id != group_id or group.system_id != system_id:
             raise HTTPException(404, "Resource not found")
         return group
+
+    def voices(request: Request) -> VoiceService:
+        service = request.app.state.voice_service
+        if service is None:
+            raise HTTPException(503, "Custom voice storage is not configured")
+        return service
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:
@@ -443,6 +461,59 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
                             store: Store = Depends(db)) -> Response:
         await owned_member(system_id, member_id, user, store)
         await run(store.delete_member, user.id, member_id)
+        return Response(status_code=204)
+
+    @app.get("/api/systems/{system_id}/members/{member_id}/voices")
+    async def list_member_voices(system_id: str, member_id: str, request: Request,
+                                 user: WebUser = Depends(require_authenticated_user),
+                                 store: Store = Depends(db)) -> list[dict[str, Any]]:
+        await owned_member(system_id, member_id, user, store)
+        return [voice_json(item) for item in await run(voices(request).list_member_voices,
+                                                       user.id, member_id)]
+
+    @app.post("/api/systems/{system_id}/members/{member_id}/voices", status_code=201)
+    async def upload_member_voice(system_id: str, member_id: str, request: Request,
+                                  name: str = FormField(...), audio: UploadFile = File(...),
+                                  is_default: bool = FormField(False, alias="isDefault"),
+                                  user: WebUser = Depends(require_authenticated_user),
+                                  store: Store = Depends(db)) -> dict[str, Any]:
+        await owned_member(system_id, member_id, user, store)
+        service = voices(request)
+        data = await audio.read(service.max_bytes + 1)
+        try:
+            result = await run(service.upload_member_voice, user.id, member_id, name, data,
+                               make_default=is_default)
+        except PermissionError as error:
+            raise HTTPException(403, str(error)) from error
+        except VoiceStorageError as error:
+            raise HTTPException(502, str(error)) from error
+        return voice_json(result)
+
+    @app.patch("/api/systems/{system_id}/members/{member_id}/voices/{voice_id}")
+    async def patch_member_voice(system_id: str, member_id: str, voice_id: str,
+                                 body: VoicePatch, request: Request,
+                                 user: WebUser = Depends(require_authenticated_user),
+                                 store: Store = Depends(db)) -> dict[str, Any]:
+        await owned_member(system_id, member_id, user, store)
+        service = voices(request)
+        result = None
+        if body.name is not None:
+            result = await run(service.rename_member_voice, user.id, member_id, voice_id, body.name)
+        if body.is_default:
+            result = await run(service.set_default_member_voice, user.id, member_id, voice_id)
+        if result is None:
+            raise HTTPException(422, "Supply a name or set isDefault to true")
+        return voice_json(result)
+
+    @app.delete("/api/systems/{system_id}/members/{member_id}/voices/{voice_id}", status_code=204)
+    async def remove_member_voice(system_id: str, member_id: str, voice_id: str, request: Request,
+                                  user: WebUser = Depends(require_authenticated_user),
+                                  store: Store = Depends(db)) -> Response:
+        await owned_member(system_id, member_id, user, store)
+        try:
+            await run(voices(request).delete_member_voice, user.id, member_id, voice_id)
+        except VoiceStorageError as error:
+            raise HTTPException(502, str(error)) from error
         return Response(status_code=204)
 
     @app.get("/api/systems/{system_id}/members/{member_id}/forms")
