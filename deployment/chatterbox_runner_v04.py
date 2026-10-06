@@ -184,8 +184,8 @@ class Chatterbox:
 
         parts = validate_parts(parts)
         voice_path = self.get_voice(voice_id)
-        model = self._load_style_model()
         try:
+            model = self._load_style_model()
             rendered = []
             for part in parts:
                 preset = STYLE_PRESETS[part["style"]]
