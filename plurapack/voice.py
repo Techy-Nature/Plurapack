@@ -5,8 +5,11 @@ import json
 import re
 from typing import Any
 
-# Preserve the historical database/API settings for future runner support.
-# Modal v03 accepts none of these controls; the backend sends only text/voice_id.
+# Preserve the historical database/API settings. Modal v05 actively uses
+# temperature, exaggeration, cfg_weight, seed, and speed_factor. The legacy
+# language/split_text/chunk_size fields remain accepted so existing records and
+# older clients do not need a migration; the current English Nano/Original
+# runner does not send those fields to Chatterbox.
 PERMITTED_SETTINGS = {
     "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor",
     "language", "split_text", "chunk_size",
