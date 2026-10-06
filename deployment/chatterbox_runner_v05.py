@@ -1,14 +1,14 @@
 """Modal-hosted Chatterbox endpoint for Plurapack.
 
-v04 keeps the v03 ``text`` + ``voice_id`` request compatible while adding a
-``parts`` request for semantic speech formatting. Plain speech uses Chatterbox
-Turbo. Formatted speech uses the controllable original Chatterbox model so
-emphasis/mumble/whisper are not silently flattened by Turbo.
+v05 uses Chatterbox Nano for the normal low-cost path and Original Chatterbox
+for semantic formatting or member settings that require CFG/exaggeration.
+Both paths return one WAV and use the same private Forgejo voice references.
 """
 from __future__ import annotations
 
 import io
 import os
+import random
 import re
 import urllib.error
 import urllib.parse
@@ -27,11 +27,14 @@ MAX_VOICE_BYTES = 10 * 1024 * 1024
 MAX_TEXT_CHARACTERS = 500
 MAX_PARTS = 64
 SUPPORTED_STYLES = frozenset({"normal", "emphasis", "mumble", "whisper"})
+SUPPORTED_SETTINGS = frozenset({
+    "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor"
+})
 STYLE_PRESETS = {
-    "normal": {"exaggeration": 0.5, "cfg_weight": 0.5},
+    "normal": {},
     "emphasis": {"exaggeration": 0.85, "cfg_weight": 0.35},
-    "mumble": {"exaggeration": 0.2, "cfg_weight": 0.2},
-    "whisper": {"exaggeration": 0.05, "cfg_weight": 0.15},
+    "mumble": {"exaggeration": 0.2, "cfg_weight": 0.2, "speed_factor": 1.12},
+    "whisper": {"exaggeration": 0.05, "cfg_weight": 0.15, "speed_factor": 0.9},
 }
 
 
@@ -43,10 +46,18 @@ class SpeechGenerationError(RuntimeError):
     """Sanitized model-generation failure."""
 
 
+# Nano landed upstream after the latest PyPI wheel. Pin the exact upstream commit
+# that introduced the supported ``nano=True`` API instead of relying on master.
+CHATTERBOX_SOURCE = (
+    "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@"
+    "5de7a54aa4e5e2baadb0182dde554908b48b85c2"
+)
+
 image = (
     modal.Image.debian_slim(python_version="3.10")
+    .apt_install("git")
     .uv_pip_install(
-        "chatterbox-tts==0.1.6",
+        CHATTERBOX_SOURCE,
         "fastapi[standard]==0.124.4",
         "peft==0.18.0",
     )
@@ -74,6 +85,33 @@ def validate_text(text: object) -> str:
     return text
 
 
+def _numeric_setting(settings: dict, name: str, minimum: float, maximum: float) -> None:
+    if name not in settings:
+        return
+    value = settings[name]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("Speech settings are invalid.")
+    if not minimum <= float(value) <= maximum:
+        raise ValueError("Speech settings are invalid.")
+
+
+def validate_settings(value: object) -> dict[str, float | int]:
+    if value is None:
+        return {}
+    if not isinstance(value, dict) or set(value) - SUPPORTED_SETTINGS:
+        raise ValueError("Speech settings are invalid.")
+    settings = dict(value)
+    _numeric_setting(settings, "temperature", 0.05, 5.0)
+    _numeric_setting(settings, "exaggeration", 0.0, 2.0)
+    _numeric_setting(settings, "cfg_weight", 0.0, 1.0)
+    _numeric_setting(settings, "speed_factor", 0.25, 4.0)
+    if "seed" in settings:
+        seed = settings["seed"]
+        if isinstance(seed, bool) or not isinstance(seed, int) or not 0 <= seed <= 2_147_483_647:
+            raise ValueError("Speech settings are invalid.")
+    return settings
+
+
 def validate_parts(value: object) -> list[dict[str, str]]:
     if not isinstance(value, list) or not value or len(value) > MAX_PARTS:
         raise ValueError("Speech parts are invalid.")
@@ -93,6 +131,30 @@ def validate_parts(value: object) -> list[dict[str, str]]:
     return parts
 
 
+def apply_seed(seed: int) -> None:
+    if seed == 0:
+        return
+    import numpy as np
+    import torch
+
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def apply_speed_factor(wav, factor: float):
+    """Pitch-preserving time stretch, matching the historical server semantics."""
+    if factor == 1.0:
+        return wav
+    import librosa
+    import torch
+
+    samples = wav.detach().cpu().squeeze(0).numpy()
+    stretched = librosa.effects.time_stretch(samples, rate=float(factor))
+    return torch.from_numpy(stretched.copy()).float().unsqueeze(0)
+
+
 @app.cls(
     gpu="a10g",
     max_containers=1,
@@ -108,15 +170,16 @@ class Chatterbox:
     def load(self) -> None:
         from chatterbox.tts_turbo import ChatterboxTurboTTS
 
-        self.model = ChatterboxTurboTTS.from_pretrained(device="cuda")
-        self.style_model = None
+        # Nano is the default path: smallest model, inexpensive for ordinary speech.
+        self.nano_model = ChatterboxTurboTTS.from_pretrained(device="cuda", nano=True)
+        self.original_model = None
 
-    def _load_style_model(self):
-        if self.style_model is None:
+    def _load_original_model(self):
+        if self.original_model is None:
             from chatterbox.tts import ChatterboxTTS
 
-            self.style_model = ChatterboxTTS.from_pretrained(device="cuda")
-        return self.style_model
+            self.original_model = ChatterboxTTS.from_pretrained(device="cuda")
+        return self.original_model
 
     def get_voice(self, voice_id: str) -> Path:
         namespace, name = parse_voice_id(voice_id)
@@ -136,7 +199,7 @@ class Chatterbox:
             url,
             headers={
                 "Authorization": f"token {token}",
-                "User-Agent": "Plurapack-Chatterbox/0.4",
+                "User-Agent": "Plurapack-Chatterbox/0.5",
             },
         )
         try:
@@ -168,34 +231,58 @@ class Chatterbox:
         buffer.seek(0)
         return buffer.read()
 
+    def _generate_nano(self, prompt: str, voice_path: Path, settings: dict):
+        apply_seed(int(settings.get("seed", 0)))
+        wav = self.nano_model.generate(
+            prompt,
+            audio_prompt_path=str(voice_path),
+            temperature=float(settings.get("temperature", 0.8)),
+        )
+        return apply_speed_factor(wav, float(settings.get("speed_factor", 1.0)))
+
+    def _generate_original(self, prompt: str, voice_path: Path, settings: dict):
+        model = self._load_original_model()
+        apply_seed(int(settings.get("seed", 0)))
+        wav = model.generate(
+            prompt,
+            audio_prompt_path=str(voice_path),
+            exaggeration=float(settings.get("exaggeration", 0.5)),
+            cfg_weight=float(settings.get("cfg_weight", 0.5)),
+            temperature=float(settings.get("temperature", 0.8)),
+        )
+        return apply_speed_factor(wav, float(settings.get("speed_factor", 1.0)))
+
     @modal.method()
-    def generate(self, prompt: str, voice_id: str) -> bytes:
+    def generate(self, prompt: str, voice_id: str, settings: dict | None = None) -> bytes:
         prompt = validate_text(prompt)
+        settings = validate_settings(settings)
         voice_path = self.get_voice(voice_id)
         try:
-            wav = self.model.generate(prompt, audio_prompt_path=str(voice_path))
-            return self._wav_bytes(wav, self.model.sr)
+            # Explicit CFG/exaggeration settings require Original; otherwise Nano.
+            if "exaggeration" in settings or "cfg_weight" in settings:
+                wav = self._generate_original(prompt, voice_path, settings)
+                sample_rate = self._load_original_model().sr
+            else:
+                wav = self._generate_nano(prompt, voice_path, settings)
+                sample_rate = self.nano_model.sr
+            return self._wav_bytes(wav, sample_rate)
         except Exception:
             raise SpeechGenerationError("Speech generation failed.") from None
 
     @modal.method()
-    def generate_parts(self, parts: list[dict[str, str]], voice_id: str) -> bytes:
+    def generate_parts(self, parts: list[dict[str, str]], voice_id: str,
+                       settings: dict | None = None) -> bytes:
         import torch
 
         parts = validate_parts(parts)
+        base_settings = validate_settings(settings)
         voice_path = self.get_voice(voice_id)
         try:
-            model = self._load_style_model()
+            model = self._load_original_model()
             rendered = []
             for part in parts:
-                preset = STYLE_PRESETS[part["style"]]
-                wav = model.generate(
-                    part["text"],
-                    audio_prompt_path=str(voice_path),
-                    exaggeration=preset["exaggeration"],
-                    cfg_weight=preset["cfg_weight"],
-                )
-                rendered.append(wav.detach().cpu())
+                part_settings = {**base_settings, **STYLE_PRESETS[part["style"]]}
+                rendered.append(self._generate_original(part["text"], voice_path, part_settings).detach().cpu())
             combined = torch.cat(rendered, dim=-1)
             return self._wav_bytes(combined, model.sr)
         except Exception:
@@ -210,19 +297,18 @@ class Chatterbox:
             if not isinstance(payload, dict):
                 raise ValueError("A JSON object is required.")
             voice_id = payload.get("voice_id")
-            # Validate before entering the remote method so malformed IDs are
-            # rejected without touching private voice storage.
             parse_voice_id(voice_id)
+            settings = validate_settings(payload.get("settings", {}))
             has_text = "text" in payload
             has_parts = "parts" in payload
             if has_text == has_parts:
                 raise ValueError("Provide either text or parts.")
             if has_parts:
                 parts = validate_parts(payload.get("parts"))
-                audio_bytes = self.generate_parts.local(parts, voice_id)
+                audio_bytes = self.generate_parts.local(parts, voice_id, settings)
             else:
                 text = validate_text(payload.get("text"))
-                audio_bytes = self.generate.local(text, voice_id)
+                audio_bytes = self.generate.local(text, voice_id, settings)
         except FileNotFoundError:
             raise HTTPException(status_code=404, detail="Voice reference was not found.") from None
         except PermissionError:
@@ -239,6 +325,6 @@ class Chatterbox:
 
 @app.local_entrypoint()
 def main(text: str = "Hello from Plurapack.", voice_id: str = "generic:Jordan") -> None:
-    output = Chatterbox().generate.remote(text, voice_id)
+    output = Chatterbox().generate.remote(text, voice_id, {})
     Path("chatterbox-test.wav").write_bytes(output)
     print("Wrote chatterbox-test.wav")

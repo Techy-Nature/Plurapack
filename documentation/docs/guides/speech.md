@@ -2,7 +2,7 @@
 
 Speech is optional and **off by default**. Inference is provided by the configured
 protected Modal endpoint. The repository includes the current production runner at
-`deployment/chatterbox_runner_v04.py`. Plurapack needs no local GPU, CUDA, PyTorch,
+`deployment/chatterbox_runner_v05.py`. Plurapack needs no local GPU, CUDA, PyTorch,
 or Chatterbox model installation.
 
 ## Operator setup
@@ -14,8 +14,10 @@ and `.env.example` for private Forgejo storage configuration.
 
 Deploy the runner with Modal using the existing `hf-token` and
 `gitgay-voice-reader` secrets. The latter supplies `GITGAY_TOKEN` and should remain
-read-only. `chatterbox_runner_v04.py` keeps the v03 plain-text request compatible
-while adding semantic speech parts for formatted messages. If Modal gives the
+read-only. `chatterbox_runner_v05.py` keeps the established text/voice-ID contract,
+adds semantic speech parts and active voice settings, and uses two Chatterbox
+models: Nano for the lightweight ordinary-speech path and Original Chatterbox for
+semantic formatting and CFG/exaggeration-controlled speech. If Modal gives the
 updated deployment a different endpoint URL, update `PLURAPACK_TTS_URL` in Railway.
 
 Plurapack's Forgejo token needs write access for upload/deletion. Modal uses its
@@ -43,12 +45,21 @@ limits, assigned a UUID, and stored as `custom/<UUID>.wav` in private Forgejo.
 Each member can keep multiple named custom voices; names are metadata and renaming
 does not rename the recording. The dashboard also offers custom voice management.
 
-For ordinary speech, Plurapack sends only `text` and `voice_id` to Modal. A stored
-generic selection `Jordan.wav` becomes `generic:Jordan`; custom selections become
-`custom:<storage UUID>`, even if the custom display name is Jordan. Generic files
-stay at `generic/Jordan.wav`, without renaming or a required index JSON. Modal
-retrieves the reference WAV from Forgejo independently. Custom recordings are
-never uploaded to Modal on every message.
+For ordinary speech, Plurapack sends `text`, the namespaced `voice_id`, and any
+active supported voice settings to Modal. A stored generic selection `Jordan.wav`
+becomes `generic:Jordan`; custom selections become `custom:<storage UUID>`, even if
+the custom display name is Jordan. Generic files stay at `generic/Jordan.wav`,
+without renaming or a required index JSON. Modal retrieves the reference WAV from
+Forgejo independently. Custom recordings are never uploaded to Modal on every
+message.
+
+The active v05 settings are `temperature`, `exaggeration`, `cfg_weight`, `seed`,
+and `speed_factor`. Ordinary speech uses Chatterbox Nano by default. If a member
+explicitly configures `exaggeration` or `cfg_weight`, v05 routes that message through
+Original Chatterbox so those controls actually take effect. `speed_factor` is
+applied after generation with pitch-preserving time stretching. Historical
+`language`, `split_text`, and `chunk_size` values remain valid stored metadata for
+compatibility but are not used by the current English Nano/Original runner.
 
 Formatted speech uses the same namespaced `voice_id` plus a list of semantic
 `parts`, each containing only spoken text and a style (`normal`, `emphasis`,
@@ -139,19 +150,24 @@ set the entire member's speaking style. When formatting is enabled:
 - Markdown delimiters themselves are never spoken.
 
 `omit` is handled before inference, so omitted words never leave Plurapack. For
-other formatted spans, Plurapack sends one semantic-parts request. The v04 runner
-uses the controllable original Chatterbox model for the full formatted message,
-applying the established exaggeration/CFG portions of the emphasis, mumble, and
-whisper presets to each span, concatenates the generated audio tensors, and
-encodes **one** WAV. It never concatenates WAV containers byte-for-byte.
-Unformatted messages continue to use Chatterbox Turbo. The old devnen server's
-`speed_factor` post-processing is not part of direct Chatterbox generation, so
-that part of the old mumble/whisper presets is not reproduced by v04.
+other formatted spans, Plurapack sends one semantic-parts request. The v05 runner
+uses Original Chatterbox for the full formatted message and restores the historical
+Plurapack style presets:
 
-The first formatted message after a cold start may take longer because the runner
-loads the controllable model lazily. Turbo's own `exaggeration` and `cfg_weight`
-controls are ignored upstream, which is why formatted messages use the original
-model instead of pretending those controls affect Turbo.
+- emphasis: `exaggeration=0.85`, `cfg_weight=0.35`;
+- mumble: `exaggeration=0.2`, `cfg_weight=0.2`, `speed_factor=1.12`;
+- whisper: `exaggeration=0.05`, `cfg_weight=0.15`, `speed_factor=0.9`.
+
+`speed_factor` is applied with pitch-preserving time stretching, matching the old
+server's behavior rather than pretending speed is a native Chatterbox parameter.
+The generated segment tensors are concatenated before encoding **one** WAV; WAV
+containers are never concatenated byte-for-byte.
+
+The first formatted message after a cold start may take longer because Original
+Chatterbox is loaded lazily. Ordinary messages remain on Nano unless explicit
+member CFG/exaggeration settings require Original. Nano shares the Turbo-family
+inference path and does not support CFG/exaggeration, which is why styled speech is
+kept on Original Chatterbox instead.
 
 Edits and re-proxy operations invalidate stale queued/browser audio and enqueue
 speech using the replacement text and selected member voice. Generation and
