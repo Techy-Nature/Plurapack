@@ -46,6 +46,7 @@ def render_dashboard_index(static_root: Path) -> str:
         "{{STYLES_VERSION}}": asset_version(static_root / "styles.css"),
         "{{HELPERS_VERSION}}": asset_version(static_root / "dashboard_helpers.js"),
         "{{APP_VERSION}}": asset_version(static_root / "app.js"),
+        "{{VOICE_VERSION}}": asset_version(static_root / "voice_playback.js"),
     }
     page = (static_root / "index.html").read_text(encoding="utf-8")
     for placeholder, version in versions.items():
@@ -676,6 +677,11 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         @app.get("/dashboard_helpers.js", include_in_schema=False)
         async def dashboard_helpers() -> FileResponse:
             return FileResponse(static_root / "dashboard_helpers.js", media_type="text/javascript",
+                                headers=dashboard_headers)
+
+        @app.get("/voice_playback.js", include_in_schema=False)
+        async def voice_playback() -> FileResponse:
+            return FileResponse(static_root / "voice_playback.js", media_type="text/javascript",
                                 headers=dashboard_headers)
 
         @app.get("/styles.css", include_in_schema=False)
