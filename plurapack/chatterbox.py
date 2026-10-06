@@ -14,6 +14,9 @@ from .voice_service import VoiceService, resolve_modal_voice_id
 
 MODAL_TEXT_LIMIT = 500
 SUPPORTED_STYLES = frozenset({"normal", "emphasis", "mumble", "whisper"})
+MODAL_SETTING_FIELDS = frozenset({
+    "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor"
+})
 
 
 class ChatterboxError(RuntimeError):
@@ -24,14 +27,14 @@ class ChatterboxBackend:
     """Send spoken text or semantic speech parts plus a namespaced voice ID.
 
     Modal reads reference audio from private Forgejo independently. Plain speech
-    keeps the v03 ``text`` + ``voice_id`` request contract. When semantic speech
-    formatting is enabled, ``synthesize_styled`` uses the v04 ``parts`` contract
-    so the runner can render styles before returning one valid WAV container.
+    uses the v05 Nano path unless member settings explicitly require Original
+    Chatterbox controls. Semantic formatting sends structured parts to the v05
+    Original-model path so established emphasis/mumble/whisper presets can be
+    applied before Modal returns one valid WAV container.
 
-    During a rolling v03 -> v04 deployment, a protocol-level 400/422 response to
-    the new ``parts`` payload falls back once to the old plain-text contract. That
-    keeps speech available without weakening authentication/network failures into
-    silent retries; styles simply remain flattened until v04 is live.
+    During rolling upgrades, a protocol-level 400/422 response to ``parts`` falls
+    back once to the old plain-text contract. Authentication/network/server errors
+    never trigger that compatibility retry.
     """
 
     def __init__(self, url: str, *, voice_service: VoiceService | None = None,
@@ -56,10 +59,6 @@ class ChatterboxBackend:
 
     async def _voice_id(self, member: Member) -> str:
         try:
-            validate_voice_settings(member.voice_settings)
-        except (TypeError, ValueError):
-            raise ChatterboxError("Speech voice settings are invalid.") from None
-        try:
             return await asyncio.to_thread(
                 resolve_modal_voice_id,
                 self.voice_service.store if self.voice_service else None, member)
@@ -68,6 +67,16 @@ class ChatterboxBackend:
             raise ChatterboxError(str(error)) from None
         except Exception:
             raise ChatterboxError("Speech voice configuration could not be read.") from None
+
+    @staticmethod
+    def _settings(member: Member) -> dict:
+        try:
+            settings = validate_voice_settings(member.voice_settings)
+        except (TypeError, ValueError):
+            raise ChatterboxError("Speech voice settings are invalid.") from None
+        # Language/splitting settings remain stored for compatibility with older
+        # servers, but the English Nano/Original Modal runner does not use them.
+        return {key: settings[key] for key in MODAL_SETTING_FIELDS if key in settings}
 
     @staticmethod
     def _validate_text(text: str) -> str:
@@ -80,11 +89,14 @@ class ChatterboxBackend:
     async def synthesize(self, text: str, member: Member) -> bytes:
         text = self._validate_text(text)
         voice_id = await self._voice_id(member)
+        settings = self._settings(member)
         payload = {"text": text, "voice_id": voice_id}
+        if settings:
+            payload["settings"] = settings
         return await asyncio.to_thread(self._request, json.dumps(payload).encode())
 
     async def synthesize_styled(self, parts, member: Member) -> bytes:
-        """Render semantic speech parts through Modal v04 as one WAV response."""
+        """Render semantic speech parts through Modal as one WAV response."""
         payload_parts: list[dict[str, str]] = []
         fallback_words: list[str] = []
         total_characters = 0
@@ -104,7 +116,12 @@ class ChatterboxBackend:
             raise ChatterboxError("Speech text exceeds the Modal limit of 500 characters.")
         fallback_text = self._validate_text(" ".join(fallback_words))
         voice_id = await self._voice_id(member)
+        settings = self._settings(member)
         payload = {"parts": payload_parts, "voice_id": voice_id}
+        if settings:
+            payload["settings"] = settings
+        # The compatibility fallback deliberately omits v05-only settings so a
+        # pre-v04 endpoint sees the exact old text + voice_id contract.
         fallback = {"text": fallback_text, "voice_id": voice_id}
         return await asyncio.to_thread(
             self._request,
