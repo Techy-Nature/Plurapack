@@ -56,10 +56,13 @@ message.
 The active v05 settings are `temperature`, `exaggeration`, `cfg_weight`, `seed`,
 and `speed_factor`. Ordinary speech uses Chatterbox Nano by default. If a member
 explicitly configures `exaggeration` or `cfg_weight`, v05 routes that message through
-Original Chatterbox so those controls actually take effect. `speed_factor` is
-applied after generation with pitch-preserving time stretching. Historical
-`language`, `split_text`, and `chunk_size` values remain valid stored metadata for
-compatibility but are not used by the current English Nano/Original runner.
+Original Chatterbox so those controls actually take effect. An explicitly selected
+`speed_factor` is applied after generation with pitch-preserving time stretching.
+Because time stretching can make short speech sound metallic, the built-in semantic
+styles deliberately do **not** set `speed_factor`; it remains an opt-in per-member
+control. Historical `language`, `split_text`, and `chunk_size` values remain valid
+stored metadata for compatibility but are not used by the current English
+Nano/Original runner.
 
 Formatted speech uses the same namespaced `voice_id` plus a list of semantic
 `parts`, each containing only spoken text and a style (`normal`, `emphasis`,
@@ -150,18 +153,27 @@ set the entire member's speaking style. When formatting is enabled:
 - Markdown delimiters themselves are never spoken.
 
 `omit` is handled before inference, so omitted words never leave Plurapack. For
-other formatted spans, Plurapack sends one semantic-parts request. The v05 runner
-uses Original Chatterbox for the full formatted message and restores the historical
-Plurapack style presets:
+other formatted spans, Plurapack sends one semantic-parts request and v05 uses
+Original Chatterbox for the formatted message. The built-in style generation
+controls intentionally stay away from the very low CFG/exaggeration combinations
+that produced metallic short spans in real use:
 
-- emphasis: `exaggeration=0.85`, `cfg_weight=0.35`;
-- mumble: `exaggeration=0.2`, `cfg_weight=0.2`, `speed_factor=1.12`;
-- whisper: `exaggeration=0.05`, `cfg_weight=0.15`, `speed_factor=0.9`.
+- emphasis: `exaggeration=0.75`, `cfg_weight=0.40`;
+- mumble: `exaggeration=0.35`, `cfg_weight=0.30`;
+- whisper: `exaggeration=0.30`, `cfg_weight=0.35`.
 
-`speed_factor` is applied with pitch-preserving time stretching, matching the old
-server's behavior rather than pretending speed is a native Chatterbox parameter.
-The generated segment tensors are concatenated before encoding **one** WAV; WAV
-containers are never concatenated byte-for-byte.
+After generation, the styles use **non-temporal** waveform processing. `mumble`
+softens consonant articulation with a gentle low-pass blend and slightly lowers
+the level. `whisper` reduces low-frequency body and overall level for a softer,
+thinner delivery. Neither style resamples, time-stretches, or changes the number
+of samples, avoiding the phase-vocoder artifacts heard with the earlier presets.
+`emphasis` gets only a small level lift. These are whisper-/mumble-like treatments;
+Original Chatterbox does not expose a literal native whisper or mumble control.
+
+A member may still explicitly configure `speed_factor`; that setting remains a
+separate pitch-preserving time-stretch feature and is honored for normal and
+formatted speech. The generated segment tensors are concatenated before encoding
+**one** WAV; WAV containers are never concatenated byte-for-byte.
 
 The first formatted message after a cold start may take longer because Original
 Chatterbox is loaded lazily. Ordinary messages remain on Nano unless explicit
