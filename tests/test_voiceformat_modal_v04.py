@@ -46,12 +46,12 @@ def modal_boundary(monkeypatch):
     return Connection
 
 
-def member():
-    return SimpleNamespace(voice_settings="{}")
+def member(settings="{}"):
+    return SimpleNamespace(voice_settings=settings)
 
 
-async def test_styled_synthesis_sends_semantic_parts_in_one_modal_request(modal_boundary):
-    backend = ChatterboxBackend("https://modal.example/invoke?version=4", api_key="wk-test.ws-test")
+async def test_styled_synthesis_sends_semantic_parts_and_active_settings_in_one_modal_request(modal_boundary):
+    backend = ChatterboxBackend("https://modal.example/invoke?version=5", api_key="wk-test.ws-test")
     parts = (
         SpeechPart("ordinary words", "normal"),
         SpeechPart("important words", "emphasis"),
@@ -59,10 +59,17 @@ async def test_styled_synthesis_sends_semantic_parts_in_one_modal_request(modal_
         SpeechPart("unclear words", "mumble"),
     )
 
-    assert await backend.synthesize_styled(parts, member()) == wav_bytes()
+    selected = member(json.dumps({
+        "temperature": 0.7,
+        "speed_factor": 1.05,
+        "language": "en",
+        "split_text": True,
+        "chunk_size": 120,
+    }))
+    assert await backend.synthesize_styled(parts, selected) == wav_bytes()
     assert modal_boundary.calls == [(
         "POST",
-        "/invoke?version=4",
+        "/invoke?version=5",
         {
             "parts": [
                 {"text": "ordinary words", "style": "normal"},
@@ -71,6 +78,7 @@ async def test_styled_synthesis_sends_semantic_parts_in_one_modal_request(modal_
                 {"text": "unclear words", "style": "mumble"},
             ],
             "voice_id": "generic:Jordan",
+            "settings": {"temperature": 0.7, "speed_factor": 1.05},
         },
         {
             "Content-Type": "application/json",
@@ -80,7 +88,7 @@ async def test_styled_synthesis_sends_semantic_parts_in_one_modal_request(modal_
     )]
 
 
-async def test_styled_synthesis_falls_back_once_to_v03_plain_text(monkeypatch):
+async def test_styled_synthesis_falls_back_once_to_pre_parts_plain_text(monkeypatch):
     backend = ChatterboxBackend("https://modal.example")
     monkeypatch.setattr(
         "plurapack.chatterbox.resolve_modal_voice_id",
@@ -100,7 +108,8 @@ async def test_styled_synthesis_falls_back_once_to_v03_plain_text(monkeypatch):
         SpeechPart("ordinary words", "normal"),
         SpeechPart("quiet words", "whisper"),
     )
-    assert await backend.synthesize_styled(parts, member()) == wav_bytes()
+    selected = member('{"temperature":0.6}')
+    assert await backend.synthesize_styled(parts, selected) == wav_bytes()
     assert calls == [
         {
             "parts": [
@@ -108,6 +117,7 @@ async def test_styled_synthesis_falls_back_once_to_v03_plain_text(monkeypatch):
                 {"text": "quiet words", "style": "whisper"},
             ],
             "voice_id": "generic:Jordan",
+            "settings": {"temperature": 0.6},
         },
         {"text": "ordinary words quiet words", "voice_id": "generic:Jordan"},
     ]
