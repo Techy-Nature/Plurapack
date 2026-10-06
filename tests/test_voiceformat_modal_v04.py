@@ -80,6 +80,57 @@ async def test_styled_synthesis_sends_semantic_parts_in_one_modal_request(modal_
     )]
 
 
+async def test_styled_synthesis_falls_back_once_to_v03_plain_text(monkeypatch):
+    backend = ChatterboxBackend("https://modal.example")
+    monkeypatch.setattr(
+        "plurapack.chatterbox.resolve_modal_voice_id",
+        lambda store, selected: "generic:Jordan",
+    )
+    calls = []
+
+    def raw_request(path, body, headers):
+        payload = json.loads(body)
+        calls.append(payload)
+        if "parts" in payload:
+            return 400, b"", "application/json"
+        return 200, wav_bytes(), "audio/wav"
+
+    monkeypatch.setattr(backend, "_raw_request", raw_request)
+    parts = (
+        SpeechPart("ordinary words", "normal"),
+        SpeechPart("quiet words", "whisper"),
+    )
+    assert await backend.synthesize_styled(parts, member()) == wav_bytes()
+    assert calls == [
+        {
+            "parts": [
+                {"text": "ordinary words", "style": "normal"},
+                {"text": "quiet words", "style": "whisper"},
+            ],
+            "voice_id": "generic:Jordan",
+        },
+        {"text": "ordinary words quiet words", "voice_id": "generic:Jordan"},
+    ]
+
+
+async def test_styled_synthesis_does_not_fallback_on_auth_or_server_failure(monkeypatch):
+    backend = ChatterboxBackend("https://modal.example")
+    monkeypatch.setattr(
+        "plurapack.chatterbox.resolve_modal_voice_id",
+        lambda store, selected: "generic:Jordan",
+    )
+    calls = []
+
+    def raw_request(path, body, headers):
+        calls.append(json.loads(body))
+        return 503, b"", "application/json"
+
+    monkeypatch.setattr(backend, "_raw_request", raw_request)
+    with pytest.raises(ChatterboxError, match="unsuccessful"):
+        await backend.synthesize_styled((SpeechPart("private", "whisper"),), member())
+    assert len(calls) == 1 and "parts" in calls[0]
+
+
 async def test_styled_synthesis_rejects_unknown_style_before_http(modal_boundary):
     backend = ChatterboxBackend("https://modal.example")
     with pytest.raises(ChatterboxError, match="unsupported style"):
