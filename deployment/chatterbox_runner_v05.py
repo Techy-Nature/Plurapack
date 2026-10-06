@@ -46,10 +46,18 @@ class SpeechGenerationError(RuntimeError):
     """Sanitized model-generation failure."""
 
 
+# Nano landed upstream after the latest PyPI wheel. Pin the exact upstream commit
+# that introduced the supported ``nano=True`` API instead of relying on master.
+CHATTERBOX_SOURCE = (
+    "chatterbox-tts @ git+https://github.com/resemble-ai/chatterbox.git@"
+    "5de7a54aa4e5e2baadb0182dde554908b48b85c2"
+)
+
 image = (
     modal.Image.debian_slim(python_version="3.10")
+    .apt_install("git")
     .uv_pip_install(
-        "chatterbox-tts==0.1.7",
+        CHATTERBOX_SOURCE,
         "fastapi[standard]==0.124.4",
         "peft==0.18.0",
     )
