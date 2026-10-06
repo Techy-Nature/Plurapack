@@ -30,11 +30,16 @@ SUPPORTED_STYLES = frozenset({"normal", "emphasis", "mumble", "whisper"})
 SUPPORTED_SETTINGS = frozenset({
     "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor"
 })
-STYLE_PRESETS = {
+
+# Keep styled generation away from the very low CFG/exaggeration combinations
+# that made short spans metallic/robotic in practice. Tone/clarity changes are
+# handled after generation without changing duration, while user-configured
+# speed_factor remains available as an explicit separate control.
+STYLE_GENERATION_PRESETS = {
     "normal": {},
-    "emphasis": {"exaggeration": 0.85, "cfg_weight": 0.35},
-    "mumble": {"exaggeration": 0.2, "cfg_weight": 0.2, "speed_factor": 1.12},
-    "whisper": {"exaggeration": 0.05, "cfg_weight": 0.15, "speed_factor": 0.9},
+    "emphasis": {"exaggeration": 0.75, "cfg_weight": 0.40},
+    "mumble": {"exaggeration": 0.35, "cfg_weight": 0.30},
+    "whisper": {"exaggeration": 0.30, "cfg_weight": 0.35},
 }
 
 
@@ -144,7 +149,12 @@ def apply_seed(seed: int) -> None:
 
 
 def apply_speed_factor(wav, factor: float):
-    """Pitch-preserving time stretch, matching the historical server semantics."""
+    """Pitch-preserving user-selected time stretch.
+
+    Built-in semantic styles deliberately do not use this path: phase-vocoder
+    stretching created metallic artifacts on short whisper/mumble spans. It is
+    retained only for an explicit member ``speed_factor`` setting.
+    """
     if factor == 1.0:
         return wav
     import librosa
@@ -153,6 +163,49 @@ def apply_speed_factor(wav, factor: float):
     samples = wav.detach().cpu().squeeze(0).numpy()
     stretched = librosa.effects.time_stretch(samples, rate=float(factor))
     return torch.from_numpy(stretched.copy()).float().unsqueeze(0)
+
+
+def _moving_average(wav, width: int):
+    """Small zero-delay smoothing primitive that preserves sample count."""
+    import torch
+    import torch.nn.functional as functional
+
+    if wav.shape[-1] < 3 or width <= 1:
+        return wav
+    width = min(width, int(wav.shape[-1]))
+    if width % 2 == 0:
+        width -= 1
+    if width < 3:
+        return wav
+    samples = wav if wav.ndim == 3 else wav.unsqueeze(0)
+    kernel = torch.ones((1, 1, width), dtype=samples.dtype, device=samples.device) / width
+    pad = width // 2
+    padded = functional.pad(samples, (pad, pad), mode="replicate")
+    smoothed = functional.conv1d(padded, kernel)
+    return smoothed if wav.ndim == 3 else smoothed.squeeze(0)
+
+
+def apply_style_effect(wav, style: str):
+    """Apply non-temporal semantic effects without phase-vocoder artifacts."""
+    import torch
+
+    if style == "normal":
+        return wav
+    if style == "emphasis":
+        return torch.clamp(wav * 1.04, -0.98, 0.98)
+    if style == "mumble":
+        # Blend a gentle low-pass signal back into the dry voice. This softens
+        # consonant articulation without changing duration or pitch.
+        softened = _moving_average(wav, 9)
+        return torch.clamp((wav * 0.30 + softened * 0.70) * 0.82, -0.98, 0.98)
+    if style == "whisper":
+        # Reduce low-frequency body and overall level. This is intentionally a
+        # subtle whisper-like treatment rather than synthetic breath noise,
+        # which tended to sound artificial on cloned voices.
+        body = _moving_average(wav, 41)
+        airy = wav - body * 0.18
+        return torch.clamp(airy * 0.62, -0.98, 0.98)
+    raise ValueError("Speech formatting contains an unsupported style.")
 
 
 @app.cls(
@@ -281,8 +334,10 @@ class Chatterbox:
             model = self._load_original_model()
             rendered = []
             for part in parts:
-                part_settings = {**base_settings, **STYLE_PRESETS[part["style"]]}
-                rendered.append(self._generate_original(part["text"], voice_path, part_settings).detach().cpu())
+                style = part["style"]
+                part_settings = {**base_settings, **STYLE_GENERATION_PRESETS[style]}
+                generated = self._generate_original(part["text"], voice_path, part_settings)
+                rendered.append(apply_style_effect(generated, style).detach().cpu())
             combined = torch.cat(rendered, dim=-1)
             return self._wav_bytes(combined, model.sr)
         except Exception:
