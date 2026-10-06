@@ -185,6 +185,7 @@ def _moving_average(wav, width: int):
     return smoothed if wav.ndim == 3 else smoothed.squeeze(0)
 
 
+
 def apply_style_effect(wav, style: str):
     """Apply non-temporal semantic effects without phase-vocoder artifacts."""
     import torch
@@ -199,12 +200,16 @@ def apply_style_effect(wav, style: str):
         softened = _moving_average(wav, 9)
         return torch.clamp((wav * 0.30 + softened * 0.70) * 0.82, -0.98, 0.98)
     if style == "whisper":
-        # Reduce low-frequency body and overall level. This is intentionally a
-        # subtle whisper-like treatment rather than synthetic breath noise,
-        # which tended to sound artificial on cloned voices.
-        body = _moving_average(wav, 41)
-        airy = wav - body * 0.18
-        return torch.clamp(airy * 0.62, -0.98, 0.98)
+        # Keep the effect deterministic: no synthetic noise/hiss. Remove much
+        # more of the low-frequency voiced body, retain the speech-derived
+        # high-frequency residual, and soften it slightly. This produces a
+        # clearly thinner/quieter whisper-like delivery without added static,
+        # resampling, or time stretching.
+        body = _moving_average(wav, 181)
+        residual = wav - body * 0.85
+        softened = _moving_average(residual, 5)
+        airy_voice = residual * 0.72 + softened * 0.28
+        return torch.clamp(airy_voice * 0.46, -0.98, 0.98)
     raise ValueError("Speech formatting contains an unsupported style.")
 
 

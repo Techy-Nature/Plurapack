@@ -38,6 +38,8 @@ def test_runner_keeps_style_processing_non_temporal():
     assert "interpolate" not in style_function
     assert "resample" not in style_function
     assert "_moving_average" in style_function
+    assert "randn_like" not in style_function
+    assert "_breath_component" not in source
 
 
 def test_explicit_speed_factor_remains_supported_separately():
