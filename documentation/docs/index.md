@@ -22,7 +22,7 @@ Plurapack welcomes systems of every origin, as well as people who are questionin
 - Share one system between multiple authorized Stoat accounts.
 - Import from PluralKit, Tupperbox, or another Plurapack installation.
 - Export portable member metadata for backups.
-- Optionally attach generated speech through an operator-managed Chatterbox server.
+- Optionally attach generated speech through an configured protected Modal Chatterbox Turbo endpoint.
 
 ## Choose your path
 

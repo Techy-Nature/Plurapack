@@ -29,7 +29,19 @@ React to a proxy owned by your shared system, then send replacement text in the 
 
 ## Voice configuration is disabled
 
-The operator must set `PLURAPACK_VOICE_REFERENCE_DIR`, place the reference file inside that directory, and configure `PLURAPACK_TTS_URL`. File paths outside the approved directory and non-files are rejected.
+The operator must configure the protected Modal endpoint (`PLURAPACK_TTS_URL`)
+and its proxy Bearer credential (`PLURAPACK_TTS_API_KEY`). For custom uploads,
+configure private Forgejo storage and Plurapack's write-capable
+`VOICE_STORAGE_API_KEY`. Modal uses a separate read-only Forgejo credential and
+must read the same repository/branch. See the [speech guide](../guides/speech.md).
+
+Select a known generic filename with `voice generic MEMBER Jordan.wav`, or upload
+a custom recording. Legacy named clones require an explicit generic selection
+or re-upload; Plurapack does not guess their namespace. Spoken input longer than
+500 characters fails speech without truncation while the text proxy continues.
+A rejected Modal request is reported with a sanitized error; verify the proxy
+credential, deployment availability, selected reference, and rate limits without
+sharing tokens, UUIDs, or private message contents.
 
 ## Get useful diagnostics
 

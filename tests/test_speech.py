@@ -25,7 +25,7 @@ class Backend:
     async def synthesize(self, text, member):
         if self.fail:
             raise TimeoutError
-        return b"mp3"
+        return b"wav"
 
 
 async def test_off_does_not_enqueue_and_send_delivers_complete_identity(voice_store):
@@ -38,7 +38,7 @@ async def test_off_does_not_enqueue_and_send_delivers_complete_identity(voice_st
     member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "send")
     assert queue.submit(SpeechJob("channel", "proxy", "hello", member))
     await queue.run_one()
-    assert delivered == [("channel", "proxy", b"mp3")]
+    assert delivered == [("channel", "proxy", b"wav")]
 
 
 @pytest.mark.parametrize("mode,stoat_count,local_count", [
@@ -81,7 +81,7 @@ async def test_both_destination_failures_are_isolated(voice_store, failing):
                         deliver_local=lambda job, audio: destination("local", audio))
     queue.submit(SpeechJob("c", "p", "private", member, account_id="owner"))
     await queue.run_one()
-    assert completed == [("local" if failing == "stoat" else "stoat", b"mp3")]
+    assert completed == [("local" if failing == "stoat" else "stoat", b"wav")]
 
 
 async def test_slow_stoat_delivery_does_not_delay_browser_publication(voice_store):
@@ -157,7 +157,7 @@ async def test_queue_uses_styled_backend_when_formatting_enabled(voice_store):
         def __init__(self): self.parts = None
         async def synthesize_styled(self, parts, member):
             self.parts = parts
-            return b"styled-mp3"
+            return b"styled-wav"
 
     backend = StyledBackend()
     delivered = []
@@ -168,7 +168,7 @@ async def test_queue_uses_styled_backend_when_formatting_enabled(voice_store):
     assert [(part.text, part.style) for part in backend.parts] == [
         ("hello", "normal"), ("there", "emphasis")
     ]
-    assert delivered == [b"styled-mp3"]
+    assert delivered == [b"styled-wav"]
 
 
 async def test_enqueue_occurs_after_record_and_saturation_preserves_proxy(voice_store, caplog):
@@ -345,7 +345,7 @@ def test_invalid_or_unauthorized_voice_configuration(voice_store):
 
 
 async def test_backend_rejects_settings_non_audio_and_oversized(voice_store, monkeypatch):
-    member = voice_store.configure_voice("owner", "Alex", "a.wav", "{}", "send")
+    member = voice_store.configure_voice("owner", "Alex", "a.wav", "{}", "send", "generic")
     backend = ChatterboxBackend("http://localhost/tts", max_response_bytes=3)
     bad_member = member.__class__(**{**member.__dict__, "voice_settings": "[]"})
     with pytest.raises(ChatterboxError):
@@ -367,8 +367,48 @@ async def test_backend_rejects_settings_non_audio_and_oversized(voice_store, mon
 
     monkeypatch.setattr("plurapack.chatterbox.http.client.HTTPConnection", Connection)
     Connection.response = Response("application/json", b"err")
-    with pytest.raises(ChatterboxError, match="non-MP3"):
+    with pytest.raises(ChatterboxError, match="non-WAV"):
         await backend.synthesize("private", member)
-    Connection.response = Response("audio/mpeg", b"four")
+    Connection.response = Response("audio/wav", b"four")
     with pytest.raises(ChatterboxError, match="too large"):
         await backend.synthesize("private", member)
+
+
+async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, monkeypatch):
+    from tests.test_custom_voices import wav_bytes
+    member = voice_store.configure_voice("owner", "Alex", "Jordan.wav", {}, "send", "generic")
+    member = voice_store.configure_speech_formatting("owner", member.id, True, "omit")
+    backend = ChatterboxBackend("https://modal.example/invoke")
+    calls, delivered = [], []
+    audio = wav_bytes()
+
+    def request(path, body, headers):
+        calls.append(json.loads(body))
+        return 200, audio, "audio/wav"
+
+    monkeypatch.setattr(backend, "_raw_request", request)
+    queue = SpeechQueue(backend, lambda job, result: delivered.append(result))
+    queue.submit(SpeechJob("c", "p", "hello *waves* **there** ~~no~~", member))
+    await queue.run_one()
+    assert calls == [{"text": "hello there", "voice_id": "generic:Jordan"}]
+    assert delivered == [audio]
+    assert not hasattr(backend, "synthesize_styled")
+
+
+async def test_modal_text_limit_applies_after_omissions_and_never_logs_text(voice_store, monkeypatch, caplog):
+    from tests.test_custom_voices import wav_bytes
+    member = voice_store.configure_voice("owner", "Alex", "Jordan.wav", {}, "send", "generic")
+    member = voice_store.configure_speech_formatting("owner", member.id, True, "omit")
+    backend = ChatterboxBackend("https://modal.example/invoke", api_key="wk-private.ws-private")
+    calls, delivered = [], []
+    monkeypatch.setattr(backend, "_raw_request", lambda path, body, headers: (
+        calls.append(json.loads(body)) or (200, wav_bytes(), "audio/wav")))
+    queue = SpeechQueue(backend, lambda job, result: delivered.append(result))
+    queue.submit(SpeechJob("c", "good", "hello *" + "x" * 600 + "*", member))
+    await queue.run_one()
+    assert calls == [{"text": "hello", "voice_id": "generic:Jordan"}]
+    queue.submit(SpeechJob("c", "bad", "private " * 100, member))
+    with pytest.raises(ChatterboxError, match="500 characters"):
+        await queue.run_one()
+    assert len(delivered) == 1 and queue.queue.empty()
+    assert "private " not in caplog.text and "wk-private" not in caplog.text

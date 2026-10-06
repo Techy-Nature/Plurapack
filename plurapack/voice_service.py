@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import io
-import re
 import uuid
 import wave
-from collections.abc import Callable
 from .storage import Member, Store, Voice
+from .voice import custom_voice_uuid, generic_voice_name
 from .voice_storage import VoiceNotFoundError, VoiceStorage
 
 
@@ -19,20 +18,6 @@ class VoiceService:
                  max_seconds: float = 30):
         self.store, self.storage, self.max_bytes, self.max_seconds = (
             store, storage, max_bytes, max_seconds)
-        self._delete_listeners: list[Callable[[str], None]] = []
-
-    def add_delete_listener(self, listener: Callable[[str], None]) -> None:
-        """Register process-local cleanup for synchronized reference caches."""
-        self._delete_listeners.append(listener)
-
-    def _notify_deleted(self, storage_id: str) -> None:
-        for listener in self._delete_listeners:
-            try:
-                listener(storage_id)
-            except Exception:
-                # Cache invalidation is best-effort and must not make an
-                # otherwise completed storage/database deletion look failed.
-                pass
 
     def _member(self, account_id: str, member_id: str) -> Member:
         member = self.store.member_selected(account_id, member_id)
@@ -111,14 +96,11 @@ class VoiceService:
 
     def select_generic_voice(self, account_id: str, member_id: str, filename: str) -> Member:
         member = self._member(account_id, member_id)
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.wav", filename):
-            raise ValueError("Generic voice must be a safe WAV filename.")
+        generic_voice_name(filename)
         return self.store.configure_voice(account_id, member.id, filename,
                                           member.voice_settings, member.playback, "generic")
 
     def delete_member_voice(self, account_id: str, member_id: str, voice_id: str) -> Voice:
-        # TODO: also purge the synchronized Chatterbox copy when upstream offers
-        # a supported authenticated reference-deletion endpoint.
         member = self._member(account_id, member_id)
         voice = self.store.member_voice(account_id, member_id, voice_id)
         was_selected = member.voice_reference == f"{voice.storage_id}.wav"
@@ -138,7 +120,6 @@ class VoiceService:
             self.store.configure_voice(account_id, member_id, reference,
                                        member.voice_settings,
                                        member.playback if replacement else "off", "custom")
-        self._notify_deleted(voice.storage_id)
         return voice
 
     def get_member_voice(self, account_id: str, member_id: str, voice_id: str) -> bytes:
@@ -158,7 +139,6 @@ class VoiceService:
                 self.storage.delete_voice(voice.storage_id)
             except VoiceNotFoundError:
                 pass
-            self._notify_deleted(voice.storage_id)
         return self.store.delete_member(account_id, member.id)
 
     def delete_system(self, account_id: str, confirmation: str) -> str:
@@ -171,7 +151,6 @@ class VoiceService:
                     self.storage.delete_voice(voice.storage_id)
                 except VoiceNotFoundError:
                     pass
-                self._notify_deleted(voice.storage_id)
         return self.store.delete_system(account_id, confirmation)
 
 
@@ -185,6 +164,38 @@ def selected_voice_type(store: Store, member: Member) -> str | None:
     if member.voice_reference is None:
         return None
     return member.voice_source
+
+
+def resolve_modal_voice_id(store: Store | None, member: Member) -> str:
+    """Resolve stored selection metadata only; never fetch private audio for TTS.
+
+    A legacy clone can be mapped only when its UUID filename belongs to this
+    member's existing voice metadata. Installed legacy named files require an
+    explicit generic selection or a new custom upload; never guess a namespace.
+    """
+    if not member.voice_reference:
+        raise ValueError("Speech voice reference is not configured.")
+    if member.voice_source == "generic":
+        return "generic:" + generic_voice_name(member.voice_reference)
+    if member.voice_source not in {"custom", "legacy_clone"}:
+        raise ValueError("Speech voice source is invalid.")
+    legacy_error = "Legacy speech voice must be re-uploaded or explicitly selected as a generic voice."
+    try:
+        storage_id = custom_voice_uuid(member.voice_reference)
+    except ValueError:
+        if member.voice_source == "legacy_clone":
+            raise ValueError(legacy_error) from None
+        raise
+    if store is None:
+        raise ValueError("Custom speech voice metadata is unavailable; configure private voice storage.")
+    try:
+        voices = store.member_voices(member.id)
+    except Exception:
+        raise ValueError("Speech voice configuration could not be read.") from None
+    if not any(voice.storage_id == storage_id for voice in voices):
+        raise ValueError(legacy_error if member.voice_source == "legacy_clone"
+                         else "Selected custom speech voice metadata is unavailable.")
+    return "custom:" + storage_id
 
 
 def resolve_voice_reference(store: Store, storage: VoiceStorage, member: Member) -> bytes | str:

@@ -125,6 +125,8 @@ class SpeechQueue:
                 if job.member.speech_formatting and styled is not None:
                     audio = await styled(parts, job.member)
                 else:
+                    # Modal v03 uses this fallback: retain spoken-text parsing
+                    # and omissions, then request one WAV without style controls.
                     audio = await self.backend.synthesize(" ".join(part.text for part in parts), job.member)
                 # Cancellation cannot necessarily stop an HTTP request, so the
                 # generation is checked again after synthesis completes.
@@ -144,7 +146,7 @@ class SpeechQueue:
         """Route one synthesis result without coupling independent destinations."""
         destinations = []
         if job.member.playback in {"send", "both"}:
-            destinations.append(("Stoat", self.deliver))
+            destinations.append(("platform", self.deliver))
         if job.member.playback in {"local", "both"} and self.deliver_local:
             destinations.append(("browser", self.deliver_local))
         async def route_one(name, destination) -> None:

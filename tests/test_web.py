@@ -624,3 +624,36 @@ async def test_group_patch_rejects_null_and_empty_identity_fields(api, patch):
         unchanged = store.group_selected("owner", group.id)
         assert unchanged is not None
         assert (unchanged.name, unchanged.alias) == ("Group", "group")
+
+
+@pytest.mark.asyncio
+async def test_modal_and_forgejo_credentials_are_not_exposed_in_api_responses(api, monkeypatch):
+    from tests.test_custom_voices import MemoryStorage, wav_bytes
+    from plurapack.voice_service import VoiceService
+    store, system_id, _, transport = api
+    modal_token, forgejo_token = "wk-test-private.ws-test-private", "forgejo-test-private"
+    monkeypatch.setenv("PLURAPACK_TTS_API_KEY", modal_token)
+    monkeypatch.setenv("VOICE_STORAGE_API_KEY", forgejo_token)
+    member = store.add_member("owner", "Voice", "v:")
+    service = VoiceService(store, MemoryStorage())
+    voice = service.upload_member_voice("owner", member.id, "Jordan", wav_bytes())
+    transport.app.state.voice_service = service
+    event = transport.app.state.browser_audio.publish("owner", "proxy", 1, wav_bytes())
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        public = await client.get("/api/health")
+        member_path = f"/api/systems/{system_id}/members/{member.id}"
+        denied = await client.get(member_path)
+        denied_voices = await client.get(member_path + "/voices")
+        assert denied.status_code == denied_voices.status_code == 401
+        assert voice.storage_id not in public.text + denied.text + denied_voices.text
+        client.cookies.update(cookie())
+        selected = await client.get(member_path)
+        assert selected.json()["voice"]["customVoices"] == [{
+            "id": voice.id, "memberId": member.id, "name": "Jordan", "isDefault": True, "type": "custom",
+        }]
+        audio = await client.get(f"/api/voice/audio/{event.id}")
+        assert audio.headers["content-type"] == "audio/wav"
+        assert audio.content == wav_bytes()
+        for response in (public, denied, denied_voices, selected, audio):
+            assert modal_token.encode() not in response.content
+            assert forgejo_token.encode() not in response.content

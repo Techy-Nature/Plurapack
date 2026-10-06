@@ -39,3 +39,10 @@ def test_exists_true_and_network_failure(monkeypatch):
     monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: (_ for _ in ()).throw(urllib.error.URLError("token detail")))
     with pytest.raises(VoiceStorageError, match="unavailable"):
         storage().exists("00000000-0000-4000-8000-000000000000")
+
+
+@pytest.mark.parametrize("voice_id", ["../Jordan", "generic:Jordan", "custom/uuid", "Jordan", "uuid\\path"])
+def test_private_storage_rejects_unsafe_ids_before_http(monkeypatch, voice_id):
+    monkeypatch.setattr("urllib.request.urlopen", lambda *a, **k: pytest.fail("Unsafe path reached HTTP"))
+    with pytest.raises(VoiceStorageError, match="valid UUID"):
+        storage().get_voice(voice_id)

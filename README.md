@@ -141,7 +141,7 @@ mismatched nested resources return `404`.
 - Every proxy record retains platform message IDs, system/member IDs, channel and initiating owner, but **not message content**.
 - React to one of your proxies with ✏️ or 📝, then send its replacement text in the same channel, to edit it. React with ❌ or 🗑️ to delete it. Shared-system owners may manage one another's proxies.
 - Re-proxy an existing message by replying to it with only the new member's display name, stable five-character ID, or proxy prefix. The replacement is posted and recorded before the old proxy and selector reply are removed.
-- A bounded, cancellable, asynchronous speech queue and Chatterbox HTTP backend. Playback is Off by default. Edits and re-proxy operations intentionally do not generate replacement audio in this first release; a newly tagged text proxy does.
+- A bounded, cancellable, asynchronous speech queue and Chatterbox HTTP backend. Playback is Off by default. Edits and re-proxy operations invalidate stale audio and queue speech for the replacement text and selected member.
 
 No live Stoat messages or Chatterbox requests were sent while developing this release.
 
@@ -268,23 +268,49 @@ Plurapack IDs. Treat exports as private files because member metadata can still 
 sensitive. Service formats may evolve; inspect a generated file before relying on
 it as your only backup.
 
-## Optional local Chatterbox speech
+## Optional Modal Chatterbox speech
 
-Plurapack's server cannot force playback on somebody else's computer. `local` mode therefore requires a future companion client/browser extension; `send` uploads one MP3 associated with the proxy; `both` is for one local event plus one attachment; `off` (the default) does neither. The queue rejects work beyond `PLURAPACK_TTS_QUEUE_LIMIT`, can cancel by proxy-message ID, and never blocks text proxying.
+The existing speech queue uses the protected Modal Chatterbox Turbo v03 endpoint.
+Set `PLURAPACK_TTS_URL` to its full URL and `PLURAPACK_TTS_API_KEY` to the Modal
+proxy Bearer credential (`wk-....ws-....`). Queue limit defaults to 8 and workers
+to 1; their ranges remain 1–1000 and 1–4 respectively. No local model/GPU is needed.
 
-The adapter targets devnen's Chatterbox-TTS-Server JSON `/tts` contract: `voice_mode=clone`, `reference_audio_filename`, and `output_format=mp3`. Set `PLURAPACK_TTS_URL` to the full endpoint (for example `http://127.0.0.1:8004/tts`), `PLURAPACK_TTS_QUEUE_LIMIT` to 1–1000 (default 8), `PLURAPACK_TTS_WORKERS` to 1–4 (default 1), and `PLURAPACK_VOICE_REFERENCE_DIR` to the local approved directory mirroring the server's `reference_audio` directory. Do not expose an unauthenticated voice-cloning endpoint to the internet.
+Custom uploads are validated WAVs (chat MP3 uploads are converted with `ffmpeg`),
+assigned UUIDs, and stored at `custom/<UUID>.wav` in private Forgejo. Configure
+`VOICE_STORAGE_PROVIDER=forgejo`, base URL `https://git.gay`, owner `TechyNestBots`,
+repo `plurapack-voice-index`, branch `main`, and `VOICE_STORAGE_API_KEY` with a
+write-capable Forgejo token. Modal uses its own separate read-only Forgejo token.
+Keep the repository private and credentials server-only.
 
-Use `p;voice MEMBER FILENAME send {}` to enable attachments and `p;voiceoff MEMBER` to disable them. Files must already exist directly or below the approved directory; the bot stores and sends only their constrained relative identifier, never audio bytes from chat. Settings must be a JSON object and are limited to `temperature`, `exaggeration`, `cfg_weight`, `seed`, `speed_factor`, `language`, `split_text`, and `chunk_size`. Although the database reserves `local` and `both`, they are rejected because server-only Plurapack cannot cause client-side playback; only `send` currently produces output.
+Use `p;voice generic MEMBER Jordan.wav`, or attach audio to
+`p;voice upload MEMBER "My voice" send`. Upload/list/default/rename/delete and
+multiple voices per member remain supported. Renaming never changes the UUID.
+During speech Plurapack sends only text and `generic:Jordan` or `custom:<UUID>`;
+Modal retrieves the recording independently. Reference audio is not fetched or
+uploaded by Plurapack for every TTS message. Generic WAV files keep their filenames
+under `generic/`; no index JSON is required.
 
-Semantic speech formatting is a separate opt-in and is **Off by default**. Enable it with
-`p;voiceformat MEMBER on normal`; replace `normal` with `mumble`, `omit`, or `whisper` to
-choose how `~~crossed-out text~~` sounds. When enabled, ordinary and quoted text is spoken,
-`*single-asterisk actions*` is not spoken, Markdown punctuation is removed, and
-`**double-asterisk text**` receives stronger emphasis. Mumble and whisper are best-effort
-Chatterbox performances using lower exaggeration/configuration weight and adjusted speed;
-results depend on the reference voice and model. Each differently styled span is rendered
-separately and the MPEG streams are delivered together as one MP3 attachment. Disable the
-interpretation without disabling voice attachments with `p;voiceformat MEMBER off`.
+`send` attaches one WAV to the Stoat/Fluxer proxy, `local` publishes to the
+authenticated dashboard browser after the user enables playback, `both` routes
+the same WAV to both, and `off` disables speech. Browser audio uses `audio/wav`.
+Text proxying continues even if speech fails. Modal currently accepts at most
+**500 spoken characters** per request; longer text fails explicitly without
+silent truncation or logging private contents.
+
+Semantic formatting remains opt-in with `p;voiceformat MEMBER on normal`.
+Stage directions and optionally crossed-out words are omitted. Stored voice
+settings and emphasis/mumble/whisper preferences remain intact, but Modal v03
+currently accepts no style controls. Spoken parts are joined into one request
+producing one WAV; WAV containers are never concatenated.
+
+No new database schema is needed. Existing generic and UUID custom selections
+are preserved. Legacy clones without matching member-owned UUID metadata require
+re-upload or explicit generic selection and otherwise fail with a sanitized
+configuration error. The default Forgejo repository is now `plurapack-voice-index`;
+set `VOICE_FORGEJO_REPO` explicitly if keeping an existing different repository,
+and point Modal at the same repository. Configuration changes do not move audio.
+See [speech setup](documentation/docs/guides/speech.md) and
+[configuration](documentation/docs/reference/configuration.md) for details.
 
 ## Verified versus integration-pending
 

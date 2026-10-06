@@ -283,3 +283,103 @@ async def test_fluxer_sanitizes_voice_storage_errors(tmp_path, monkeypatch):
     await commands["voice"](ctx, arguments=f'upload {member.id} Normal')
     # VoiceStorageError is converted into a sanitized chat response.
     assert replies == ["Custom voice storage is unavailable."]
+
+
+async def test_fluxer_speech_attachment_is_wav_and_uses_sdk_channel_signature():
+    import fluxer
+    from tests.test_custom_voices import wav_bytes
+    sent = []
+
+    async def send(content=None, *, file=None, message_reference=None):
+        sent.append((file, message_reference))
+
+    async def fetch_channel(channel_id):
+        assert channel_id == "channel"
+        return SimpleNamespace(send=send)
+
+    platform = FluxerPlatform(SimpleNamespace(fetch_channel=fetch_channel), sdk=fluxer)
+    audio = wav_bytes()
+    await platform.deliver_speech("channel", "proxy-id", audio)
+    file, reference = sent[0]
+    assert file.filename == "speech-proxy-id.wav"
+    assert file.to_dict()["data"] == audio
+    assert reference == {"message_id": "proxy-id", "channel_id": "channel"}
+
+
+async def test_fluxer_queue_workers_route_shared_audio_and_close(tmp_path, monkeypatch):
+    import asyncio
+    from plurapack.speech import SpeechJob
+    from tests.test_custom_voices import wav_bytes
+    events = {}
+
+    class Bot:
+        def __init__(self, **kwargs): self.setup_called = self.closed = False
+        def command(self, name): return lambda callback: callback
+        def event(self, callback):
+            events[callback.__name__] = callback
+            return callback
+        async def setup_hook(self): self.setup_called = True
+        async def close(self): self.closed = True
+
+    sdk = SimpleNamespace(Bot=Bot, Intents=SimpleNamespace(default=lambda: 0, MESSAGE_CONTENT=1))
+    monkeypatch.setattr("plurapack.fluxer_bot._load_fluxer", lambda: sdk)
+    monkeypatch.setenv("PLURAPACK_TTS_URL", "https://modal.example")
+    monkeypatch.setenv("PLURAPACK_TTS_WORKERS", "2")
+    database = tmp_path / "speech.sqlite3"
+    client = create_fluxer_bot("p;", str(database))
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "a:")
+    member = store.configure_voice("owner", member.id, "Jordan.wav", {}, "both", "generic")
+    calls, sent, browser = [], [], []
+    audio = wav_bytes()
+
+    def request(path, body, headers):
+        import json
+        calls.append(json.loads(body))
+        return 200, audio, "audio/wav"
+
+    monkeypatch.setattr(client.speech_queue.backend, "_raw_request", request)
+    client.speech_queue.deliver = lambda job, result: sent.append(result)
+    client.speech_queue.deliver_local = lambda job, result: browser.append(result)
+    await client.setup_hook()
+    assert client.setup_called and len(client._speech_tasks) == 2
+    try:
+        client.speech_queue.submit(SpeechJob("c", "p", "hello", member, account_id="owner"))
+        await asyncio.wait_for(client.speech_queue.queue.join(), 1)
+        assert calls == [{"text": "hello", "voice_id": "generic:Jordan"}]
+        assert sent == browser == [audio]
+        assert sent[0] is browser[0]
+    finally:
+        tasks = client._speech_tasks.copy()
+        await client.close()
+    assert client.closed and not client._speech_tasks
+    assert all(task.done() for task in tasks)
+
+
+async def test_fluxer_proxy_enqueues_speech_after_proxied_text(tmp_path, monkeypatch):
+    events = {}
+    class Bot:
+        def __init__(self, **kwargs): pass
+        def command(self, name): return lambda callback: callback
+        def event(self, callback):
+            events[callback.__name__] = callback
+            return callback
+    sdk = SimpleNamespace(Bot=Bot, Intents=SimpleNamespace(default=lambda: 0, MESSAGE_CONTENT=1))
+    monkeypatch.setattr("plurapack.fluxer_bot._load_fluxer", lambda: sdk)
+    monkeypatch.setenv("PLURAPACK_TTS_URL", "https://modal.example")
+    async def send_proxy(self, incoming, member, content): return "proxy"
+    async def delete_source(self, incoming): return True
+    monkeypatch.setattr(FluxerPlatform, "send_proxy", send_proxy)
+    monkeypatch.setattr(FluxerPlatform, "delete_source", delete_source)
+    database = tmp_path / "proxy-speech.sqlite3"
+    client = create_fluxer_bot("p;", str(database))
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "a:")
+    store.configure_voice("owner", member.id, "Jordan.wav", {}, "send", "generic")
+    await events["on_message"](SimpleNamespace(id="source", channel_id="c", content="a:hello",
+        author=SimpleNamespace(id="owner", bot=False), referenced_message=None, guild_id=None))
+    assert store.proxy_owned_by("proxy", "owner")
+    job = client.speech_queue.queue.get_nowait()
+    assert (job.text, job.account_id, job.member.voice_reference) == ("hello", "owner", "Jordan.wav")
