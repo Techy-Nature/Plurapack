@@ -284,7 +284,7 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         audio = await asyncio.to_thread(request.app.state.browser_audio.take, user.id, event_id)
         if audio is None:
             raise HTTPException(404, "Audio is unavailable or expired")
-        return Response(audio, media_type="audio/mpeg", headers={
+        return Response(audio, media_type="audio/wav", headers={
             "Cache-Control": "no-store, private", "Pragma": "no-cache",
             "X-Content-Type-Options": "nosniff",
         })

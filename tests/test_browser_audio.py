@@ -59,7 +59,7 @@ async def test_audio_api_requires_auth_and_isolates_accounts(tmp_path, monkeypat
     store.create_system("owner", "Owner")
     store.create_system("other", "Other")
     audio = BrowserAudioStore(tmp_path / "audio")
-    event = audio.publish("owner", "proxy", 7, b"private-mp3")
+    event = audio.publish("owner", "proxy", 7, b"private-wav")
     app = create_app(store, static_root=None, browser_audio=audio)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -73,7 +73,8 @@ async def test_audio_api_requires_auth_and_isolates_accounts(tmp_path, monkeypat
         discovered = await client.get("/api/voice/events")
         assert discovered.json() == [{"id": event.id, "proxyMessageId": "proxy", "generation": 7}]
         response = await client.get(f"/api/voice/audio/{event.id}")
-        assert response.content == b"private-mp3"
+        assert response.content == b"private-wav"
         assert response.headers["cache-control"] == "no-store, private"
+        assert response.headers["content-type"] == "audio/wav"
         assert (await client.get(f"/api/voice/audio/{event.id}")).status_code == 404
         assert (await client.get("/api/voice/audio/not-a-real-id")).status_code == 404

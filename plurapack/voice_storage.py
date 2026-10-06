@@ -9,6 +9,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 from urllib.parse import quote, urlsplit
+from .voice import custom_voice_uuid
 
 
 class VoiceStorageError(RuntimeError):
@@ -53,11 +54,15 @@ class ForgejoVoiceStorage:
             raise ValueError("Unsupported VOICE_STORAGE_PROVIDER.")
         return cls(os.getenv("VOICE_FORGEJO_BASE_URL", "https://git.gay"),
                    os.getenv("VOICE_FORGEJO_OWNER", ""),
-                   os.getenv("VOICE_FORGEJO_REPO", "chatterbox-voices-host"),
+                   os.getenv("VOICE_FORGEJO_REPO", "plurapack-voice-index"),
                    os.getenv("VOICE_FORGEJO_BRANCH", "main"),
                    os.getenv("VOICE_STORAGE_API_KEY", ""))
 
     def _url(self, voice_id: str, *, reading: bool = False) -> str:
+        try:
+            custom_voice_uuid(f"{voice_id}.wav")
+        except ValueError:
+            raise VoiceStorageError("Private voice storage requires a valid UUID.") from None
         path = quote(f"custom/{voice_id}.wav", safe="/")
         url = f"{self.base_url}/api/v1/repos/{quote(self.owner, safe='')}/{quote(self.repo, safe='')}/contents/{path}"
         return url + (f"?ref={quote(self.branch, safe='')}" if reading else "")

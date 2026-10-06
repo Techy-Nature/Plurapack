@@ -22,7 +22,11 @@ from .bot import (
     _print_cli_status,
     _update_profile_image,
     _download_voice_attachment,
+    _positive_environment_integer,
 )
+from .chatterbox import ChatterboxBackend
+from .speech import SpeechQueue, speech_worker
+from .browser_audio import BrowserAudioStore
 from .voice_service import VoiceService
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .login import LoginError, LoginService
@@ -56,6 +60,7 @@ class FluxerPlatform:
     messages: dict[str, Any] = field(default_factory=dict)
     webhooks: dict[str, Any] = field(default_factory=dict)
     proxy_webhooks: dict[str, Any] = field(default_factory=dict)
+    sdk: Any = None
 
     async def _webhook(self, channel_id: str) -> Any:
         webhook = self.webhooks.get(channel_id)
@@ -112,6 +117,45 @@ class FluxerPlatform:
         data = await self._request_webhook_message("GET", channel_id, proxy_id)
         return str(data.get("content", ""))
 
+    async def deliver_speech(self, channel_id: str, proxy_message_id: str, audio: bytes) -> None:
+        """Deliver a WAV reply without retaining an event-scoped source message."""
+        channel = await self.client.fetch_channel(channel_id)
+        safe_id = "".join(character for character in proxy_message_id
+                          if character.isalnum() or character in "-_")[:48]
+        sdk = self.sdk or _load_fluxer()
+        await channel.send(
+            file=sdk.File(audio, filename=f"speech-{safe_id or 'proxy'}.wav"),
+            message_reference={"message_id": proxy_message_id, "channel_id": channel_id},
+        )
+
+
+def _plurapack_fluxer_bot_class(fluxer: Any) -> type:
+    """Own the existing shared speech queue's workers for the Fluxer lifecycle."""
+    class PlurapackFluxerBot(fluxer.Bot):
+        def __init__(self, **kwargs: Any) -> None:
+            super().__init__(**kwargs)
+            self.speech_queue: SpeechQueue | None = None
+            self.speech_worker_count = 0
+            self._speech_tasks: list[asyncio.Task[None]] = []
+
+        async def setup_hook(self) -> None:
+            await super().setup_hook()
+            if self.speech_queue:
+                self._speech_tasks = [
+                    asyncio.create_task(speech_worker(self.speech_queue), name=f"fluxer-speech-{index}")
+                    for index in range(self.speech_worker_count)
+                ]
+
+        async def close(self) -> None:
+            for task in self._speech_tasks:
+                task.cancel()
+            if self._speech_tasks:
+                await asyncio.gather(*self._speech_tasks, return_exceptions=True)
+            self._speech_tasks.clear()
+            await super().close()
+
+    return PlurapackFluxerBot
+
 
 def _register_command(bot: Any, name: str, callback: Any) -> None:
     """Register the canonical name and every documented compatibility name."""
@@ -128,7 +172,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     # Proxies necessarily inspect ordinary message text, so request Fluxer's
     # privileged content intent in addition to its normal bot event set.
     intents = fluxer.Intents.default() | fluxer.Intents.MESSAGE_CONTENT
-    bot = fluxer.Bot(command_prefix=prefix, intents=intents)
+    bot = _plurapack_fluxer_bot_class(fluxer)(command_prefix=prefix, intents=intents)
     store = Store(database)
     voice_max_seconds = resolve_voice_max_reference_seconds()
     try:
@@ -137,8 +181,23 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
                                      voice_max_seconds)
     except ValueError:
         voice_service = None
-    platform = FluxerPlatform(bot)
-    service = ProxyService(store, platform, prefix)
+    platform = FluxerPlatform(bot, sdk=fluxer)
+    speech_queue = None
+    tts_url = os.environ.get("PLURAPACK_TTS_URL")
+    if tts_url:
+        queue_limit = _positive_environment_integer("PLURAPACK_TTS_QUEUE_LIMIT", 8, 1000)
+        bot.speech_worker_count = _positive_environment_integer("PLURAPACK_TTS_WORKERS", 1, 4)
+        browser_audio = BrowserAudioStore.configured(database)
+        speech_queue = SpeechQueue(
+            ChatterboxBackend(tts_url, voice_service=voice_service),
+            lambda job, audio: platform.deliver_speech(job.channel_id, job.proxy_message_id, audio),
+            queue_limit,
+            lambda job, audio: browser_audio.publish(
+                job.account_id, job.proxy_message_id, job.generation, audio),
+            browser_audio.invalidate,
+        )
+        bot.speech_queue = speech_queue
+    service = ProxyService(store, platform, prefix, speech_queue)
     login_service = LoginService(store)
 
     async def help_command(ctx: Any, *, command_name: str = "") -> None:

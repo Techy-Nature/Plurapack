@@ -590,3 +590,18 @@ def test_groups_create_add_and_update_active_group(tmp_path):
 def test_voice_help_and_attachment_formats_are_consistent():
     assert "VOICE_NAME" in bot.COMMAND_HELP["voice"][1]
     assert "WAV/MP3" in bot.COMMAND_HELP["voice"][1]
+
+
+async def test_stoat_speech_attachment_is_wav_and_preserves_bytes():
+    from tests.test_custom_voices import wav_bytes
+    sent = []
+
+    async def send(**kwargs):
+        sent.append(kwargs)
+
+    channel = SimpleNamespace(send=send)
+    platform = bot.StoatPlatform({}, SimpleNamespace(get_channel=lambda _: channel),
+                                SimpleNamespace(Reply=lambda message_id: message_id))
+    audio = wav_bytes()
+    await platform.deliver_speech("channel", "proxy-id", audio)
+    assert sent == [{"attachments": [("speech-proxy-id.wav", audio)], "replies": ["proxy-id"]}]

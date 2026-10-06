@@ -510,7 +510,7 @@ class StoatPlatform:
         """Upload speech through persistent state, never the event-scoped message map."""
         channel = self.state.get_channel(channel_id)
         safe_id = "".join(character for character in proxy_message_id if character.isalnum() or character in "-_")[:48]
-        filename = f"speech-{safe_id or 'proxy'}.mp3"
+        filename = f"speech-{safe_id or 'proxy'}.wav"
         await channel.send(attachments=[(filename, audio)], replies=[self.sdk.Reply(proxy_message_id)])
 
 

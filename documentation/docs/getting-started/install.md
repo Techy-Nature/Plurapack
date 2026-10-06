@@ -73,10 +73,11 @@ to survive redeployments and container replacement.
 Plurapack does not move an old database when its configured path changes. Move
 it deliberately while Plurapack is stopped if retaining an existing deployment.
 The browser-audio spool is temporary and remains outside the persistent data
-directory. If voice-reference uploads are enabled with
-`PLURAPACK_VOICE_REFERENCE_DIR`, point that variable to a directory on the
-volume (for example `/data/voice-references`) so those user-uploaded files also
-survive replacement.
+directory. Custom voice recordings are stored in the configured private Forgejo
+repository at `custom/<UUID>.wav`; SQLite retains the voice metadata and member
+selection. Configure the protected Modal endpoint and separate TTS/Forgejo
+credentials as described in the [speech guide](../guides/speech.md). No local
+reference directory or GPU is needed on the Plurapack host.
 
 ## 4. Keep it safe
 

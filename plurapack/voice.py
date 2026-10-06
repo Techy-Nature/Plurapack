@@ -2,12 +2,31 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
+# Preserve the historical database/API settings for future runner support.
+# Modal v03 accepts none of these controls; the backend sends only text/voice_id.
 PERMITTED_SETTINGS = {
     "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor",
     "language", "split_text", "chunk_size",
 }
+
+
+def generic_voice_name(filename: str) -> str:
+    """Validate an existing generic filename without accepting paths/namespaces."""
+    if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.wav", filename):
+        raise ValueError("Generic voice must be a safe WAV filename.")
+    return filename[:-4]
+
+
+def custom_voice_uuid(filename: str) -> str:
+    """Accept only canonical UUID filenames used by private custom storage."""
+    if not isinstance(filename, str) or not re.fullmatch(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.wav", filename
+    ):
+        raise ValueError("Custom voice configuration requires a valid storage UUID.")
+    return filename[:-4]
 
 
 def validate_voice_settings(value: str | dict[str, Any]) -> dict[str, Any]:
