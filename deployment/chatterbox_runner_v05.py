@@ -185,6 +185,20 @@ def _moving_average(wav, width: int):
     return smoothed if wav.ndim == 3 else smoothed.squeeze(0)
 
 
+def _breath_component(wav):
+    """Create low-level breath texture shaped by the speech amplitude envelope."""
+    import torch
+
+    # Follow the generated phrase instead of adding a constant hiss. High-pass
+    # the noise so it reads as breath/air rather than broadband static.
+    envelope = _moving_average(torch.abs(wav), 401)
+    noise = torch.randn_like(wav)
+    low_noise = _moving_average(noise, 31)
+    breath = noise - low_noise
+    rms = torch.sqrt(torch.mean(breath * breath) + 1e-8)
+    return (breath / rms) * envelope
+
+
 def apply_style_effect(wav, style: str):
     """Apply non-temporal semantic effects without phase-vocoder artifacts."""
     import torch
@@ -199,12 +213,14 @@ def apply_style_effect(wav, style: str):
         softened = _moving_average(wav, 9)
         return torch.clamp((wav * 0.30 + softened * 0.70) * 0.82, -0.98, 0.98)
     if style == "whisper":
-        # Reduce low-frequency body and overall level. This is intentionally a
-        # subtle whisper-like treatment rather than synthetic breath noise,
-        # which tended to sound artificial on cloned voices.
-        body = _moving_average(wav, 41)
-        airy = wav - body * 0.18
-        return torch.clamp(airy * 0.62, -0.98, 0.98)
+        # Whisper needs an audible change in phonation, not merely lower volume.
+        # Remove substantially more low-frequency/voiced body, then add a small
+        # envelope-shaped high-frequency breath component. This keeps the
+        # original sample count and avoids time-stretch metallic artifacts.
+        body = _moving_average(wav, 121)
+        devoiced = wav - body * 0.62
+        breath = _breath_component(wav)
+        return torch.clamp(devoiced * 0.50 + breath * 0.18, -0.98, 0.98)
     raise ValueError("Speech formatting contains an unsupported style.")
 
 
