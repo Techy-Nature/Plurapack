@@ -34,6 +34,15 @@ STYLE_PRESETS = {
     "whisper": {"exaggeration": 0.05, "cfg_weight": 0.15},
 }
 
+
+class VoiceRepositoryError(RuntimeError):
+    """Sanitized private-voice repository failure."""
+
+
+class SpeechGenerationError(RuntimeError):
+    """Sanitized model-generation failure."""
+
+
 image = (
     modal.Image.debian_slim(python_version="3.10")
     .uv_pip_install(
@@ -138,9 +147,9 @@ class Chatterbox:
                 raise FileNotFoundError("Voice reference was not found.") from None
             if error.code in {401, 403}:
                 raise PermissionError("Voice repository authentication failed.") from None
-            raise RuntimeError("Voice repository request failed.") from None
+            raise VoiceRepositoryError("Voice repository request failed.") from None
         except (OSError, urllib.error.URLError):
-            raise RuntimeError("Voice repository request failed.") from None
+            raise VoiceRepositoryError("Voice repository request failed.") from None
 
         if len(audio_data) > MAX_VOICE_BYTES:
             raise ValueError("Voice reference exceeds the size limit.")
@@ -163,8 +172,11 @@ class Chatterbox:
     def generate(self, prompt: str, voice_id: str) -> bytes:
         prompt = validate_text(prompt)
         voice_path = self.get_voice(voice_id)
-        wav = self.model.generate(prompt, audio_prompt_path=str(voice_path))
-        return self._wav_bytes(wav, self.model.sr)
+        try:
+            wav = self.model.generate(prompt, audio_prompt_path=str(voice_path))
+            return self._wav_bytes(wav, self.model.sr)
+        except Exception:
+            raise SpeechGenerationError("Speech generation failed.") from None
 
     @modal.method()
     def generate_parts(self, parts: list[dict[str, str]], voice_id: str) -> bytes:
@@ -173,18 +185,21 @@ class Chatterbox:
         parts = validate_parts(parts)
         voice_path = self.get_voice(voice_id)
         model = self._load_style_model()
-        rendered = []
-        for part in parts:
-            preset = STYLE_PRESETS[part["style"]]
-            wav = model.generate(
-                part["text"],
-                audio_prompt_path=str(voice_path),
-                exaggeration=preset["exaggeration"],
-                cfg_weight=preset["cfg_weight"],
-            )
-            rendered.append(wav.detach().cpu())
-        combined = torch.cat(rendered, dim=-1)
-        return self._wav_bytes(combined, model.sr)
+        try:
+            rendered = []
+            for part in parts:
+                preset = STYLE_PRESETS[part["style"]]
+                wav = model.generate(
+                    part["text"],
+                    audio_prompt_path=str(voice_path),
+                    exaggeration=preset["exaggeration"],
+                    cfg_weight=preset["cfg_weight"],
+                )
+                rendered.append(wav.detach().cpu())
+            combined = torch.cat(rendered, dim=-1)
+            return self._wav_bytes(combined, model.sr)
+        except Exception:
+            raise SpeechGenerationError("Speech generation failed.") from None
 
     @modal.fastapi_endpoint(method="POST", docs=True, requires_proxy_auth=True)
     def api(self, payload: dict):
@@ -214,8 +229,10 @@ class Chatterbox:
             raise HTTPException(status_code=502, detail="Voice repository authentication failed.") from None
         except ValueError as error:
             raise HTTPException(status_code=400, detail=str(error)) from None
-        except RuntimeError:
+        except VoiceRepositoryError:
             raise HTTPException(status_code=502, detail="Voice repository request failed.") from None
+        except SpeechGenerationError:
+            raise HTTPException(status_code=502, detail="Speech generation failed.") from None
 
         return StreamingResponse(io.BytesIO(audio_bytes), media_type="audio/wav")
 
