@@ -141,9 +141,12 @@ set the entire member's speaking style. When formatting is enabled:
 `omit` is handled before inference, so omitted words never leave Plurapack. For
 other formatted spans, Plurapack sends one semantic-parts request. The v04 runner
 uses the controllable original Chatterbox model for the full formatted message,
-applying the established emphasis/mumble/whisper presets to each span, concatenates
-the generated audio tensors, and encodes **one** WAV. It never concatenates WAV
-containers byte-for-byte. Unformatted messages continue to use Chatterbox Turbo.
+applying the established exaggeration/CFG portions of the emphasis, mumble, and
+whisper presets to each span, concatenates the generated audio tensors, and
+encodes **one** WAV. It never concatenates WAV containers byte-for-byte.
+Unformatted messages continue to use Chatterbox Turbo. The old devnen server's
+`speed_factor` post-processing is not part of direct Chatterbox generation, so
+that part of the old mumble/whisper presets is not reproduced by v04.
 
 The first formatted message after a cold start may take longer because the runner
 loads the controllable model lazily. Turbo's own `exaggeration` and `cfg_weight`
