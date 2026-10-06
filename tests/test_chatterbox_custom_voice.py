@@ -206,15 +206,21 @@ async def test_invalid_or_overlong_text_fails_before_http_without_echoing_input(
         assert "500 characters" in str(caught.value) and text not in str(caught.value)
 
 
-async def test_exactly_500_characters_is_not_truncated_and_settings_are_metadata(voices, http_boundary):
+async def test_exactly_500_characters_is_not_truncated_and_active_settings_are_sent(voices, http_boundary):
     store, member, _, service = voices
     member = service.select_generic_voice("owner", member.id, "Jordan.wav")
     member = store.configure_voice("owner", member.id, member.voice_reference,
-                                   {"exaggeration": 0.7, "speed_factor": 0.9}, "send")
+                                   {"exaggeration": 0.7, "speed_factor": 0.9,
+                                    "language": "en", "split_text": True, "chunk_size": 120}, "send")
     text = "😃" * 500
     await ChatterboxBackend("https://modal.example").synthesize(text, member)
-    assert http_boundary.calls[0][2] == {"text": text, "voice_id": "generic:Jordan"}
-    assert json.loads(store.member_selected("owner", member.id).voice_settings)["exaggeration"] == 0.7
+    assert http_boundary.calls[0][2] == {
+        "text": text,
+        "voice_id": "generic:Jordan",
+        "settings": {"exaggeration": 0.7, "speed_factor": 0.9},
+    }
+    stored = json.loads(store.member_selected("owner", member.id).voice_settings)
+    assert stored["exaggeration"] == 0.7 and stored["language"] == "en"
 
 
 @pytest.mark.parametrize("source,reference", [
