@@ -157,10 +157,10 @@ async def test_api_responses_are_never_cached(api):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("path", [
-    "/", "/login", "/app.js", "/dashboard_helpers.js", "/styles.css",
+    "/", "/login", "/app.js", "/dashboard_helpers.js", "/voice_playback.js", "/styles.css",
 ])
 async def test_dashboard_static_responses_are_never_cached(tmp_path, path):
-    for filename in ("index.html", "login.html", "app.js", "dashboard_helpers.js",
+    for filename in ("index.html", "login.html", "app.js", "dashboard_helpers.js", "voice_playback.js",
                      "styles.css"):
         (tmp_path / filename).write_text("test", encoding="utf-8")
     transport = httpx.ASGITransport(app=create_app(Store(tmp_path / "static.sqlite3"),
@@ -178,12 +178,14 @@ def write_dashboard_assets(root, app_javascript="app contents"):
         '<link rel="stylesheet" href="/styles.css?v={{STYLES_VERSION}}">'
         '<meta name="plurapack-assets-version" content="{{APP_VERSION}}">'
         '<script src="/dashboard_helpers.js?v={{HELPERS_VERSION}}"></script>'
+        '<script src="/voice_playback.js?v={{VOICE_VERSION}}"></script>'
         '<script src="/app.js?v={{APP_VERSION}}"></script>',
         encoding="utf-8",
     )
     (root / "login.html").write_text("login", encoding="utf-8")
     (root / "app.js").write_text(app_javascript, encoding="utf-8")
     (root / "dashboard_helpers.js").write_text("helper contents", encoding="utf-8")
+    (root / "voice_playback.js").write_text("voice contents", encoding="utf-8")
     (root / "styles.css").write_text("style contents", encoding="utf-8")
 
 
@@ -197,7 +199,7 @@ async def test_dashboard_index_contains_content_versioned_assets(tmp_path):
         response = await client.get("/")
 
     assert response.status_code == 200
-    for asset in ("styles.css", "dashboard_helpers.js", "app.js"):
+    for asset in ("styles.css", "dashboard_helpers.js", "voice_playback.js", "app.js"):
         assert re.search(rf'/{re.escape(asset)}\?v=[0-9a-f]{{12}}', response.text)
     app_hash = asset_version(tmp_path / "app.js")
     assert f'<meta name="plurapack-assets-version" content="{app_hash}">' in response.text
@@ -235,6 +237,7 @@ def test_asset_version_is_stable_for_same_contents(tmp_path):
     ("/app.js?v=test", "app contents"),
     ("/dashboard_helpers.js?v=test", "helper contents"),
     ("/styles.css?v=test", "style contents"),
+    ("/voice_playback.js?v=test", "voice contents"),
 ])
 async def test_versioned_dashboard_asset_routes_work(tmp_path, path, contents):
     write_dashboard_assets(tmp_path)

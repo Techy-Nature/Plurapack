@@ -1,5 +1,7 @@
+import io
 import re
 import stat
+import wave
 
 import httpx
 import pytest
@@ -59,7 +61,14 @@ async def test_audio_api_requires_auth_and_isolates_accounts(tmp_path, monkeypat
     store.create_system("owner", "Owner")
     store.create_system("other", "Other")
     audio = BrowserAudioStore(tmp_path / "audio")
-    event = audio.publish("owner", "proxy", 7, b"private-wav")
+    wav_buffer = io.BytesIO()
+    with wave.open(wav_buffer, "wb") as wav:
+        wav.setnchannels(1)
+        wav.setsampwidth(2)
+        wav.setframerate(24000)
+        wav.writeframes(b"\x01\x00" * 240)
+    wav_bytes = wav_buffer.getvalue()
+    event = audio.publish("owner", "proxy", 7, wav_bytes)
     app = create_app(store, static_root=None, browser_audio=audio)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -73,7 +82,9 @@ async def test_audio_api_requires_auth_and_isolates_accounts(tmp_path, monkeypat
         discovered = await client.get("/api/voice/events")
         assert discovered.json() == [{"id": event.id, "proxyMessageId": "proxy", "generation": 7}]
         response = await client.get(f"/api/voice/audio/{event.id}")
-        assert response.content == b"private-wav"
+        assert response.content == wav_bytes
+        assert response.content[:4] == b"RIFF"
+        assert response.content[8:12] == b"WAVE"
         assert response.headers["cache-control"] == "no-store, private"
         assert response.headers["content-type"] == "audio/wav"
         assert (await client.get(f"/api/voice/audio/{event.id}")).status_code == 404

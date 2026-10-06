@@ -103,11 +103,25 @@ client-aware rate limit at that trusted proxy.
 ### Browser voice playback
 
 Voice playback modes have destination-based meanings: `send` uploads the one
-generated MP3 to Stoat, `local` offers it only to the authenticated dashboard,
+generated WAV to Stoat or Fluxer, `local` offers it only to the authenticated dashboard,
 and `both` routes that same synthesis result to both destinations. Dashboard
 playback is opt-in per browser tab through **Enable voice playback**, is ordered,
 and uses authenticated polling plus one-use audio retrieval. If several tabs for
 the same account are open, the first one to retrieve a clip consumes it.
+
+Tap **Enable voice playback** once per page session. A brief audible confirmation
+initializes the persistent browser player, which then reuses the same audio
+element for every WAV. **Disable voice playback** stops local playback and new
+audio retrieval without changing member settings or platform attachments. Reloads
+require another tap; blocked playback waits for an explicit enable tap to retry.
+
+Android may show lock-screen/notification controls through Media Session, with
+generic metadata only. These controls are browser-controlled, not a guaranteed
+permanent notification. Browsers may suspend idle background pages; reopen/refocus
+Plurapack to resume polling, or enable again if reloaded or blocked. Uninterrupted
+background playback is not guaranteed. A future native Android wrapper could
+provide a true foreground media playback service. See the
+[mobile playback guide and Android checks](documentation/docs/guides/speech.md#browser--local-playback-on-mobile).
 
 The unified supervisor runs the bot and Web API as separate child processes, so
 ephemeral audio uses a private cross-process spool rather than SQLite. Both

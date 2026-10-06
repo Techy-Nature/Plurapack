@@ -54,6 +54,59 @@ proxying continues independently of speech failures. The limit applies after
 optional formatting/omissions. Requests and errors do not log private text,
 voice UUIDs, credentials, or upstream response bodies.
 
+## Browser / Local playback on mobile
+
+Open the dashboard and explicitly tap **Enable voice playback** once per page
+session. This plays a brief audible confirmation tone through the same persistent
+audio element that plays subsequent WAV clips in order. Reloading requires a new
+tap; browser permission is separate from each member's `off`, `local`, `send`, or
+`both` setting. If the browser blocks playback, tap **Enable voice playback** again.
+Plurapack stops automatic attempts until you do so.
+
+**Disable voice playback** stops and resets the player and stops new local audio
+requests. It does not change member settings or Stoat/Fluxer attachment delivery.
+A clip already fetched (including a request completing just after disabling) is
+kept only in page memory, so enabling again can replay it from the beginning
+without consuming its one-use endpoint twice. Generated audio is never saved to
+browser storage; its object URL is released when playback ends or stops. Unfetched
+clips remain subject to the server's short expiry (120 seconds by default), so old
+speech may be unavailable after a long pause. Multiple dashboard tabs compete for
+the same one-use clips; use one tab for playback.
+
+Where supported, Android browsers may expose lock-screen or notification media
+controls through the **Media Session API**. Play and pause control the same player;
+pause also holds subsequent clips, and stop disables browser playback. Metadata
+uses only “Plurapack speech” / “Plurapack”, never message text or member details.
+Media Session is optional and browser-controlled. It does **not** provide a
+guaranteed permanent Android notification or uninterrupted background playback.
+
+Browsers may throttle polling, suspend an inactive background page when nothing
+is playing, or interrupt media when switching apps or locking the screen. Reopen
+or refocus Plurapack if Android has suspended the browser. Returning to the page
+triggers an immediate poll; if the page was reloaded or playback was blocked,
+enable playback again. There is no silent looping audio, wake lock, or keepalive
+service. A future native Android wrapper could provide a true foreground media
+playback service if needed.
+
+### Manual Android checks
+
+1. Open the Plurapack dashboard.
+2. Tap **Enable voice playback** and listen for the brief confirmation tone.
+3. Trigger one TTS message for a member using `local` or `both`.
+4. Confirm the generated WAV plays.
+5. Trigger several messages rapidly and confirm ordered playback.
+6. Switch to another app while a clip is playing.
+7. Lock the screen while a clip is playing.
+8. Check whether Android exposes media controls; try pause and play if available.
+9. Return to Plurapack and trigger another clip.
+10. Confirm playback still works without reloading.
+11. Leave the browser idle/backgrounded, return later, and verify polling recovers
+    with a newly generated clip (old clips may have expired).
+
+Also check that disabling stops playback and new audio requests, re-enabling
+resumes, and `send`/`both` attachments still reach Stoat or Fluxer independently.
+
+
 ## Semantic formatting and current limitations
 
 ```text

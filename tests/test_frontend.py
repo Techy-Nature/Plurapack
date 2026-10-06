@@ -11,7 +11,7 @@ def test_dashboard_frontend_behaviors():
     if node is None:
         pytest.skip("Node.js is not installed")
     root = Path(__file__).parent.parent
-    subprocess.run([node, "--test", "tests/frontend.test.js"], cwd=root, check=True)
+    subprocess.run([node, "--test", "tests/frontend.test.js", "tests/voice_playback.test.js"], cwd=root, check=True)
 
 
 def test_dashboard_exposes_transfer_formats_strategies_and_safe_defaults():
@@ -40,8 +40,8 @@ def test_login_page_offers_stoat_and_fluxer():
 
 
 def test_browser_speech_requests_wav_without_server_credentials():
-    script = (Path(__file__).parent.parent / "app.js").read_text()
-    assert 'Accept:"audio/wav"' in script
+    script = (Path(__file__).parent.parent / "voice_playback.js").read_text()
+    assert 'audio ? "audio/wav" : "application/json"' in script
     assert 'audio/mpeg' not in script
     assert 'PLURAPACK_TTS_API_KEY' not in script
     assert 'VOICE_STORAGE_API_KEY' not in script
