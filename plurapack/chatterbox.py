@@ -27,6 +27,11 @@ class ChatterboxBackend:
     keeps the v03 ``text`` + ``voice_id`` request contract. When semantic speech
     formatting is enabled, ``synthesize_styled`` uses the v04 ``parts`` contract
     so the runner can render styles before returning one valid WAV container.
+
+    During a rolling v03 -> v04 deployment, a protocol-level 400/422 response to
+    the new ``parts`` payload falls back once to the old plain-text contract. That
+    keeps speech available without weakening authentication/network failures into
+    silent retries; styles simply remain flattened until v04 is live.
     """
 
     def __init__(self, url: str, *, voice_service: VoiceService | None = None,
@@ -81,6 +86,7 @@ class ChatterboxBackend:
     async def synthesize_styled(self, parts, member: Member) -> bytes:
         """Render semantic speech parts through Modal v04 as one WAV response."""
         payload_parts: list[dict[str, str]] = []
+        fallback_words: list[str] = []
         total_characters = 0
         for part in parts:
             text = getattr(part, "text", None)
@@ -91,13 +97,20 @@ class ChatterboxBackend:
                 raise ChatterboxError("Speech formatting contains an unsupported style.")
             total_characters += len(text)
             payload_parts.append({"text": text, "style": style})
+            fallback_words.append(text)
         if not payload_parts:
             raise ChatterboxError("Speech text must be non-empty.")
         if total_characters > MODAL_TEXT_LIMIT:
             raise ChatterboxError("Speech text exceeds the Modal limit of 500 characters.")
+        fallback_text = self._validate_text(" ".join(fallback_words))
         voice_id = await self._voice_id(member)
         payload = {"parts": payload_parts, "voice_id": voice_id}
-        return await asyncio.to_thread(self._request, json.dumps(payload).encode())
+        fallback = {"text": fallback_text, "voice_id": voice_id}
+        return await asyncio.to_thread(
+            self._request,
+            json.dumps(payload).encode(),
+            json.dumps(fallback).encode(),
+        )
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json", "Accept": "audio/wav"}
@@ -126,11 +139,17 @@ class ChatterboxBackend:
         finally:
             connection.close()
 
-    def _request(self, body: bytes) -> bytes:
+    def _request(self, body: bytes, fallback_body: bytes | None = None) -> bytes:
         path = self.url.path or "/"
         if self.url.query:
             path += "?" + self.url.query
-        status, data, content_type = self._raw_request(path, body, self._headers())
+        headers = self._headers()
+        status, data, content_type = self._raw_request(path, body, headers)
+        if fallback_body is not None and status in {400, 422}:
+            status, data, content_type = self._raw_request(path, fallback_body, headers)
+        return self._validate_response(status, data, content_type)
+
+    def _validate_response(self, status: int, data: bytes, content_type: str) -> bytes:
         if not 200 <= status < 300:
             raise ChatterboxError("Speech service returned an unsuccessful status.")
         if content_type != "audio/wav":
