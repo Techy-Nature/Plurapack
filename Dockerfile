@@ -8,7 +8,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY plurapack ./plurapack
 COPY main.py ./
-COPY index.html login.html app.js dashboard_helpers.js styles.css ./
+COPY index.html login.html app.js dashboard_helpers.js voice_playback.js styles.css ./
 
 RUN python -m pip install --no-cache-dir .
 
