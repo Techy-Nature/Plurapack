@@ -12,4 +12,4 @@ COPY index.html login.html app.js dashboard_helpers.js voice_playback.js styles.
 
 RUN python -m pip install --no-cache-dir .
 
-CMD ["python", "-m", "plurapack"]
+python -m plurapack
