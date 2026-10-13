@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plurapack.bot import _group_embed, _member_embed, _system_embed, create_bot
+from plurapack.bot import _group_embed, _member_embed, _profile_embed, _system_embed, create_bot
 from plurapack.storage import Store
 
 
@@ -358,3 +358,80 @@ async def test_viewgroup_reports_unknown_groups_and_ignores_non_groups(tmp_path)
     for selector in ("nothing", system_id):
         await bot.get_command("viewgroup").callback(ctx, selector=selector)
     assert [reply[0][0] for reply in replies] == ["Group not found. Use an exact group name, alias, or ID."] * 2
+
+
+async def test_viewgroup_pages_by_total_text_so_stoat_accepts_each_message(tmp_path):
+    database = tmp_path / "viewgroup-size.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    store.create_group("owner", "Big", "big")
+    ids = [store.add_member("owner", f"M{n}", f"[{n}]", "", "x" * 1000).id for n in range(6)]
+    store.add_group_members("owner", ids)
+    replies = []
+
+    async def send(*args, **kwargs):
+        replies.append(kwargs["embeds"])
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    bot.state.http.add_reaction_to_message = lambda *a, **k: _noop()
+    await bot.get_command("viewgroup").callback(ctx, selector="big")
+
+    assert len(replies) == 1  # the first page is what is sent immediately
+    assert sum(len(embed.description) for embed in replies[0]) <= 1800
+    assert replies[0][0].title == "Big"
+
+
+def test_pack_embed_pages_respects_text_and_count_limits():
+    from plurapack.bot import _pack_embed_pages
+    embeds = [SimpleNamespace(description="x" * 700) for _ in range(5)]
+    pages = _pack_embed_pages(embeds)
+    assert [len(page) for page in pages] == [2, 2, 1]
+    many = [SimpleNamespace(description="a") for _ in range(25)]
+    assert [len(page) for page in _pack_embed_pages(many)] == [10, 10, 5]
+
+
+async def _noop():
+    return None
+
+
+def test_profile_embeds_link_banners_instead_of_using_media(tmp_path):
+    store = Store(tmp_path / "banner.sqlite3")
+    system_id = store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "[a]", "")
+    store.update_member("owner", member.id, banner="https://example.test/b.png")
+    store.update_system("owner", system_id, banner="https://example.test/s.png")
+
+    class SDK:
+        class SendableEmbed:
+            def __init__(self, **kwargs):
+                assert "media" not in kwargs  # Stoat reads media as an uploaded file ID
+                self.__dict__.update(kwargs)
+
+    assert "[view](https://example.test/b.png)" in _profile_embed(SDK, store, store.member_selected("owner", member.id)).description
+    assert "[view](https://example.test/s.png)" in _profile_embed(SDK, store, store.system_info(system_id)).description
+
+
+async def test_info_on_a_large_group_and_system_stays_within_stoat_limits(tmp_path):
+    database = tmp_path / "info-large.sqlite3"
+    store = Store(database)
+    system_id = store.create_system("owner", "Crew")
+    store.create_group("owner", "Big", "big")
+    ids = [store.add_member("owner", f"Member-{n}", f"[{n}]", "", pronouns="they/them").id
+           for n in range(40)]
+    store.add_group_members("owner", ids)
+    sent = []
+
+    async def send(*args, **kwargs):
+        sent.append(kwargs["embeds"])
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    bot.state.http.add_reaction_to_message = lambda *a, **k: _noop()
+    for selector in ("big", system_id):
+        sent.clear()
+        await bot.get_command("info").callback(ctx, selector=selector)
+        assert sum(len(embed.description) for embed in sent[0]) <= 1800
+        assert len(sent[0]) <= 10

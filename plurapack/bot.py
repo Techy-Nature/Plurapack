@@ -290,13 +290,20 @@ def _system_embed(sdk: Any, system: System, member_count: int) -> Any:
                              icon_url=system.logo)
 
 
+def _banner_line(banner: str | None) -> str:
+    """Link a banner instead of using embed ``media``, which Stoat treats as an uploaded
+    file ID; a URL there makes the whole message fail with NotFound."""
+    return f"\n**Banner:** [view]({banner})" if banner else ""
+
+
 def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, Member]) -> Any:
     """Build the compact, common profile requested by the ``info`` command."""
     if isinstance(value, System):
         return sdk.SendableEmbed(
             title=value.display_name,
-            description=(value.description or "No description provided.") + f"\n\n**ID:** `{value.id}`",
-            icon_url=value.logo, media=value.banner,
+            description=(value.description or "No description provided.") + f"\n\n**ID:** `{value.id}`"
+            + _banner_line(value.banner),
+            icon_url=value.logo,
         )
     if isinstance(value, tuple):
         form, member = value
@@ -315,8 +322,8 @@ def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, M
     proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags) or "None"
     body = (description or "No description provided.") + (
         f"\n\n**ID:** `{identifier}`\n**Pronouns:** {pronouns or 'Not set'}\n**Proxies:** {proxies}"
-    )
-    return sdk.SendableEmbed(title=name, description=body, icon_url=avatar, media=banner)
+    ) + _banner_line(banner)
+    return sdk.SendableEmbed(title=name, description=body, icon_url=avatar)
 
 
 def _group_embed(sdk: Any, store: Store, group: Group) -> Any:
@@ -334,13 +341,16 @@ def _group_embed(sdk: Any, store: Store, group: Group) -> Any:
     return sdk.SendableEmbed(title=group.name, description=description, icon_url=group.avatar)
 
 
-_GROUP_DESCRIPTION_LIMIT = 1200
+_GROUP_DESCRIPTION_LIMIT = 1100
 
 
 def _group_member_detail(store: Store, member: Member) -> str:
     """Describe one group member for ``viewgroup`` (shared by Stoat and Fluxer)."""
     tags = store.proxy_tags(member_id=member.id)
-    proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags) or "None"
+    # A member can have up to 100 proxy tags; keep each card within Stoat's size limit.
+    proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags[:5]) or "None"
+    if len(tags) > 5:
+        proxies += f" (+{len(tags) - 5} more)"
     description = member.description or "No description provided."
     if len(description) > _GROUP_DESCRIPTION_LIMIT:
         description = description[:_GROUP_DESCRIPTION_LIMIT - 1].rstrip() + "…"
@@ -366,10 +376,63 @@ def _group_detail_embeds(sdk: Any, store: Store, group: Group) -> list[Any]:
     return [header, *cards]
 
 
+# Stoat rejects a message (PayloadTooLarge) when the text of all its embeds
+# together is too long, so pages are packed by total description length, not
+# only by embed count. Stay safely under the 2000-character message limit.
+_STOAT_PAGE_TEXT_BUDGET = 1800
+_STOAT_PAGE_EMBED_LIMIT = 10
+
+
+def _pack_embed_pages(embeds: list[Any], max_embeds: int = _STOAT_PAGE_EMBED_LIMIT) -> list[list[Any]]:
+    """Group embeds into pages that fit Stoat's per-message size limits."""
+    pages: list[list[Any]] = []
+    page: list[Any] = []
+    used = 0
+    for embed in embeds:
+        size = len(embed.description or "")
+        if page and (used + size > _STOAT_PAGE_TEXT_BUDGET or len(page) >= max_embeds):
+            pages.append(page)
+            page, used = [], 0
+        page.append(embed)
+        used += size
+    if page:
+        pages.append(page)
+    return pages
+
+
 def _resolve_group(store: Store, account_id: str, selector: str) -> Group | None:
     """Resolve only groups: stable IDs globally, names and aliases locally."""
     selector = selector.strip()
     return store.public_group_by_id(selector) or store.group_selected(account_id, selector)
+
+
+def _group_embeds(sdk: Any, store: Store, group: Group) -> list[Any]:
+    """Like ``_group_embed`` but continues onto more embeds for big groups, since
+    Stoat rejects a message whose embed text is too long."""
+    member_lines = []
+    for member in store.public_group_members(group.id):
+        tags = store.proxy_tags(member_id=member.id)
+        proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags[:5]) or "None"
+        if len(tags) > 5:
+            proxies += f" (+{len(tags) - 5} more)"
+        member_lines.append(
+            f"**{member.name}** (`{member.id}`)\n"
+            f"Pronouns: {member.pronouns or 'Not set'}\nProxies: {proxies}"
+        )
+    chunks, current = [], ""
+    for line in member_lines:
+        if current and len(current) + len(line) + 2 > _STOAT_PAGE_TEXT_BUDGET - 200:
+            chunks.append(current)
+            current = ""
+        current += ("\n\n" if current else "") + line
+    chunks.append(current or "None")
+    embeds = []
+    for index, chunk in enumerate(chunks):
+        head = f"**Group ID:** `{group.id}`\n\n**Members:**\n" if index == 0 else ""
+        embeds.append(sdk.SendableEmbed(
+            title=group.name if index == 0 else f"{group.name} (continued)",
+            description=head + chunk, icon_url=group.avatar if index == 0 else None))
+    return embeds
 
 
 def _install_voice_attachment(attachment: Any, reference_dir: Path, max_bytes: int = 25 * 1024 * 1024) -> str:
@@ -758,8 +821,8 @@ def create_bot(prefix: str, database: str) -> Any:
             if system:
                 members = store.members_for_system(system.id)
                 pages = [[_system_embed(stoat, system, len(members))]]
-                pages.extend([[_member_embed(stoat, store, member) for member in members[index:index + 2]]
-                              for index in range(0, len(members), 2)])
+                pages.extend(_pack_embed_pages(
+                    [_member_embed(stoat, store, member) for member in members], max_embeds=2))
                 await send_pages(ctx, pages)
                 return
             member_value = store.public_member_selected(selector)
@@ -785,8 +848,8 @@ def create_bot(prefix: str, database: str) -> Any:
         if not members:
             await ctx.send(f"**{system.display_name}** has no members.")
             return
-        await send_pages(ctx, [[_member_embed(stoat, store, member) for member in members[index:index + 2]]
-                               for index in range(0, len(members), 2)])
+        await send_pages(ctx, _pack_embed_pages(
+            [_member_embed(stoat, store, member) for member in members], max_embeds=2))
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["viewmember"]])
     async def viewmember(ctx: commands.Context, *, selector: str) -> None:
@@ -812,16 +875,14 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send("System, group, member, or form not found. Use an exact nickname, alias, or ID.")
             return
         if isinstance(value, Group):
-            await ctx.send(embeds=[_group_embed(stoat, store, value)])
+            await send_pages(ctx, _pack_embed_pages(_group_embeds(stoat, store, value)))
             return
         if isinstance(value, System):
             embeds = [_profile_embed(stoat, store, value)]
-            embeds.extend(_group_embed(stoat, store, group)
-                          for group in store.groups_for_system(value.id))
-            # Stoat accepts at most ten embeds per message. Keep every group in
-            # the same expandable embed format while paging unusually large lists.
-            pages = [embeds[index:index + 10] for index in range(0, len(embeds), 10)]
-            await send_pages(ctx, pages)
+            for group in store.groups_for_system(value.id):
+                embeds.extend(_group_embeds(stoat, store, group))
+            # Stoat limits both the embed count and their combined text per message.
+            await send_pages(ctx, _pack_embed_pages(embeds))
             return
         await ctx.send(embeds=[_profile_embed(stoat, store, value)])
 
@@ -833,8 +894,8 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send("Group not found. Use an exact group name, alias, or ID.")
             return
         embeds = _group_detail_embeds(stoat, store, group)
-        # Stoat accepts at most ten embeds per message, so page larger groups.
-        await send_pages(ctx, [embeds[index:index + 10] for index in range(0, len(embeds), 10)])
+        # Page by total text size as well as embed count; see _pack_embed_pages.
+        await send_pages(ctx, _pack_embed_pages(embeds))
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["group"]])
     async def group(ctx: commands.Context, action: str, *, arguments: str = "") -> None:
