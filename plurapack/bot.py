@@ -290,14 +290,19 @@ def _system_embed(sdk: Any, system: System, member_count: int) -> Any:
                              icon_url=system.logo)
 
 
-def _banner_line(banner: str | None) -> str:
-    """Show a banner below the card text as a Markdown image.
+def _profile_banner(value: System | Member | tuple[Any, Member]) -> str | None:
+    """Return the banner URL of an ``info`` result, if it has one.
 
-    The embed ``media`` field is not usable for this: Stoat reads it as an uploaded
-    file ID, so a URL there makes the whole message fail with NotFound. A Markdown
-    image in the description is rendered from the URL and nothing is uploaded.
+    Banners are not part of the card. The embed ``media`` field is read by Stoat as an
+    uploaded file ID (a URL there fails with NotFound), and the client's text renderer
+    drops Markdown images, so neither can show a linked banner. A plain link in a message
+    is previewed as an image by Stoat itself, with nothing uploaded, so ``info`` posts the
+    URL as a short follow-up message under the card.
     """
-    return f"\n\n![Banner]({banner})" if banner else ""
+    if isinstance(value, tuple):
+        form, member = value
+        return form.banner or member.banner
+    return value.banner
 
 
 def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, Member]) -> Any:
@@ -305,28 +310,27 @@ def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, M
     if isinstance(value, System):
         return sdk.SendableEmbed(
             title=value.display_name,
-            description=(value.description or "No description provided.") + f"\n\n**ID:** `{value.id}`"
-            + _banner_line(value.banner),
+            description=(value.description or "No description provided.") + f"\n\n**ID:** `{value.id}`",
             icon_url=value.logo,
         )
     if isinstance(value, tuple):
         form, member = value
         tags = store.proxy_tags(form_id=form.id)[:3]
-        name, identifier, avatar, pronouns, description, banner = (
+        name, identifier, avatar, pronouns, description = (
             form.display_name, form.id, form.avatar or member.avatar,
             form.pronouns if form.pronouns is not None else member.pronouns,
-            form.soma or member.description, form.banner or member.banner,
+            form.soma or member.description,
         )
     else:
         member = value
         tags = store.proxy_tags(member_id=member.id)[:3]
-        name, identifier, avatar, pronouns, description, banner = (
-            member.name, member.id, member.avatar, member.pronouns, member.description, member.banner,
+        name, identifier, avatar, pronouns, description = (
+            member.name, member.id, member.avatar, member.pronouns, member.description,
         )
     proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags) or "None"
     body = (description or "No description provided.") + (
         f"\n\n**ID:** `{identifier}`\n**Pronouns:** {pronouns or 'Not set'}\n**Proxies:** {proxies}"
-    ) + _banner_line(banner)
+    )
     return sdk.SendableEmbed(title=name, description=body, icon_url=avatar)
 
 
@@ -887,8 +891,11 @@ def create_bot(prefix: str, database: str) -> Any:
                 embeds.extend(_group_embeds(stoat, store, group))
             # Stoat limits both the embed count and their combined text per message.
             await send_pages(ctx, _pack_embed_pages(embeds))
-            return
-        await ctx.send(embeds=[_profile_embed(stoat, store, value)])
+        else:
+            await ctx.send(embeds=[_profile_embed(stoat, store, value)])
+        banner = _profile_banner(value)
+        if banner:
+            await ctx.send(banner)  # Stoat previews the image link; nothing is uploaded
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["viewgroup"]])
     async def viewgroup(ctx: commands.Context, *, selector: str) -> None:
