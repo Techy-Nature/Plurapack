@@ -396,7 +396,7 @@ async def _noop():
     return None
 
 
-def test_profile_embeds_link_banners_instead_of_using_media(tmp_path):
+def test_profile_embeds_show_banners_as_images_instead_of_using_media(tmp_path):
     store = Store(tmp_path / "banner.sqlite3")
     system_id = store.create_system("owner", "Crew")
     member = store.add_member("owner", "Alex", "[a]", "")
@@ -409,8 +409,8 @@ def test_profile_embeds_link_banners_instead_of_using_media(tmp_path):
                 assert "media" not in kwargs  # Stoat reads media as an uploaded file ID
                 self.__dict__.update(kwargs)
 
-    assert "[view](https://example.test/b.png)" in _profile_embed(SDK, store, store.member_selected("owner", member.id)).description
-    assert "[view](https://example.test/s.png)" in _profile_embed(SDK, store, store.system_info(system_id)).description
+    assert "\n\n![Banner](https://example.test/b.png)" in _profile_embed(SDK, store, store.member_selected("owner", member.id)).description
+    assert "\n\n![Banner](https://example.test/s.png)" in _profile_embed(SDK, store, store.system_info(system_id)).description
 
 
 async def test_info_on_a_large_group_and_system_stays_within_stoat_limits(tmp_path):

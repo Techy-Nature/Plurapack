@@ -291,9 +291,13 @@ def _system_embed(sdk: Any, system: System, member_count: int) -> Any:
 
 
 def _banner_line(banner: str | None) -> str:
-    """Link a banner instead of using embed ``media``, which Stoat treats as an uploaded
-    file ID; a URL there makes the whole message fail with NotFound."""
-    return f"\n**Banner:** [view]({banner})" if banner else ""
+    """Show a banner below the card text as a Markdown image.
+
+    The embed ``media`` field is not usable for this: Stoat reads it as an uploaded
+    file ID, so a URL there makes the whole message fail with NotFound. A Markdown
+    image in the description is rendered from the URL and nothing is uploaded.
+    """
+    return f"\n\n![Banner]({banner})" if banner else ""
 
 
 def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, Member]) -> Any:
