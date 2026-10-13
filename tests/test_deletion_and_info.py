@@ -358,3 +358,39 @@ async def test_viewgroup_reports_unknown_groups_and_ignores_non_groups(tmp_path)
     for selector in ("nothing", system_id):
         await bot.get_command("viewgroup").callback(ctx, selector=selector)
     assert [reply[0][0] for reply in replies] == ["Group not found. Use an exact group name, alias, or ID."] * 2
+
+
+async def test_viewgroup_pages_by_total_text_so_stoat_accepts_each_message(tmp_path):
+    database = tmp_path / "viewgroup-size.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    store.create_group("owner", "Big", "big")
+    ids = [store.add_member("owner", f"M{n}", f"[{n}]", "", "x" * 1000).id for n in range(6)]
+    store.add_group_members("owner", ids)
+    replies = []
+
+    async def send(*args, **kwargs):
+        replies.append(kwargs["embeds"])
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    bot.state.http.add_reaction_to_message = lambda *a, **k: _noop()
+    await bot.get_command("viewgroup").callback(ctx, selector="big")
+
+    assert len(replies) == 1  # the first page is what is sent immediately
+    assert sum(len(embed.description) for embed in replies[0]) <= 1800
+    assert replies[0][0].title == "Big"
+
+
+def test_pack_embed_pages_respects_text_and_count_limits():
+    from plurapack.bot import _pack_embed_pages
+    embeds = [SimpleNamespace(description="x" * 700) for _ in range(5)]
+    pages = _pack_embed_pages(embeds)
+    assert [len(page) for page in pages] == [2, 2, 1]
+    many = [SimpleNamespace(description="a") for _ in range(25)]
+    assert [len(page) for page in _pack_embed_pages(many)] == [10, 10, 5]
+
+
+async def _noop():
+    return None

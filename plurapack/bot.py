@@ -334,13 +334,16 @@ def _group_embed(sdk: Any, store: Store, group: Group) -> Any:
     return sdk.SendableEmbed(title=group.name, description=description, icon_url=group.avatar)
 
 
-_GROUP_DESCRIPTION_LIMIT = 1200
+_GROUP_DESCRIPTION_LIMIT = 1100
 
 
 def _group_member_detail(store: Store, member: Member) -> str:
     """Describe one group member for ``viewgroup`` (shared by Stoat and Fluxer)."""
     tags = store.proxy_tags(member_id=member.id)
-    proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags) or "None"
+    # A member can have up to 100 proxy tags; keep each card within Stoat's size limit.
+    proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags[:5]) or "None"
+    if len(tags) > 5:
+        proxies += f" (+{len(tags) - 5} more)"
     description = member.description or "No description provided."
     if len(description) > _GROUP_DESCRIPTION_LIMIT:
         description = description[:_GROUP_DESCRIPTION_LIMIT - 1].rstrip() + "…"
@@ -364,6 +367,30 @@ def _group_detail_embeds(sdk: Any, store: Store, group: Group) -> list[Any]:
         for member in members
     ]
     return [header, *cards]
+
+
+# Stoat rejects a message (PayloadTooLarge) when the text of all its embeds
+# together is too long, so pages are packed by total description length, not
+# only by embed count. Stay safely under the 2000-character message limit.
+_STOAT_PAGE_TEXT_BUDGET = 1800
+_STOAT_PAGE_EMBED_LIMIT = 10
+
+
+def _pack_embed_pages(embeds: list[Any]) -> list[list[Any]]:
+    """Group embeds into pages that fit Stoat's per-message size limits."""
+    pages: list[list[Any]] = []
+    page: list[Any] = []
+    used = 0
+    for embed in embeds:
+        size = len(embed.description or "")
+        if page and (used + size > _STOAT_PAGE_TEXT_BUDGET or len(page) >= _STOAT_PAGE_EMBED_LIMIT):
+            pages.append(page)
+            page, used = [], 0
+        page.append(embed)
+        used += size
+    if page:
+        pages.append(page)
+    return pages
 
 
 def _resolve_group(store: Store, account_id: str, selector: str) -> Group | None:
@@ -833,8 +860,8 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send("Group not found. Use an exact group name, alias, or ID.")
             return
         embeds = _group_detail_embeds(stoat, store, group)
-        # Stoat accepts at most ten embeds per message, so page larger groups.
-        await send_pages(ctx, [embeds[index:index + 10] for index in range(0, len(embeds), 10)])
+        # Page by total text size as well as embed count; see _pack_embed_pages.
+        await send_pages(ctx, _pack_embed_pages(embeds))
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["group"]])
     async def group(ctx: commands.Context, action: str, *, arguments: str = "") -> None:
