@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from plurapack.fluxer_bot import FluxerPlatform, create_fluxer_bot
 from plurapack.bot import COMMAND_ALIASES, COMMAND_HELP, COMMAND_SHORTCUTS
 from plurapack.login import LoginService
@@ -286,7 +288,7 @@ async def test_fluxer_sanitizes_voice_storage_errors(tmp_path, monkeypatch):
 
 
 async def test_fluxer_speech_attachment_is_wav_and_uses_sdk_channel_signature():
-    import fluxer
+    fluxer = pytest.importorskip("fluxer")  # optional: installed with `.[fluxer]`
     from tests.test_custom_voices import wav_bytes
     sent = []
 

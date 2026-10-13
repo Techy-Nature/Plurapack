@@ -35,8 +35,8 @@ from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 
 
 STOAT_INSTALL_MESSAGE = (
-    "The Stoat client dependency is not installed. Install Plurapack and its "
-    "dependencies with `python -m pip install -e .`, then try again."
+    "The Stoat client library is not installed. From the Plurapack checkout, run "
+    "`python -m pip install -e '.[stoat]'` (or `python install.py`), then try again."
 )
 
 STOAT_MASQUERADE_NAME_LIMIT = 32

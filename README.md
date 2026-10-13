@@ -35,7 +35,11 @@ system; the account response uses a `systems` list only as a stable API shape.
 Railway automatically builds the included `Dockerfile`. It installs Plurapack
 and all declared Python dependencies (including Uvicorn), then starts the bot
 and dashboard together with `python -m plurapack`; no custom start command is
-required. Remove any existing Railway start-command override such as `uvicorn
+required. By default the image installs both the Stoat and Fluxer libraries. To
+install only one, add a service variable named `PLURAPACK_PLATFORMS` with the value
+`stoat` or `fluxer` (the default is `stoat,fluxer`) and redeploy so the image
+rebuilds. Locally, the same choice is a Docker build argument:
+`docker build --build-arg PLURAPACK_PLATFORMS=stoat .` Remove any existing Railway start-command override such as `uvicorn
 ...` so the image command is used. The server automatically listens on
 Railway's `PORT` and on all interfaces.
 
@@ -161,14 +165,40 @@ No live Stoat messages or Chatterbox requests were sent while developing this re
 
 ## Install and run
 
-Requires Python 3.11+.
+Requires Python 3.11+. Plurapack installs only the chat platform libraries you
+use, so choose Stoat, Fluxer, or both.
+
+The easiest way is the interactive installer. It asks which platform(s) you host,
+offers to create a virtual environment, and installs the right libraries:
+
+```bash
+python install.py
+cp .env.example .env
+```
+
+To skip the questions, pass the platform (`stoat`, `fluxer`, or `both`), and
+add `--dev` to also install the test tools:
+
+```bash
+python install.py --platform stoat
+python install.py --platform both --dev
+```
+
+Prefer to do it by hand? Pick the extra that matches your platform:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate                 # Windows: .venv\Scripts\activate
-python -m pip install -e '.[dev]'
+python -m pip install -e '.[stoat]'          # Stoat only
+python -m pip install -e '.[fluxer]'         # Fluxer only
+python -m pip install -e '.[stoat,fluxer]'   # both (also available as '.[all]')
 cp .env.example .env
 ```
+
+Installing the plain package (`pip install -e .`) adds the dashboard and core
+code but neither chat library, and Plurapack tells you which extra is missing if
+you start a platform whose library is not installed. `'.[dev]'` installs both
+libraries plus the test tools.
 
 Create a bot in Stoat, Fluxer, or both, and place its token in your environment
 (the program does not automatically read `.env`). When both tokens are set,
