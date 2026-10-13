@@ -229,6 +229,8 @@ p;link                          # run on the existing owner account
 p;verify abc123...              # run on the other account
 p;viewinfo                     # system card, then member cards with arrow reactions
 p;viewmember abc12             # one member card by stable ID or exact name
+p;viewgroup pals               # one group; every member's ID, color, and description
+p;view abc12                   # same as p;info (any system, group, member, or form)
 p;viewmembers                  # member cards only, two embeds per responsive page
 p;deletemember abc12           # permanently remove member, forms, and records
 p;deletesystem                 # reply to its warning with the exact system ID
@@ -242,8 +244,8 @@ Every command also has a one- or two-letter shortcut: `s` (setup), `m` (member),
 `i` (import), `x` (export), `l` (link), `c` (color), `v` (verify), `vo` (voice),
 `of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `mt` (memberproxy),
 `mc` (memberproxy-clear), `ft` (formproxy), `fc` (formproxy-clear), `fr` (front),
-`ap` (autoproxy), `af` (autofront), `vi` (viewinfo), `ml` (viewmembers), `vm`
-(viewmember), `dm` (deletemember), and `ds` (deletesystem).
+`ap` (autoproxy), `af` (autofront), `vi` (viewinfo), `vg` (viewgroup), `ml`
+(viewmembers), `vm` (viewmember), `dm` (deletemember), and `ds` (deletesystem).
 
 View pagers use Unicode left/right arrows by default and accept configured Stoat
 custom emoji IDs through `PLURAPACK_PREVIOUS_EMOJI_ID` and

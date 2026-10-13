@@ -304,3 +304,57 @@ async def test_info_can_select_group_by_name_alias_or_id(tmp_path, selector_kind
     assert len(embeds) == 1
     assert embeds[0].title == group.name
     assert f"`{group.id}`" in embeds[0].description
+
+
+def test_view_is_registered_as_an_alias_of_info_not_viewinfo(tmp_path):
+    bot = create_bot("p;", str(tmp_path / "alias.sqlite3"))
+    assert bot.get_command("view") is bot.get_command("info")
+    assert bot.get_command("viewinfo") is not bot.get_command("view")
+    assert bot.get_command("vg") is bot.get_command("viewgroup")
+
+
+@pytest.mark.parametrize("selector_kind", ["name", "alias", "id"])
+async def test_viewgroup_shows_member_id_color_and_description(tmp_path, selector_kind):
+    database = tmp_path / f"viewgroup-{selector_kind}.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    alex = store.add_member("owner", "Alex", "[a]", "", "Loves the sea.", pronouns="they/them")
+    store.update_member("owner", alex.id, color="7b68ee")
+    quiet = store.add_member("owner", "Quinn", "[q]", "")
+    group = store.create_group("owner", "Friends", "pals")
+    store.add_group_members("owner", [alex.id, quiet.id])
+    selector = {"name": group.name, "alias": group.alias, "id": group.id}[selector_kind]
+    replies = []
+
+    async def send(*args, **kwargs):
+        replies.append((args, kwargs))
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    await bot.get_command("viewgroup").callback(ctx, selector=selector)
+
+    embeds = replies[0][1]["embeds"]
+    assert [embed.title for embed in embeds] == ["Friends", "Alex", "Quinn"]
+    assert f"`{group.id}`" in embeds[0].description
+    assert f"**ID:** `{alex.id}`" in embeds[1].description
+    assert "**Color:** `7b68ee`" in embeds[1].description
+    assert "Loves the sea." in embeds[1].description
+    assert "**Color:** `default`" in embeds[2].description
+    assert "No description provided." in embeds[2].description
+
+
+async def test_viewgroup_reports_unknown_groups_and_ignores_non_groups(tmp_path):
+    database = tmp_path / "viewgroup-missing.sqlite3"
+    store = Store(database)
+    system_id = store.create_system("owner", "Crew")
+    replies = []
+
+    async def send(*args, **kwargs):
+        replies.append((args, kwargs))
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    for selector in ("nothing", system_id):
+        await bot.get_command("viewgroup").callback(ctx, selector=selector)
+    assert [reply[0][0] for reply in replies] == ["Group not found. Use an exact group name, alias, or ID."] * 2

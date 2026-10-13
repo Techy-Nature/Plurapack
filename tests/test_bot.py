@@ -28,7 +28,9 @@ def test_help_details_accept_command_shortcuts_and_compatibility_aliases():
         "**member** — Add a member and proxy tag.\n"
         "Usage: `!member NAME PREFIX [SUFFIX] [--avatar URL|--a URL] [DESCRIPTION]`\nAliases: `!m`"
     ]
-    assert bot._help_pages("p;", "view")[0].startswith("**viewinfo**")
+    assert bot._help_pages("p;", "view")[0].startswith("**info**")
+    assert "`p;view`" in bot._help_pages("p;", "info")[0]
+    assert bot._help_pages("p;", "vg")[0].startswith("**viewgroup**")
     assert bot._help_pages("p;", "missing") == [
         "Unknown command `missing`. Use `p;help` to list every command."
     ]

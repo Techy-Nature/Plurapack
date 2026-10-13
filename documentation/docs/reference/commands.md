@@ -28,9 +28,10 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `verify CODE` | `v` | Connect an account using a code. |
 | `import FORMAT JSON` | `i` | Import PluralKit, Tupperbox, or Plurapack JSON. |
 | `export [FORMAT]` | `x` | Export portable metadata. |
-| `info SYSTEM_GROUP_MEMBER_OR_FORM` | `in` | Show a system and its groups, a single group, a member, or a form profile. |
+| `info SYSTEM_GROUP_MEMBER_OR_FORM` | `in`, `view` | Show a system and its groups, a single group, a member, or a form profile. |
 | `group create\|select\|add\|alias\|avatar ...` | `g` | Create, select, and edit the active group. |
 | `viewinfo [SYSTEM_OR_MEMBER]` | `vi` | Show a system card, then its member cards, or one member card. |
+| `viewgroup GROUP` | `vg` | Show one group with every member's ID, color, and description. |
 | `viewmembers [SYSTEM]` | `ml` | Show only a system's paginated member cards. |
 | `viewmember MEMBER` | `vm` | Show one embedded member card. |
 | `deletemember MEMBER` | `dm` | Permanently delete an owned member, their forms, and associated records. |
@@ -78,7 +79,7 @@ aliases, or proxy prefixes; member names containing spaces must be quoted. The
 `g` shortcut supports all of the same operations (for example,
 `p;g select GROUP`).
 
-`view` is accepted as a compatibility alias for `viewinfo`, and `fronter` is
+`view` is accepted as a compatibility alias for `info`, and `fronter` is
 accepted as a compatibility alias for `front`. Missing command arguments are
 reported in chat with the missing argument and a pointer to the command's help
 instead of only producing an operator-side traceback.
@@ -91,6 +92,16 @@ group. A system result includes an embed for each group, with its optional
 avatar, name, stable ID, and member list. Each listed member includes their
 name, ID, pronouns, and proxy tags; the embed's read-more control keeps longer
 group lists compact until expanded.
+
+`view` is another name for `info`, so `p;view pals` and `p;info pals` do the
+same thing. `viewgroup GROUP` (shortcut `vg`) shows one group in more detail.
+It accepts a group's stable ID, name, or alias, like `info` does, and only
+matches groups. The first card gives the group's avatar, name, stable ID,
+alias, and member count. Each member then gets their own card with their
+avatar, name, stable ID, hex color (or `default`), pronouns, proxy tags, and
+full description, shown in the member's own color. Large groups continue on
+extra pages that you turn with the arrow reactions; on Fluxer the same details
+arrive as a few consecutive messages.
 
 `viewinfo` without an argument uses the system connected to your account. A
 system ID or exact system name shows that system; a member ID or exact member

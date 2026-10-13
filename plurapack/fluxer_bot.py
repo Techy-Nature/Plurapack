@@ -17,9 +17,11 @@ from .bot import (
     COMMAND_ALIASES,
     COMMAND_HELP,
     COMMAND_SHORTCUTS,
+    _group_member_detail,
     _help_pages,
     _member_creation_options,
     _print_cli_status,
+    _resolve_group,
     _update_profile_image,
     _download_voice_attachment,
     _positive_environment_integer,
@@ -395,6 +397,20 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         members = "\n\n".join(member_lines) if member_lines else "None"
         return f"**{group.name}**\nGroup ID: `{group.id}`\nAvatar: {group.avatar or 'None'}\n\nMembers:\n{members}"
 
+    async def viewgroup_command(ctx: Any, *, selector: str) -> None:
+        group = _resolve_group(store, account(ctx), selector)
+        if group is None:
+            await ctx.send("Group not found. Use an exact group name, alias, or ID."); return
+        members = store.public_group_members(group.id)
+        blocks = [f"**{group.name}**\nGroup ID: `{group.id}` | Alias: `{group.alias}` | Members: {len(members)}\nAvatar: {group.avatar or 'None'}"]
+        blocks.extend(f"**{member.name}**\n{_group_member_detail(store, member)}" for member in members)
+        message = ""
+        for block in blocks:  # stay under the chat message length limit
+            if message and len(message) + len(block) + 2 > 1900:
+                await ctx.send(message); message = ""
+            message += ("\n\n" if message else "") + block
+        await ctx.send(message)
+
     async def viewmember_command(ctx: Any, *, selector: str) -> None:
         try: member = store.public_member_selected(selector)
         except ValueError as error: await ctx.send(str(error)); return
@@ -543,7 +559,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         "front": front_command, "autoproxy": autoproxy_command, "autofront": autofront_command,
         "color": color_command, "link": link_command, "verify": verify_command,
         "import": import_command, "export": export_command, "viewinfo": viewinfo_command,
-        "info": info_command, "viewmembers": viewmembers_command, "viewmember": viewmember_command,
+        "info": info_command, "viewgroup": viewgroup_command, "viewmembers": viewmembers_command, "viewmember": viewmember_command,
         "group": group_command, "deletemember": deletemember_command,
         "deletesystem": deletesystem_command, "voice": voice_command,
         "voiceoff": voiceoff_command, "voiceformat": voiceformat_command,
