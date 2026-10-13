@@ -396,7 +396,7 @@ async def _noop():
     return None
 
 
-def test_profile_embeds_link_banners_instead_of_using_media(tmp_path):
+def test_profile_cards_never_carry_the_banner(tmp_path):
     store = Store(tmp_path / "banner.sqlite3")
     system_id = store.create_system("owner", "Crew")
     member = store.add_member("owner", "Alex", "[a]", "")
@@ -409,8 +409,57 @@ def test_profile_embeds_link_banners_instead_of_using_media(tmp_path):
                 assert "media" not in kwargs  # Stoat reads media as an uploaded file ID
                 self.__dict__.update(kwargs)
 
-    assert "[view](https://example.test/b.png)" in _profile_embed(SDK, store, store.member_selected("owner", member.id)).description
-    assert "[view](https://example.test/s.png)" in _profile_embed(SDK, store, store.system_info(system_id)).description
+    for value in (store.member_selected("owner", member.id), store.system_info(system_id)):
+        card = _profile_embed(SDK, store, value)
+        assert "example.test" not in card.description  # Stoat's text renderer drops images
+
+
+@pytest.mark.parametrize("kind", ["member", "system", "form"])
+async def test_info_posts_the_banner_url_as_a_follow_up_message_stoat_previews(tmp_path, kind):
+    database = tmp_path / f"banner-{kind}.sqlite3"
+    store = Store(database)
+    system_id = store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "[a]", "")
+    form = store.create_form("owner", member.id, "Alex at Sea")
+    selector, url = {
+        "member": (member.id, "https://example.test/member.png"),
+        "system": (system_id, "https://example.test/system.png"),
+        "form": (form.id, "https://example.test/form.png"),
+    }[kind]
+    if kind == "member":
+        store.update_member("owner", member.id, banner=url)
+    elif kind == "system":
+        store.update_system("owner", system_id, banner=url)
+    else:
+        store.update_form("owner", form.id, banner=url)
+    sent = []
+
+    async def send(*args, **kwargs):
+        sent.append((args, kwargs))
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    await bot.get_command("info").callback(ctx, selector=selector)
+
+    assert sent[0][1]["embeds"]  # the card first
+    assert sent[-1] == ((url,), {})  # then the plain link, which Stoat turns into an image preview
+
+
+async def test_info_without_a_banner_sends_only_the_card(tmp_path):
+    database = tmp_path / "no-banner.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "[a]", "")
+    sent = []
+
+    async def send(*args, **kwargs):
+        sent.append((args, kwargs))
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    await bot.get_command("info").callback(ctx, selector=member.id)
+    assert len(sent) == 1
 
 
 async def test_info_on_a_large_group_and_system_stays_within_stoat_limits(tmp_path):
