@@ -112,6 +112,8 @@ COMMAND_HELP = {
         "g", "create|select|add|alias|avatar ...",
         "Create, select, and edit the active group.",
     ),
+    "viewgroup": ("vg", "GROUP",
+                  "Show one group with each member's ID, color, and description."),
     "viewmembers": ("ml", "[SYSTEM]", "Show a system's member cards."),
     "viewmember": ("vm", "MEMBER", "Show one member card."),
     "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
@@ -125,7 +127,7 @@ COMMAND_SHORTCUTS = {name: details[0] for name, details in COMMAND_HELP.items()}
 
 # Compatibility names people commonly try based on the nouns used by other
 # plural proxy bots and by Plurapack's own UI.
-COMMAND_ALIASES = {"front": ["fronter"], "viewinfo": ["view"]}
+COMMAND_ALIASES = {"front": ["fronter"], "info": ["view"]}
 
 PREVIOUS_EMOJI = "⬅️"
 NEXT_EMOJI = "➡️"
@@ -330,6 +332,44 @@ def _group_embed(sdk: Any, store: Store, group: Group) -> Any:
     description = f"**Group ID:** `{group.id}`\n\n**Members:**\n"
     description += "\n\n".join(member_lines) if member_lines else "None"
     return sdk.SendableEmbed(title=group.name, description=description, icon_url=group.avatar)
+
+
+_GROUP_DESCRIPTION_LIMIT = 1200
+
+
+def _group_member_detail(store: Store, member: Member) -> str:
+    """Describe one group member for ``viewgroup`` (shared by Stoat and Fluxer)."""
+    tags = store.proxy_tags(member_id=member.id)
+    proxies = ", ".join(f"`{tag.prefix}text{tag.suffix}`" for tag in tags) or "None"
+    description = member.description or "No description provided."
+    if len(description) > _GROUP_DESCRIPTION_LIMIT:
+        description = description[:_GROUP_DESCRIPTION_LIMIT - 1].rstrip() + "…"
+    return (
+        f"**ID:** `{member.id}`\n**Color:** `{member.color or 'default'}`\n"
+        f"**Pronouns:** {member.pronouns or 'Not set'}\n**Proxies:** {proxies}\n\n{description}"
+    )
+
+
+def _group_detail_embeds(sdk: Any, store: Store, group: Group) -> list[Any]:
+    """Build a group header plus one colored card per member for ``viewgroup``."""
+    members = store.public_group_members(group.id)
+    header = sdk.SendableEmbed(
+        title=group.name,
+        description=f"**Group ID:** `{group.id}`\n**Alias:** `{group.alias}`\n**Members:** {len(members)}",
+        icon_url=group.avatar,
+    )
+    cards = [
+        sdk.SendableEmbed(title=member.name, description=_group_member_detail(store, member),
+                          icon_url=member.avatar, color=member.color)
+        for member in members
+    ]
+    return [header, *cards]
+
+
+def _resolve_group(store: Store, account_id: str, selector: str) -> Group | None:
+    """Resolve only groups: stable IDs globally, names and aliases locally."""
+    selector = selector.strip()
+    return store.public_group_by_id(selector) or store.group_selected(account_id, selector)
 
 
 def _install_voice_attachment(attachment: Any, reference_dir: Path, max_bytes: int = 25 * 1024 * 1024) -> str:
@@ -711,7 +751,7 @@ def create_bot(prefix: str, database: str) -> Any:
         value = selector or store.system_for(account_id)
         return store.system_info(value) if value else None
 
-    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"], *COMMAND_ALIASES["viewinfo"]])
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"]])
     async def viewinfo(ctx: commands.Context, *, selector: str = "") -> None:
         try:
             system = selected_system(ctx.author.id, selector or None)
@@ -760,7 +800,7 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await send_pages(ctx, [[_member_embed(stoat, store, selected)]])
 
-    @bot.command(aliases=[COMMAND_SHORTCUTS["info"]])
+    @bot.command(aliases=[COMMAND_SHORTCUTS["info"], *COMMAND_ALIASES["info"]])
     async def info(ctx: commands.Context, *, selector: str) -> None:
         """Show a system, group, member, or form selected by nickname, alias, or ID."""
         try:
@@ -784,6 +824,17 @@ def create_bot(prefix: str, database: str) -> Any:
             await send_pages(ctx, pages)
             return
         await ctx.send(embeds=[_profile_embed(stoat, store, value)])
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewgroup"]])
+    async def viewgroup(ctx: commands.Context, *, selector: str) -> None:
+        """Show one group with every member's ID, color, and description."""
+        group = _resolve_group(store, str(ctx.author.id), selector)
+        if group is None:
+            await ctx.send("Group not found. Use an exact group name, alias, or ID.")
+            return
+        embeds = _group_detail_embeds(stoat, store, group)
+        # Stoat accepts at most ten embeds per message, so page larger groups.
+        await send_pages(ctx, [embeds[index:index + 10] for index in range(0, len(embeds), 10)])
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["group"]])
     async def group(ctx: commands.Context, action: str, *, arguments: str = "") -> None:

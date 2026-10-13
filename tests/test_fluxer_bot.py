@@ -383,3 +383,47 @@ async def test_fluxer_proxy_enqueues_speech_after_proxied_text(tmp_path, monkeyp
     assert store.proxy_owned_by("proxy", "owner")
     job = client.speech_queue.queue.get_nowait()
     assert (job.text, job.account_id, job.member.voice_reference) == ("hello", "owner", "Jordan.wav")
+
+
+async def test_fluxer_viewgroup_includes_member_id_color_and_description(tmp_path, monkeypatch):
+    database = tmp_path / "viewgroup.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "[a]", "", "Loves the sea.", pronouns="they/them")
+    store.update_member("owner", member.id, color="7b68ee")
+    group = store.create_group("owner", "Friends", "pals")
+    store.add_group_members("owner", [member.id])
+    replies = []
+
+    async def send(message, **kwargs):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    await commands["viewgroup"](ctx, selector="pals")
+    assert commands["view"] is commands["info"] and commands["vg"] is commands["viewgroup"]
+
+    assert len(replies) == 1
+    assert replies[0].startswith(f"**Friends**\nGroup ID: `{group.id}`")
+    assert f"**ID:** `{member.id}`" in replies[0]
+    assert "**Color:** `7b68ee`" in replies[0]
+    assert "Loves the sea." in replies[0]
+
+
+async def test_fluxer_viewgroup_splits_long_groups_into_several_messages(tmp_path, monkeypatch):
+    database = tmp_path / "viewgroup-long.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    store.create_group("owner", "Big", "big")
+    ids = [store.add_member("owner", f"M{n}", f"[{n}]", "", "x" * 900).id for n in range(5)]
+    store.add_group_members("owner", ids)
+    replies = []
+
+    async def send(message, **kwargs):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    await commands["viewgroup"](ctx, selector="big")
+    assert len(replies) > 1 and all(len(reply) <= 2000 for reply in replies)
+    assert all(member_id in "".join(replies) for member_id in ids)
