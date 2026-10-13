@@ -4,15 +4,41 @@ This page is for bot operators. Users of an existing bot can continue to [Your f
 
 ## 1. Create an isolated environment
 
-From a Plurapack source checkout:
+Plurapack installs only the chat platform libraries you use: Stoat, Fluxer, or
+both. From a Plurapack source checkout, the interactive installer asks which you
+host, offers to create the virtual environment, and installs the right libraries:
+
+```bash
+python install.py
+```
+
+To skip the questions, name the platform (`stoat`, `fluxer`, or `both`). Add
+`--dev` for the test tools, `--venv` to create `.venv`, or `--dry-run` to see what
+it would do without changing anything:
+
+```bash
+python install.py --platform stoat
+python install.py --platform both --venv
+```
+
+### Installing by hand
+
+Create the environment and install the extra that matches your platform:
 
 ```bash
 python -m venv .venv
 . .venv/bin/activate
-python -m pip install -e .
+python -m pip install -e '.[stoat]'          # Stoat only
+python -m pip install -e '.[fluxer]'         # Fluxer only
+python -m pip install -e '.[stoat,fluxer]'   # both (or '.[all]')
 ```
 
 On Windows PowerShell, activate with `.venv\Scripts\Activate.ps1`.
+
+A plain `python -m pip install -e .` installs Plurapack and its dashboard without
+either chat library. If you later start a platform whose library is missing,
+Plurapack stops with a message naming the extra to install. `'.[dev]'` adds the
+test tools and both libraries.
 
 ## 2. Configure required values
 
@@ -36,8 +62,9 @@ $env:PLURAPACK_PREFIX = 'p;'
 $env:PLURAPACK_DATA_DIR = 'C:\private\plurapack-data'
 ```
 
-At least one of `STOAT_BOT_TOKEN` and `FLUXER_BOT_TOKEN` is required. Set both
-to connect to Stoat and Fluxer at the same time. The prefix defaults to `p;`,
+At least one of `STOAT_BOT_TOKEN` and `FLUXER_BOT_TOKEN` is required, and the
+matching library must be installed (step 1). Set both to connect to Stoat and
+Fluxer at the same time; if you installed only one platform, set only its token. The prefix defaults to `p;`,
 and the database defaults to `plurapack.sqlite3` in the current directory.
 When `PLURAPACK_DATA_DIR` is set, the default database is instead
 `plurapack.sqlite3` beneath that directory. An explicitly set
@@ -61,6 +88,14 @@ server's `PORT`, `PLURAPACK_WEB_PORT`, and `PLURAPACK_WEB_HOST` configuration:
 ```bash
 python -m plurapack
 ```
+
+## Railway: choosing platforms
+
+Railway builds the included `Dockerfile`, which installs both the Stoat and
+Fluxer libraries by default. To install only one, add a service variable named
+`PLURAPACK_PLATFORMS` set to `stoat` or `fluxer` (the default is `stoat,fluxer`),
+then redeploy so the image rebuilds. For a local Docker build, pass it as
+`docker build --build-arg PLURAPACK_PLATFORMS=stoat .`
 
 ## Railway persistent storage
 

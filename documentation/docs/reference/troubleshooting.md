@@ -5,8 +5,14 @@
 **`STOAT_BOT_TOKEN or FLUXER_BOT_TOKEN is required`**
 : Set at least one token in the same process environment used to start Plurapack. Set both to connect to both platforms.
 
-**Stoat dependency is not installed**
-: Activate the intended virtual environment and run `python -m pip install -e .` from the checkout.
+**The Stoat client library is not installed**
+: Activate the intended virtual environment and run `python -m pip install -e '.[stoat]'` from the checkout, or run `python install.py`.
+
+**The Fluxer client library is not installed**
+: Activate the intended virtual environment and run `python -m pip install -e '.[fluxer]'` from the checkout, or run `python install.py`.
+
+**It worked on Railway but a platform is missing after a redeploy**
+: The image installs the platforms named in the `PLURAPACK_PLATFORMS` service variable (default `stoat,fluxer`). Include every platform you have a token for, then redeploy.
 
 ## A tagged message is not proxied
 

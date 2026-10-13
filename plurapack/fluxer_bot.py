@@ -39,8 +39,8 @@ from .config import resolve_voice_max_reference_seconds
 
 
 FLUXER_INSTALL_MESSAGE = (
-    "The Fluxer client dependency is not installed. Install Plurapack and its "
-    "dependencies with `python -m pip install -e .`, then try again."
+    "The Fluxer client library is not installed. From the Plurapack checkout, run "
+    "`python -m pip install -e '.[fluxer]'` (or `python install.py`), then try again."
 )
 
 
