@@ -660,3 +660,33 @@ async def test_modal_and_forgejo_credentials_are_not_exposed_in_api_responses(ap
         for response in (public, denied, denied_voices, selected, audio):
             assert modal_token.encode() not in response.content
             assert forgejo_token.encode() not in response.content
+
+
+@pytest.mark.asyncio
+async def test_image_upload_requires_login_and_configuration_and_returns_the_hosted_url(tmp_path, monkeypatch):
+    from plurapack.imagehost import ImageHost
+
+    monkeypatch.setenv("PLURAPACK_SESSION_SECRET", "test-secret-that-is-longer-than-thirty-two-bytes")
+    monkeypatch.setenv("PLURAPACK_COOKIE_SECURE", "false")
+    monkeypatch.delenv("PLURAPACK_IMAGE_HOST_KEY", raising=False)
+    store = Store(tmp_path / "images.sqlite3")
+    store.create_system("owner", "Test System")
+    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    files = {"image": ("pic.png", png, "image/png")}
+
+    unconfigured = httpx.ASGITransport(app=create_app(store, static_root=None))
+    async with httpx.AsyncClient(transport=unconfigured, base_url="http://test") as client:
+        assert (await client.post("/api/images", files=files)).status_code == 401
+        client.cookies.update(cookie())
+        assert (await client.get("/api/account")).json()["imageUpload"] is False
+        assert (await client.post("/api/images", files=files)).status_code == 503
+
+    host = ImageHost("key", send=lambda request: (200, b'{"image": {"url": "https://iili.io/x.png"}}'))
+    configured = httpx.ASGITransport(app=create_app(store, static_root=None, image_host=host))
+    async with httpx.AsyncClient(transport=configured, base_url="http://test") as client:
+        client.cookies.update(cookie())
+        assert (await client.get("/api/account")).json()["imageUpload"] is True
+        uploaded = await client.post("/api/images", files=files)
+        assert uploaded.status_code == 200 and uploaded.json() == {"url": "https://iili.io/x.png"}
+        rejected = await client.post("/api/images", files={"image": ("a.txt", b"hello", "text/plain")})
+        assert rejected.status_code == 422

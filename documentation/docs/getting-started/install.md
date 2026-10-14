@@ -97,6 +97,21 @@ Fluxer libraries by default. To install only one, add a service variable named
 then redeploy so the image rebuilds. For a local Docker build, pass it as
 `docker build --build-arg PLURAPACK_PLATFORMS=stoat .`
 
+## Optional image uploads
+
+By default you paste an image link into the dashboard. To let people upload a picture
+from the picker instead, set these service variables and redeploy:
+
+| Variable | Meaning |
+| --- | --- |
+| `PLURAPACK_IMAGE_HOST_KEY` | Your API key for the image host. Uploads are off until this is set. |
+| `PLURAPACK_IMAGE_HOST_URL` | Upload endpoint. Defaults to `https://freeimage.host/api/1/upload`. Must be `https`. |
+| `PLURAPACK_IMAGE_MAX_BYTES` | Largest accepted file. Defaults to 8 MiB. |
+
+Plurapack still stores only the returned link. Only PNG, JPEG, GIF, and WebP files are
+accepted, judged by their contents. The host can delete images or go offline, and its
+terms apply to what you upload, so keep the original files. Pasting any other link still works.
+
 ## Railway persistent storage
 
 For Railway, attach a Volume to the existing Plurapack service, mount it at
