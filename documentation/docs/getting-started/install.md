@@ -110,8 +110,27 @@ from the picker instead, set these service variables and redeploy:
 | `PLURAPACK_IMAGE_COMPRESS_OVER` | Pictures bigger than this many bytes are shrunk to WebP before upload. Defaults to `1000000` (1 MB). `0` turns shrinking off. |
 
 Plurapack still stores only the returned link. Only PNG, JPEG, GIF, and WebP files are
-accepted, judged by their contents. A picture over the shrink limit is converted to WebP, limited to 2048 pixels on its long side (1024 for animations), and stripped of metadata such as camera and location tags; smaller pictures are uploaded as they are. The host can delete images or go offline, and its
-terms apply to what you upload, so keep the original files. Pasting any other link still works. People can also attach a picture to `p;avatar` or `p;banner` and leave out the URL.
+accepted, judged by their contents. People can upload from the dashboard's image picker
+or attach a picture to `p;avatar` or `p;banner` and leave out the URL. Pasting any other
+link still works.
+
+!!! warning "Uploads are anonymous and permanent"
+    With the site's shared API key, freeimage.host stores uploads anonymously. They are
+    not tied to anyone's account: anyone with the link can see the picture, and neither
+    the uploader nor Plurapack can delete it later. The dashboard shows this warning next
+    to the upload field, `p;help avatar` explains it, and the bot repeats it after every
+    upload. Anyone who wants to be able to delete their pictures should upload them
+    themselves at <https://freeimage.host> with their own account and paste that link.
+
+**Metadata.** The host does not remove metadata, so Plurapack does before every upload:
+camera details, GPS location, editing history, comments, and anything a phone appends
+after the picture. This does not re-encode the picture, so quality is unchanged. JPEG
+colour profiles and GIF looping are kept. A photo that is only upright because of a
+rotation tag is rotated and re-saved first, so it still displays the right way up.
+
+**Shrinking.** A picture over `PLURAPACK_IMAGE_COMPRESS_OVER` is converted to WebP and
+limited to 2048 pixels on its long side (1024 for animations). The host can delete
+images or go offline, and its terms apply to what you upload, so keep the original files.
 
 ## Railway persistent storage
 

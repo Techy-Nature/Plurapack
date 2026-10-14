@@ -23,6 +23,7 @@ from .bot import (
     _print_cli_status,
     _resolve_group,
     _configured_image_host,
+    _image_update_reply,
     _read_url_attachment,
     _update_profile_image_from_message,
     _download_voice_attachment,
@@ -253,13 +254,13 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     async def image_command(ctx: Any, field: str, arguments: str) -> None:
         attachments = list(getattr(getattr(ctx, "message", ctx), "attachments", ()) or ())
         try:
-            name, _ = await _update_profile_image_from_message(
+            name, _, uploaded = await _update_profile_image_from_message(
                 store, str(ctx.author.id), field, arguments, attachments, image_host,
                 _read_url_attachment)
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return
-        await ctx.send(f"Updated the {field} for **{name}**.")
+        await ctx.send(_image_update_reply(field, name, uploaded, image_host))
 
     def account(ctx: Any) -> str:
         return str(ctx.author.id)

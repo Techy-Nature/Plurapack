@@ -85,8 +85,8 @@ COMMAND_HELP = {
         "m", "NAME PREFIX [SUFFIX] [--avatar URL|--a URL] [DESCRIPTION]",
         "Add a member and proxy tag.",
     ),
-    "avatar": ("av", "--member MEMBER [URL]|--form FORM [URL]|--system [URL]", "Change a profile avatar. Attach an image instead of a URL if uploads are enabled."),
-    "banner": ("bn", "--member MEMBER URL|--form FORM URL|--system URL", "Change a profile banner."),
+    "avatar": ("av", "--member MEMBER [URL]|--form FORM [URL]|--system [URL]", "Change a profile avatar. You can attach an image instead of a URL; attached images are uploaded anonymously and permanently (freeimage.host by default) and cannot be deleted. Upload at https://freeimage.host yourself to keep that control."),
+    "banner": ("bn", "--member MEMBER [URL]|--form FORM [URL]|--system [URL]", "Change a profile banner. Attached images are uploaded anonymously and permanently, like avatar."),
     "memberproxy": ("mt", "MEMBER [PREFIX] [SUFFIX]", "Add or list member proxy tags."),
     "memberproxy-clear": ("mc", "MEMBER", "Clear every proxy tag from a member."),
     "alias": ("a", "MEMBER [ALIAS]", "Set or clear a member selector."),
@@ -259,6 +259,11 @@ IMAGE_UPLOAD_UNAVAILABLE = (
 )
 
 
+def _image_update_reply(field: str, name: str, uploaded: bool, image_host: Any) -> str:
+    reply = f"Updated the {field} for **{name}**."
+    return f"{reply}\n{image_host.notice}" if uploaded and image_host is not None else reply
+
+
 def _configured_image_host() -> Any:
     """The optional image host, or ``None`` when unset or misconfigured."""
     try:
@@ -271,11 +276,15 @@ def _configured_image_host() -> Any:
 async def _update_profile_image_from_message(
     store: Store, account_id: str, field: str, arguments: str, attachments: list[Any],
     image_host: Any, read_attachment: Callable[[Any, int], Awaitable[bytes]],
-) -> tuple[str, str]:
-    """Update an image from a typed URL, or from one attached picture hosted on demand."""
+) -> tuple[str, str, bool]:
+    """Update an image from a typed URL, or from one attached picture hosted on demand.
+
+    Returns ``(name, url, uploaded)``; ``uploaded`` is true when the picture was sent to
+    the image host, so the reply can warn that the upload is permanent.
+    """
     target, selector, typed = _profile_image_options(arguments, attached=bool(attachments))
     if typed is not None:
-        return _update_profile_image(store, account_id, field, arguments)
+        return (*_update_profile_image(store, account_id, field, arguments), False)
     if len(attachments) != 1:
         raise ValueError("Attach exactly one image, or give an image URL.")
     if image_host is None:
@@ -286,7 +295,7 @@ async def _update_profile_image_from_message(
         hosted = await asyncio.to_thread(image_host.upload, data)
     except ImageHostError as error:
         raise ValueError(str(error)) from error
-    return _update_profile_image(store, account_id, field, arguments, url=hosted)
+    return (*_update_profile_image(store, account_id, field, arguments, url=hosted), True)
 
 
 def _help_pages(prefix: str, selector: str = "", limit: int = 1800) -> list[str]:
@@ -858,13 +867,13 @@ def create_bot(prefix: str, database: str) -> Any:
     async def update_image(ctx: commands.Context, field: str, arguments: str) -> None:
         attachments = list(getattr(ctx.message, "attachments", ()) or ())
         try:
-            name, _ = await _update_profile_image_from_message(
+            name, _, uploaded = await _update_profile_image_from_message(
                 store, str(ctx.author.id), field, arguments, attachments, image_host,
                 _read_stoat_attachment)
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return
-        await ctx.send(f"Updated the {field} for **{name}**.")
+        await ctx.send(_image_update_reply(field, name, uploaded, image_host))
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["avatar"]])
     async def avatar(ctx: commands.Context, *, arguments: str = "") -> None:

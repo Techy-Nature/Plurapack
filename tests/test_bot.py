@@ -687,3 +687,28 @@ async def test_stoat_attachment_reader_refuses_oversized_files_without_downloadi
 
     with pytest.raises(ValueError, match="at most"):
         await bot._read_stoat_attachment(Asset(), 1024 * 1024)
+
+
+async def test_reply_warns_that_attached_uploads_are_permanent_but_typed_urls_do_not(tmp_path):
+    from plurapack.imagehost import ImageHost
+
+    store = Store(tmp_path / "notice.sqlite3")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Jaden", "J:")
+    uploaded = await bot._update_profile_image_from_message(
+        store, "owner", "avatar", f"--member {member.id}", [b"PICTURE"], _FakeHost(), _read)
+    typed = await bot._update_profile_image_from_message(
+        store, "owner", "avatar", f"--member {member.id} https://example.test/a.png", [], None, _read)
+    assert uploaded[2] is True and typed[2] is False
+
+    real = ImageHost("key")
+    warned = bot._image_update_reply("avatar", "Jaden", True, real)
+    assert warned.startswith("Updated the avatar for **Jaden**.")
+    assert "anonymously" in warned and "can delete it later" in warned
+    assert "https://freeimage.host" in warned
+    assert bot._image_update_reply("avatar", "Jaden", False, real) == "Updated the avatar for **Jaden**."
+
+
+def test_help_explains_that_attached_uploads_cannot_be_deleted():
+    page = "\n".join(bot._help_pages("p;", "avatar"))
+    assert "permanently" in page and "https://freeimage.host" in page

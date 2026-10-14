@@ -282,6 +282,8 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         return {"authenticated": True, "id": user.id, "username": user.username,
                 "displayName": user.username, "avatar": user.avatar,
                 "imageUpload": request.app.state.image_host is not None,
+                "imageUploadNotice": (request.app.state.image_host.notice
+                                      if request.app.state.image_host is not None else None),
                 "systemId": summaries[0]["id"] if summaries else None,
                 "user": {"id": user.id, "username": user.username, "avatar": user.avatar},
                 "systems": summaries}
