@@ -385,7 +385,8 @@ def _profile_banner(value: System | Member | tuple[Any, Member]) -> str | None:
     uploaded file ID (a URL there fails with NotFound), and the client's text renderer
     drops Markdown images, so neither can show a linked banner. A plain link in a message
     is previewed as an image by Stoat itself, with nothing uploaded, so ``info`` posts the
-    URL as a short follow-up message under the card.
+    URL as a short follow-up message under the card. ``viewinfo`` and ``viewmember`` do
+    the same. Groups have no banner.
     """
     if isinstance(value, tuple):
         form, member = value
@@ -915,6 +916,12 @@ def create_bot(prefix: str, database: str) -> Any:
         value = selector or store.system_for(account_id)
         return store.system_info(value) if value else None
 
+    async def send_banner(ctx: commands.Context, value: System | Member | tuple[Any, Member]) -> None:
+        """Post a profile's banner link under its card; Stoat previews it as an image."""
+        banner = _profile_banner(value)
+        if banner:
+            await ctx.send(banner)
+
     @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"]])
     async def viewinfo(ctx: commands.Context, *, selector: str = "") -> None:
         try:
@@ -924,7 +931,8 @@ def create_bot(prefix: str, database: str) -> Any:
                 pages = [[_system_embed(stoat, system, len(members))]]
                 pages.extend(_pack_embed_pages(
                     [_member_embed(stoat, store, member) for member in members], max_embeds=2))
-                await send_pages(ctx, pages)
+                await send_pages(ctx, pages)  # one message; members are later pages
+                await send_banner(ctx, system)
                 return
             member_value = store.public_member_selected(selector)
         except ValueError as error:
@@ -934,6 +942,7 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send("System or member not found. Use an exact name or stable ID.")
             return
         await send_pages(ctx, [[_member_embed(stoat, store, member_value)]])
+        await send_banner(ctx, member_value)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["viewmembers"]])
     async def viewmembers(ctx: commands.Context, *, system_selector: str = "") -> None:
@@ -963,6 +972,7 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send("Member not found. Use an exact name or stable ID.")
             return
         await send_pages(ctx, [[_member_embed(stoat, store, selected)]])
+        await send_banner(ctx, selected)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["info"], *COMMAND_ALIASES["info"]])
     async def info(ctx: commands.Context, *, selector: str) -> None:
@@ -986,9 +996,7 @@ def create_bot(prefix: str, database: str) -> Any:
             await send_pages(ctx, _pack_embed_pages(embeds))
         else:
             await ctx.send(embeds=[_profile_embed(stoat, store, value)])
-        banner = _profile_banner(value)
-        if banner:
-            await ctx.send(banner)  # Stoat previews the image link; nothing is uploaded
+        await send_banner(ctx, value)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["viewgroup"]])
     async def viewgroup(ctx: commands.Context, *, selector: str) -> None:
