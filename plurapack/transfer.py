@@ -61,6 +61,7 @@ class TransferGroup:
     name: str
     alias: str
     avatar: str | None = None
+    banner: str | None = None
 
 
 @dataclass
@@ -178,7 +179,8 @@ def _parse_native(root: dict[str, Any]) -> ImportedSystem:
     sys = _obj(root.get("system"), "system")
     members = [_member(_obj(x, "member"), i) for i, x in enumerate(_array(root.get("members"), "members"), 1)]
     groups = tuple(TransferGroup(str(g.get("export_id")), _text(g.get("name"), "Group name", 80) or "",
-        _text(g.get("alias"), "Group alias", 24) or "", _url(g.get("avatar_url"), "Group avatar"))
+        _text(g.get("alias"), "Group alias", 24) or "", _url(g.get("avatar_url"), "Group avatar"),
+        _url(g.get("banner_url"), "Group banner"))
         for g in (_obj(x, "group") for x in _array(root.get("groups", []), "groups")))
     for i, (m, raw) in enumerate(zip(members, root["members"]), 1):
         m.forms = [TransferForm(str(f.get("export_id")), _text(f.get("display_name"), "Form name", 80) or "",
@@ -202,7 +204,7 @@ def _parse_pk(root: dict[str, Any]) -> ImportedSystem:
     groups=[]
     for i, raw in enumerate(_array(root.get("groups", []), "PluralKit groups"),1):
         g=_obj(raw,"PluralKit group"); gid=str(g.get("id") or f"group-{i}")
-        groups.append(TransferGroup(gid,_text(g.get("display_name") or g.get("name"),"Group name",80) or f"Group {i}",f"group{i}"[:24],_url(g.get("icon") or g.get("avatar_url"),"Group avatar")))
+        groups.append(TransferGroup(gid,_text(g.get("display_name") or g.get("name"),"Group name",80) or f"Group {i}",f"group{i}"[:24],_url(g.get("icon") or g.get("avatar_url"),"Group avatar"),_url(g.get("banner"),"Group banner")))
         for ref in g.get("members",[]):
             for member in members:
                 if member.export_id == str(ref): member.groups.append(gid)
@@ -250,7 +252,7 @@ def _snapshot(store: Store, account_id: str) -> ImportedSystem:
         group_rows=db.execute("SELECT * FROM groups WHERE system_id=? ORDER BY name",(sid,)).fetchall()
         memberships={r["member_id"]:[] for r in db.execute("SELECT id AS member_id FROM members WHERE system_id=?",(sid,))}
         for r in db.execute("SELECT gm.member_id,gm.group_id FROM group_members gm JOIN groups g ON g.id=gm.group_id WHERE g.system_id=?",(sid,)): memberships[r["member_id"]].append("group-"+r["group_id"])
-    groups=tuple(TransferGroup("group-"+g["id"],g["name"],g["alias"],g["avatar"]) for g in group_rows)
+    groups=tuple(TransferGroup("group-"+g["id"],g["name"],g["alias"],g["avatar"],g["banner"]) for g in group_rows)
     members=[]
     for member in store.members_for_system(sid):
         forms=[]
@@ -319,11 +321,11 @@ def export_system(store: Store, account_id: str, format_name: str="plurapack",
     if fmt=="plurapack":
         body={"format":"plurapack","version":1,"exported_at":now,"generator":{"name":"Plurapack","version":"0.1.0"},
           "system":{"name":data.name,"description":data.description,"tag":data.tag,"avatar_url":data.logo,"banner_url":data.banner,"show_tag":data.show_tag},
-          "members":[{"export_id":m.export_id,"name":m.name,"alias":m.alias,"description":m.description,"pronouns":m.pronouns,"color":m.color,"avatar_url":m.avatar,"banner_url":m.banner,"proxy_tags":m.proxy_tags,"groups":m.groups,"forms":[asdict(f) | {"avatar_url":f.avatar,"banner_url":f.banner} for f in m.forms],"default_form":m.default_form,"settings":{"speech_formatting":m.speech_formatting,"strikethrough_speech":m.strikethrough_speech}} for m in data.members],"groups":[{"export_id":g.export_id,"name":g.name,"alias":g.alias,"avatar_url":g.avatar} for g in data.groups],"settings":{}}
+          "members":[{"export_id":m.export_id,"name":m.name,"alias":m.alias,"description":m.description,"pronouns":m.pronouns,"color":m.color,"avatar_url":m.avatar,"banner_url":m.banner,"proxy_tags":m.proxy_tags,"groups":m.groups,"forms":[asdict(f) | {"avatar_url":f.avatar,"banner_url":f.banner} for f in m.forms],"default_form":m.default_form,"settings":{"speech_formatting":m.speech_formatting,"strikethrough_speech":m.strikethrough_speech}} for m in data.members],"groups":[{"export_id":g.export_id,"name":g.name,"alias":g.alias,"avatar_url":g.avatar,"banner_url":g.banner} for g in data.groups],"settings":{}}
         warnings=()
     elif fmt=="pluralkit":
         external, form_count = _external_members(data, forms_mode)
-        body={"version":2,"system":{"name":data.name,"description":data.description,"tag":data.tag,"avatar_url":data.logo},"members":[{"id":m.export_id,"name":m.name,"display_name":None,"description":m.description,"pronouns":m.pronouns,"color":m.color.removeprefix("#") if m.color else None,"avatar_url":m.avatar,"banner":m.banner,"proxy_tags":m.proxy_tags,"privacy":None} for m in external],"groups":[{"id":g.export_id,"name":g.name,"display_name":None,"description":None,"icon":g.avatar,"members":[m.export_id for m in external if g.export_id in m.groups]} for g in data.groups],"switches":[]}
+        body={"version":2,"system":{"name":data.name,"description":data.description,"tag":data.tag,"avatar_url":data.logo},"members":[{"id":m.export_id,"name":m.name,"display_name":None,"description":m.description,"pronouns":m.pronouns,"color":m.color.removeprefix("#") if m.color else None,"avatar_url":m.avatar,"banner":m.banner,"proxy_tags":m.proxy_tags,"privacy":None} for m in external],"groups":[{"id":g.export_id,"name":g.name,"display_name":None,"description":None,"icon":g.avatar,"banner":g.banner,"members":[m.export_id for m in external if g.export_id in m.groups]} for g in data.groups],"switches":[]}
         warnings=(_forms_warning(forms_mode, form_count, "members") + "Aliases, speech settings, and system tag visibility are not representable in PluralKit export schema v2.",)
     elif fmt=="tupperbox":
         external, form_count = _external_members(data, forms_mode)
@@ -358,12 +360,16 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
             if row:
                 group_map[g.export_id]=row["id"]
                 if strategy == "overwrite":
-                    db.execute("UPDATE groups SET alias=?,avatar=? WHERE id=?",
-                               (g.alias, g.avatar, row["id"]))
-                elif strategy == "merge" and not row["avatar"] and g.avatar:
-                    db.execute("UPDATE groups SET avatar=? WHERE id=?", (g.avatar, row["id"]))
+                    db.execute("UPDATE groups SET alias=?,avatar=?,banner=? WHERE id=?",
+                               (g.alias, g.avatar, g.banner, row["id"]))
+                elif strategy == "merge":
+                    # Merge only fills images that are still empty.
+                    if not row["avatar"] and g.avatar:
+                        db.execute("UPDATE groups SET avatar=? WHERE id=?", (g.avatar, row["id"]))
+                    if not row["banner"] and g.banner:
+                        db.execute("UPDATE groups SET banner=? WHERE id=?", (g.banner, row["id"]))
             else:
-                gid=new_group_id(db); alias=g.alias or f"group{i+1}"; db.execute("INSERT INTO groups(id,system_id,name,alias,avatar) VALUES (?,?,?,?,?)",(gid,sid,g.name,alias,g.avatar)); group_map[g.export_id]=gid; groups_count+=1
+                gid=new_group_id(db); alias=g.alias or f"group{i+1}"; db.execute("INSERT INTO groups(id,system_id,name,alias,avatar,banner) VALUES (?,?,?,?,?,?)",(gid,sid,g.name,alias,g.avatar,g.banner)); group_map[g.export_id]=gid; groups_count+=1
         member_map={}
         actions={}
         for m in data.members:

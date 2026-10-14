@@ -86,7 +86,7 @@ COMMAND_HELP = {
         "Add a member and proxy tag.",
     ),
     "avatar": ("av", "--member MEMBER [URL]|--form FORM [URL]|--group GROUP [URL]|--system [URL]", "Change a member, form, group, or system avatar. You can attach an image instead of a URL; attached images are uploaded anonymously and permanently (freeimage.host by default) and cannot be deleted. Upload at https://freeimage.host yourself to keep that control."),
-    "banner": ("bn", "--member MEMBER [URL]|--form FORM [URL]|--system [URL]", "Change a profile banner. Attached images are uploaded anonymously and permanently, like avatar."),
+    "banner": ("bn", "--member MEMBER [URL]|--form FORM [URL]|--group GROUP [URL]|--system [URL]", "Change a member, form, group, or system banner. Attached images are uploaded anonymously and permanently, like avatar."),
     "memberproxy": ("mt", "MEMBER [PREFIX] [SUFFIX]", "Add or list member proxy tags."),
     "memberproxy-clear": ("mc", "MEMBER", "Clear every proxy tag from a member."),
     "alias": ("a", "MEMBER [ALIAS]", "Set or clear a member selector."),
@@ -115,7 +115,7 @@ COMMAND_HELP = {
     "info": ("in", "SYSTEM_GROUP_MEMBER_OR_FORM",
              "Show a system, its groups, one group, a member, or a form profile."),
     "group": (
-        "g", "create|select|add|alias|avatar ...",
+        "g", "create|select|add|alias|avatar|banner ...",
         "Create, select, and edit the active group.",
     ),
     "viewgroup": ("vg", "GROUP",
@@ -147,16 +147,6 @@ _PROFILE_TARGETS = {
     "--system": "system", "-s": "system", "--s": "system",
 }
 
-GROUP_BANNER_UNSUPPORTED = (
-    "Groups have an avatar but no banner. Use `avatar --group GROUP` instead, "
-    "or choose --member, --form, or --system for a banner."
-)
-
-
-def _reject_group_banner(target: str, field: str) -> None:
-    """Groups only store an avatar; fail before anything is uploaded."""
-    if target == "group" and field != "avatar":
-        raise ValueError(GROUP_BANNER_UNSUPPORTED)
 
 
 def _member_creation_options(suffix: str, description: str) -> tuple[str, str, str | None]:
@@ -228,7 +218,6 @@ def _update_profile_image(
     a target but no URL.
     """
     target, selector, typed = _profile_image_options(arguments, attached=url is not None)
-    _reject_group_banner(target, field)
     url = typed or url
     if url is None:
         raise ValueError("Give an image URL or attach an image.")
@@ -243,7 +232,7 @@ def _update_profile_image(
         return updated.display_name, url
     if target == "group":
         group = store.group_selected(account_id, selector or "")
-        updated = store.update_group(account_id, group.id, avatar=url)
+        updated = store.update_group(account_id, group.id, **{field: url})
         return updated.name, url
     system_id = store.system_for(account_id)
     system_field = "logo" if field == "avatar" else field
@@ -307,7 +296,6 @@ async def _update_profile_image_from_message(
     the image host, so the reply can warn that the upload is permanent.
     """
     target, selector, typed = _profile_image_options(arguments, attached=bool(attachments))
-    _reject_group_banner(target, field)
     if typed is not None:
         return (*_update_profile_image(store, account_id, field, arguments), False)
     if len(attachments) != 1:
@@ -403,7 +391,7 @@ def _system_embed(sdk: Any, system: System, member_count: int) -> Any:
                              icon_url=system.logo)
 
 
-def _profile_banner(value: System | Member | tuple[Any, Member]) -> str | None:
+def _profile_banner(value: System | Group | Member | tuple[Any, Member]) -> str | None:
     """Return the banner URL of an ``info`` result, if it has one.
 
     Banners are not part of the card. The embed ``media`` field is read by Stoat as an
@@ -411,7 +399,7 @@ def _profile_banner(value: System | Member | tuple[Any, Member]) -> str | None:
     drops Markdown images, so neither can show a linked banner. A plain link in a message
     is previewed as an image by Stoat itself, with nothing uploaded, so ``info`` posts the
     URL as a short follow-up message under the card. ``viewinfo`` and ``viewmember`` do
-    the same. Groups have no banner.
+    the same, and group results post the group's banner after its cards.
     """
     if isinstance(value, tuple):
         form, member = value
@@ -941,7 +929,8 @@ def create_bot(prefix: str, database: str) -> Any:
         value = selector or store.system_for(account_id)
         return store.system_info(value) if value else None
 
-    async def send_banner(ctx: commands.Context, value: System | Member | tuple[Any, Member]) -> None:
+    async def send_banner(ctx: commands.Context,
+                          value: System | Group | Member | tuple[Any, Member]) -> None:
         """Post a profile's banner link under its card; Stoat previews it as an image."""
         banner = _profile_banner(value)
         if banner:
@@ -1012,6 +1001,7 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         if isinstance(value, Group):
             await send_pages(ctx, _pack_embed_pages(_group_embeds(stoat, store, value)))
+            await send_banner(ctx, value)
             return
         if isinstance(value, System):
             embeds = [_profile_embed(stoat, store, value)]
@@ -1033,6 +1023,7 @@ def create_bot(prefix: str, database: str) -> Any:
         embeds = _group_detail_embeds(stoat, store, group)
         # Page by total text size as well as embed count; see _pack_embed_pages.
         await send_pages(ctx, _pack_embed_pages(embeds))
+        await send_banner(ctx, group)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["group"]])
     async def group(ctx: commands.Context, action: str, *, arguments: str = "") -> None:
@@ -1067,8 +1058,13 @@ def create_bot(prefix: str, database: str) -> Any:
                     raise ValueError(f"Usage: `{prefix}group avatar IMAGE_URL`")
                 configured = store.update_active_group(ctx.author.id, avatar=values[0])
                 await ctx.send(f"Avatar updated for **{configured.name}**.")
+            elif action == "banner":
+                if len(values) != 1:
+                    raise ValueError(f"Usage: `{prefix}group banner IMAGE_URL`")
+                configured = store.update_active_group(ctx.author.id, banner=values[0])
+                await ctx.send(f"Banner updated for **{configured.name}**.")
             else:
-                raise ValueError("Group action must be create, select, add, alias, or avatar.")
+                raise ValueError("Group action must be create, select, add, alias, avatar, or banner.")
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
 

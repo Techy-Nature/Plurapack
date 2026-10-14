@@ -125,6 +125,7 @@ class GroupCreate(APIModel):
     name: str = Field(min_length=1, max_length=80)
     alias: str = Field(min_length=1, max_length=24, pattern=r"^[^\s:]+$")
     avatar: HttpUrl | None = None
+    banner: HttpUrl | None = None
 
     @field_validator("name", "alias")
     @classmethod
@@ -139,6 +140,7 @@ class GroupPatch(APIModel):
     name: str | None = Field(None, min_length=1, max_length=80)
     alias: str | None = Field(None, min_length=1, max_length=24, pattern=r"^[^\s:]+$")
     avatar: HttpUrl | None = None
+    banner: HttpUrl | None = None
 
     @field_validator("name", "alias", mode="before")
     @classmethod

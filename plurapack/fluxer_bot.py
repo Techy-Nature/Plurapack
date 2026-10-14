@@ -385,7 +385,8 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         elif action == "add": await run(ctx, lambda: store.add_group_members(account(ctx), values), lambda pair: f"Added {len(pair[1])} member(s) to **{pair[0].name}**.")
         elif action == "alias" and len(values) == 1: await run(ctx, lambda: store.update_active_group(account(ctx), alias=values[0].strip()), lambda g: f"Group alias is now `{g.alias}`.")
         elif action == "avatar" and len(values) == 1: await run(ctx, lambda: store.update_active_group(account(ctx), avatar=values[0]), lambda g: f"Avatar updated for **{g.name}**.")
-        else: await ctx.send("Group action must be create, select, add, alias, or avatar with the documented arguments.")
+        elif action == "banner" and len(values) == 1: await run(ctx, lambda: store.update_active_group(account(ctx), banner=values[0]), lambda g: f"Banner updated for **{g.name}**.")
+        else: await ctx.send("Group action must be create, select, add, alias, avatar, or banner with the documented arguments.")
 
     def member_card(member: Any) -> str:
         forms = store.forms_for_member(member.id)
@@ -403,14 +404,14 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
                 f"Pronouns: {member.pronouns or 'Not set'}\nProxies: {proxies}"
             )
         members = "\n\n".join(member_lines) if member_lines else "None"
-        return f"**{group.name}**\nGroup ID: `{group.id}`\nAvatar: {group.avatar or 'None'}\n\nMembers:\n{members}"
+        return f"**{group.name}**\nGroup ID: `{group.id}`\nAvatar: {group.avatar or 'None'} | Banner: {group.banner or 'None'}\n\nMembers:\n{members}"
 
     async def viewgroup_command(ctx: Any, *, selector: str) -> None:
         group = _resolve_group(store, account(ctx), selector)
         if group is None:
             await ctx.send("Group not found. Use an exact group name, alias, or ID."); return
         members = store.public_group_members(group.id)
-        blocks = [f"**{group.name}**\nGroup ID: `{group.id}` | Alias: `{group.alias}` | Members: {len(members)}\nAvatar: {group.avatar or 'None'}"]
+        blocks = [f"**{group.name}**\nGroup ID: `{group.id}` | Alias: `{group.alias}` | Members: {len(members)}\nAvatar: {group.avatar or 'None'} | Banner: {group.banner or 'None'}"]
         blocks.extend(f"**{member.name}**\n{_group_member_detail(store, member)}" for member in members)
         message = ""
         for block in blocks:  # stay under the chat message length limit
