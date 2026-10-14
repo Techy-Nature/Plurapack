@@ -1476,6 +1476,16 @@ class Store:
                 AND (? IS NULL OR p.channel_id=?)""",
                 (proxy_id, account_id, channel_id, channel_id)).fetchone() is not None
 
+    def latest_proxy_for(self, account_id: str, channel_id: str) -> str | None:
+        """Return the newest live proxy this account sent in a channel, if any."""
+        with self.connect() as db:
+            row = db.execute("""SELECT p.proxy_message_id FROM proxied_messages p
+                JOIN owners o ON o.system_id=p.system_id AND o.account_id=p.owner_account_id
+                WHERE p.owner_account_id=? AND p.channel_id=? AND p.deleted_at IS NULL
+                ORDER BY p.created_at DESC, p.rowid DESC LIMIT 1""",
+                (account_id, channel_id)).fetchone()
+        return str(row["proxy_message_id"]) if row else None
+
     def proxy_identity_for(self, proxy_id: str, account_id: str) -> Member | None:
         """Return the current identity for an owned, live proxy message."""
         with self.connect() as db:

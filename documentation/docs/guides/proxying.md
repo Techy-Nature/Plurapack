@@ -29,10 +29,53 @@ take precedence over the system default.
 
 ## Edit a proxy
 
+There are three ways to fix a proxied message. Pick whichever you're used to.
+
+### Reply with the edit command
+
+1. Reply to one of your system's proxied messages.
+2. Type `p;edit` (or the shortcut `p;e`) followed by the corrected text.
+
+```text
+p;edit This is the fixed message.
+```
+
+Plurapack edits the message you replied to and removes your command message.
+
+### Edit your latest message
+
+Send `p;edit NEW_TEXT` without replying. Plurapack edits the newest message
+you proxied in that channel.
+
+### React with a pencil
+
 1. React to one of your system's proxied messages with ✏️ or 📝.
 2. Send the replacement text in the same channel.
 
-The next eligible message becomes the replacement. Editing does not generate replacement speech audio.
+The next eligible message becomes the replacement.
+
+### Add to the start or end instead
+
+Put `-append` (or `-a`) or `-prepend` (or `-p`) before the text to keep the
+original message and add to it:
+
+```text
+p;edit -append (edit: wrong channel, sorry!)
+p;edit -prepend Correction:
+```
+
+### Coming from PluralKit or Tupperbox?
+
+Your old habits work. `pk;edit`, `pk!edit`, `pk;e`, and `tul!edit` are all
+treated the same as `p;edit`, whether you reply or not. PluralKit's
+`-append` and `-prepend` options work too.
+
+If PluralKit or Tupperbox is also in the server, Plurapack only answers these
+borrowed spellings for messages it proxied itself, so it won't complain about
+the other bot's messages. Replying to the exact message is the most reliable
+way to edit when both bots are around.
+
+If a member has speech turned on, the edited text is spoken again.
 
 ## Delete a proxy
 

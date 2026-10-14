@@ -35,7 +35,7 @@ from .browser_audio import BrowserAudioStore
 from .voice_service import VoiceService
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .login import LoginError, LoginService
-from .proxy import Incoming, ProxyService
+from .proxy import EditCommandError, Incoming, ProxyService
 from .storage import Group, Member, Store, System
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
 from .config import resolve_voice_max_reference_seconds
@@ -552,6 +552,13 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         file = fluxer.File(document.encode(), filename=filename)
         await ctx.send(f"Export ready. Members: {len(store.export_system(account(ctx))[1])}. Warnings: {len(report.warnings)}. Store it privately.", file=file)
 
+    async def edit_command(ctx: Any, *, text: str = "") -> None:
+        """Registered for help and command lookup only.
+
+        on_message hands every edit spelling (p;edit, pk;edit, tul!edit) to the
+        shared ProxyService, so handling it here as well would edit twice.
+        """
+
     _register_command(bot, "help", help_command)
     _register_command(bot, "login", login_command)
     _register_command(bot, "setup", setup_command)
@@ -565,7 +572,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         "pronouns": pronouns_command, "formpronouns": formpronouns_command,
         "systemtag": systemtag_command, "systemtagshow": systemtagshow_command,
         "front": front_command, "autoproxy": autoproxy_command, "autofront": autofront_command,
-        "color": color_command, "link": link_command, "verify": verify_command,
+        "color": color_command, "edit": edit_command, "link": link_command, "verify": verify_command,
         "import": import_command, "export": export_command, "viewinfo": viewinfo_command,
         "info": info_command, "viewgroup": viewgroup_command, "viewmembers": viewmembers_command, "viewmember": viewmember_command,
         "group": group_command, "deletemember": deletemember_command,
@@ -599,6 +606,13 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         platform.messages[incoming.id] = message
         try:
             await service.handle(incoming)
+        except EditCommandError as error:
+            # Same reply call the speech delivery already relies on.
+            channel = await bot.fetch_channel(incoming.channel_id)
+            await channel.send(
+                str(error),
+                message_reference={"message_id": incoming.id, "channel_id": incoming.channel_id},
+            )
         finally:
             platform.messages.pop(incoming.id, None)
 

@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from plurapack.proxy import Incoming, ProxyService
+from plurapack.proxy import EditCommandError, EditRequest, Incoming, ProxyService
 from plurapack.storage import Store, short_hash
 
 
@@ -236,3 +236,69 @@ def test_one_time_account_link_shares_system_without_disclosing_token(store):
     assert store.member_named("second-owner", "Alex").id == store.member_named("owner", "Alex").id
     with pytest.raises(PermissionError):
         store.redeem_link("third-owner", token)
+
+
+async def _proxied(store):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    assert await service.handle(Incoming("source-1", "channel", "owner", "[alex] befor")) == "proxy-1"
+    return platform, service
+
+
+@pytest.mark.parametrize("command", ["p;edit", "p;e", "pk;edit", "PK;Edit", "pk!edit", "pk;e", "tul!edit"])
+async def test_edit_command_replying_to_a_proxy_works_with_familiar_prefixes(store, command):
+    platform, service = await _proxied(store)
+    message = Incoming("cmd", "channel", "owner", f"{command} before", reply_to_id="proxy-1")
+    assert await service.handle(message) == "proxy-1"
+    assert platform.edited == [("channel", "proxy-1", "before")]
+    assert platform.deleted == ["source-1", "cmd"]
+    # It must never be re-sent as a brand new proxy.
+    assert platform.sent == [(store.member_named("owner", "alex").id, "befor")]
+
+
+async def test_edit_command_without_reply_edits_latest_proxy_in_channel(store):
+    platform, service = await _proxied(store)
+    assert await service.handle(Incoming("cmd", "channel", "owner", "p;edit line one\nline two")) == "proxy-1"
+    assert platform.edited == [("channel", "proxy-1", "line one\nline two")]
+
+
+async def test_edit_command_supports_pluralkit_append_and_prepend(store):
+    platform, service = await _proxied(store)
+    await service.handle(Incoming("a", "channel", "owner", "pk;edit -append and more", reply_to_id="proxy-1"))
+    await service.handle(Incoming("b", "channel", "owner", "p;e -p Hey,", reply_to_id="proxy-1"))
+    assert platform.edited == [("channel", "proxy-1", "original and more"),
+                               ("channel", "proxy-1", "Hey, original")]
+
+
+async def test_edit_command_explains_mistakes_with_our_prefix(store):
+    platform, service = await _proxied(store)
+    with pytest.raises(EditCommandError, match="new text"):
+        await service.handle(Incoming("a", "channel", "owner", "p;edit", reply_to_id="proxy-1"))
+    with pytest.raises(EditCommandError, match="isn't one of your"):
+        await service.handle(Incoming("b", "channel", "stranger", "p;edit hi", reply_to_id="proxy-1"))
+    with pytest.raises(EditCommandError, match="no recent proxied message"):
+        await service.handle(Incoming("c", "elsewhere", "owner", "p;edit hi"))
+    assert platform.edited == []
+
+
+async def test_borrowed_prefixes_stay_quiet_when_another_bot_owns_the_message(store):
+    platform, service = await _proxied(store)
+    assert await service.handle(Incoming("a", "channel", "owner", "pk;edit hi", reply_to_id="pk-message")) is None
+    assert await service.handle(Incoming("b", "elsewhere", "owner", "tul!edit hi")) is None
+    assert platform.edited == [] and platform.deleted == ["source-1"]
+
+
+async def test_edit_command_is_not_autoproxied(store):
+    platform, service = await _proxied(store)
+    store.configure_autoproxy("owner", "alex")
+    await service.handle(Incoming("cmd", "channel", "owner", "pk;edit fixed"))
+    assert platform.edited == [("channel", "proxy-1", "fixed")]
+    assert len(platform.sent) == 1
+
+
+def test_non_edit_commands_and_text_are_not_edit_commands(store):
+    service = ProxyService(store, FakePlatform())
+    for content in ["p;editor", "p;help edit", "pk;member", "edit this", "[alex] pk;edit"]:
+        assert service.parse_edit_command(content) is None
+    assert service.parse_edit_command("  p; edit  -append  text ") == EditRequest("text", "append", True)
+    assert service.parse_edit_command("tul!edit -nope") == EditRequest("-nope", "replace", False)

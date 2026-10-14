@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .proxy import Incoming, ProxyService
+from .proxy import EditCommandError, Incoming, ProxyService
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .browser_audio import BrowserAudioStore
@@ -101,6 +101,11 @@ COMMAND_HELP = {
     "front": ("fr", "MEMBER_OR_FORM", "Switch the current member and form."),
     "autoproxy": ("ap", "MEMBER_OR_OFF", "Configure untagged-message proxying."),
     "autofront": ("af", "on|off", "Make autoproxy follow front switches."),
+    "edit": (
+        "e", "[-append|-prepend] NEW_TEXT",
+        "Edit the proxied message you reply to, or your latest one in this channel. "
+        "pk;edit and tul!edit work too.",
+    ),
     "color": ("c", "MEMBER HEX", "Set a member username color."),
     "link": ("l", "", "Create a single-use account link code."),
     "verify": ("v", "CODE", "Connect an account with a link code."),
@@ -1422,6 +1427,15 @@ def create_bot(prefix: str, database: str) -> Any:
         detail = f" Autoproxy is now **{configured.member.name}**." if configured.member else ""
         await ctx.send(f"Autofront is {'On' if configured.autofront else 'Off'}.{detail}")
 
+    @bot.command(aliases=[COMMAND_SHORTCUTS["edit"]])
+    async def edit(ctx: commands.Context, *, text: str = "") -> None:
+        """Registered so help lists it and it is not "Command not found".
+
+        The work happens in ``proxy_listener`` through the shared ProxyService,
+        which is the one place that sees ``p;edit``, ``pk;edit`` and
+        ``tul!edit`` alike (plus the reply). Doing it here too would edit twice.
+        """
+
     @bot.command(aliases=[COMMAND_SHORTCUTS["systemtag"]])
     async def systemtag(ctx: commands.Context, *, tag: str = "") -> None:
         """Set the tag appended to every member and form name, or clear it."""
@@ -1493,6 +1507,8 @@ def create_bot(prefix: str, database: str) -> Any:
         try:
             try:
                 await service.handle(incoming)
+            except EditCommandError as error:
+                await message.reply(str(error))
             except tuple(
                 error_type for error_type in (
                     getattr(stoat, "HTTPException", None), getattr(stoat, "Forbidden", None)
