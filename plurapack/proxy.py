@@ -1,11 +1,46 @@
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, replace
 from typing import Protocol
 
 from .storage import Member, Store
 from .speech import SpeechJob, SpeechQueue
+
+
+# People moving from other proxy bots keep typing their old prefix out of habit.
+# These are recognised for the edit command only, so ``pk;edit`` and
+# ``tul!edit`` behave like ``p;edit`` instead of being proxied as new messages.
+COMPATIBLE_EDIT_PREFIXES = ("pk;", "pk!", "tul!")
+EDIT_COMMAND_NAMES = frozenset({"edit", "e"})
+_EDIT_MODES = {
+    "-append": "append", "--append": "append", "-a": "append",
+    "-prepend": "prepend", "--prepend": "prepend", "-p": "prepend",
+}
+_COMMAND_WORD = re.compile(r"\s*(\S+)(?:\s+(.*))?\Z", re.DOTALL)
+
+
+class EditCommandError(Exception):
+    """A user-facing reason an edit command could not be carried out."""
+
+
+@dataclass(frozen=True)
+class EditRequest:
+    text: str
+    mode: str = "replace"  # replace, append, or prepend
+    # False for borrowed prefixes (pk;, tul!). Those may be aimed at another
+    # bot in the same server, so Plurapack stays quiet unless it owns the target.
+    native: bool = True
+
+
+def _combine(original: str, addition: str, mode: str) -> str:
+    """Join appended or prepended text with a space unless whitespace is already there."""
+    if mode == "replace" or not original:
+        return addition
+    first, second = (original, addition) if mode == "append" else (addition, original)
+    separator = "" if first[-1:].isspace() or second[:1].isspace() else " "
+    return f"{first}{separator}{second}"
 
 
 @dataclass(frozen=True)
@@ -79,9 +114,87 @@ class ProxyService:
             return True
         return False
 
+    def parse_edit_command(self, content: str) -> EditRequest | None:
+        """Recognise ``p;edit``/``p;e`` and the PluralKit/Tupperbox spellings.
+
+        Returns ``None`` for anything that is not an edit command. Leading
+        ``-append``/``-prepend`` flags (PluralKit's names, plus ``-a``/``-p``)
+        are consumed; everything after them is kept exactly, newlines included.
+        """
+        stripped = content.lstrip()
+        lowered = stripped.casefold()
+        for prefix in dict.fromkeys((self.command_prefix, *COMPATIBLE_EDIT_PREFIXES)):
+            if prefix and lowered.startswith(prefix.casefold()):
+                remainder = stripped[len(prefix):]
+                native = prefix == self.command_prefix
+                break
+        else:
+            return None
+        match = _COMMAND_WORD.match(remainder)
+        if match is None or match.group(1).casefold() not in EDIT_COMMAND_NAMES:
+            return None
+        body, mode = match.group(2) or "", "replace"
+        while True:
+            flag = _COMMAND_WORD.match(body)
+            if flag is None or flag.group(1).casefold() not in _EDIT_MODES:
+                break
+            mode, body = _EDIT_MODES[flag.group(1).casefold()], flag.group(2) or ""
+        return EditRequest(body.strip(), mode, native)
+
+    async def edit_with_command(self, message: Incoming, request: EditRequest) -> str | None:
+        """Edit the replied-to proxy, or this account's latest proxy in the channel.
+
+        Returns the edited proxy ID, or ``None`` when a borrowed prefix was
+        evidently meant for another bot.
+        """
+        usage = f"`{self.command_prefix}edit new text`"
+        if message.reply_to_id:
+            target = message.reply_to_id
+            if not self.store.proxy_owned_by(target, message.author_id, message.channel_id):
+                if not request.native:
+                    return None
+                raise EditCommandError(
+                    "That isn't one of your system's proxied messages, so it can't be edited. "
+                    f"Reply to one of your proxied messages with {usage}, or send {usage} "
+                    "without replying to edit your latest one here."
+                )
+        else:
+            target = self.store.latest_proxy_for(message.author_id, message.channel_id)
+            if target is None:
+                if not request.native:
+                    return None
+                raise EditCommandError(
+                    "There's no recent proxied message from you in this channel to edit. "
+                    f"Reply to the message you want to change with {usage}."
+                )
+        if not request.text:
+            raise EditCommandError(f"Add the new text after the command, for example {usage}.")
+        new_text = request.text
+        if request.mode != "replace":
+            content_reader = getattr(self.platform, "proxy_content", None)
+            if content_reader is None:
+                raise EditCommandError("Appending and prepending aren't available on this platform.")
+            new_text = _combine(await content_reader(message.channel_id, target),
+                                request.text, request.mode)
+        self._invalidate_speech(target)
+        await self.platform.edit_proxy(message.channel_id, target, new_text)
+        member = self.store.proxy_identity_for(target, message.author_id)
+        if member:
+            self._queue_speech(message.channel_id, target, new_text, member, message.author_id)
+        # A finished command edit replaces any half-started ✏️ reaction edit here.
+        self._pending_edits.pop((message.author_id, message.channel_id), None)
+        await self.platform.delete_source(message)
+        return target
+
     async def handle(self, message: Incoming) -> str | None:
-        if (message.is_bot or message.id in self._inflight or self.store.source_was_processed(message.id)
-                or message.content.startswith(self.command_prefix)):
+        if message.is_bot or message.id in self._inflight or self.store.source_was_processed(message.id):
+            return None
+        # Checked before the command-prefix exit and before reply re-proxying,
+        # so "pk;edit ..." is never mistaken for a selector or autoproxied.
+        edit_request = self.parse_edit_command(message.content)
+        if edit_request is not None:
+            return await self.edit_with_command(message, edit_request)
+        if message.content.startswith(self.command_prefix):
             return None
         edit_key = (message.author_id, message.channel_id)
         edit_target = self._pending_edits.get(edit_key)
