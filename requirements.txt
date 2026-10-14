@@ -3,3 +3,4 @@ fluxer.py>=0.4.2,<1
 fastapi>=0.115,<1
 uvicorn>=0.30,<1
 python-multipart>=0.0.9,<1
+Pillow>=10.3,<13

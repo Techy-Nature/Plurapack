@@ -87,3 +87,107 @@ def test_environment_configuration(monkeypatch):
     monkeypatch.setenv("PLURAPACK_IMAGE_MAX_BYTES", "lots")
     with pytest.raises(ValueError, match="whole number"):
         ImageHost.from_environment()
+
+
+# ---- shrinking pictures over the threshold ----------------------------------------------
+
+Image = pytest.importorskip("PIL.Image")
+
+
+def noisy_png(side=1200):
+    import os
+
+    buffer = __import__("io").BytesIO()
+    Image.frombytes("RGB", (side, side), os.urandom(side * side * 3)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+def sent_image(request):
+    """Return the raw file bytes inside the multipart body of a fake upload."""
+    body = request.data
+    start = body.index(b"\r\n\r\n", body.index(b'name="source"')) + 4
+    return body[start:body.rindex(b"\r\n--")]
+
+
+def test_pictures_under_the_threshold_are_sent_unchanged():
+    image_host, seen = host(ok(), compress_over=10_000)
+    image_host.upload(PNG)
+    assert sent_image(seen[0]) == PNG
+
+
+def test_large_pictures_become_webp_under_the_threshold():
+    original = noisy_png()
+    assert len(original) > 1_000_000
+    image_host, seen = host(ok(), compress_over=1_000_000)
+    assert image_host.upload(original) == "https://iili.io/abc.png"
+    shrunk = sent_image(seen[0])
+    assert b'filename="image.webp"' in seen[0].data and b"Content-Type: image/webp" in seen[0].data
+    assert len(shrunk) <= 1_000_000 < len(original)
+    assert Image.open(__import__("io").BytesIO(shrunk)).format == "WEBP"
+
+
+def test_huge_dimensions_are_limited_to_2048_pixels():
+    import io
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (6000, 3000), (10, 120, 200)).save(buffer, "PNG")
+    image_host, seen = host(ok(), compress_over=1000)
+    image_host.upload(buffer.getvalue())
+    width, height = Image.open(io.BytesIO(sent_image(seen[0]))).size
+    assert max(width, height) <= 2048 and width == 2 * height
+
+
+def test_shrinking_drops_metadata_and_applies_orientation():
+    import io
+
+    exif = Image.Exif()
+    exif[0x010F] = "SecretCameraMaker"
+    exif[0x0112] = 6  # rotate 90 degrees when displayed
+    buffer = io.BytesIO()
+    Image.new("RGB", (400, 200), (200, 30, 30)).save(buffer, "JPEG", exif=exif)
+    image_host, seen = host(ok(), compress_over=100)
+    image_host.upload(buffer.getvalue())
+    result = Image.open(io.BytesIO(sent_image(seen[0])))
+    assert b"SecretCameraMaker" not in seen[0].data
+    assert result.size == (200, 400)
+
+
+def test_animated_pictures_stay_animated():
+    import io
+
+    frames = [Image.frombytes("RGB", (300, 300), __import__("os").urandom(300 * 300 * 3)) for _ in range(12)]
+    buffer = io.BytesIO()
+    frames[0].save(buffer, "GIF", save_all=True, append_images=frames[1:], duration=80, loop=0)
+    assert len(buffer.getvalue()) > 100_000
+    image_host, seen = host(ok(), compress_over=100_000)
+    image_host.upload(buffer.getvalue())
+    result = Image.open(io.BytesIO(sent_image(seen[0])))
+    assert result.format == "WEBP" and getattr(result, "n_frames", 1) == 12
+
+
+def test_shrinking_can_be_turned_off():
+    original = noisy_png(300)
+    image_host, seen = host(ok(), compress_over=0)
+    image_host.upload(original)
+    assert sent_image(seen[0]) == original
+
+
+def test_a_corrupt_picture_over_the_threshold_is_refused_clearly():
+    broken = PNG + b"not really image data" * 50
+    image_host, seen = host(ok(), compress_over=100)
+    with pytest.raises(ImageHostError, match="could not be read") as caught:
+        image_host.upload(broken)
+    assert not caught.value.upstream and not seen
+
+
+def test_compress_over_environment_setting(monkeypatch):
+    monkeypatch.setenv("PLURAPACK_IMAGE_HOST_KEY", "abc")
+    monkeypatch.delenv("PLURAPACK_IMAGE_HOST_URL", raising=False)
+    monkeypatch.delenv("PLURAPACK_IMAGE_MAX_BYTES", raising=False)
+    monkeypatch.delenv("PLURAPACK_IMAGE_COMPRESS_OVER", raising=False)
+    assert ImageHost.from_environment().compress_over == 1_000_000
+    monkeypatch.setenv("PLURAPACK_IMAGE_COMPRESS_OVER", "0")
+    assert ImageHost.from_environment().compress_over == 0
+    monkeypatch.setenv("PLURAPACK_IMAGE_COMPRESS_OVER", "big")
+    with pytest.raises(ValueError, match="whole number"):
+        ImageHost.from_environment()

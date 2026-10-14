@@ -7,7 +7,7 @@ name = "plurapack"
 version = "0.1.0"
 description = "A self-hosted Stoat and Fluxer member proxy with optional local speech"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-multipart>=0.0.9,<1"]
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "python-multipart>=0.0.9,<1", "Pillow>=10.3,<13"]
 
 # Each chat platform is optional so operators install only what they use:
 #   pip install '.[stoat]'   pip install '.[fluxer]'   pip install '.[stoat,fluxer]'
