@@ -110,7 +110,7 @@ from the picker instead, set these service variables and redeploy:
 
 Plurapack still stores only the returned link. Only PNG, JPEG, GIF, and WebP files are
 accepted, judged by their contents. The host can delete images or go offline, and its
-terms apply to what you upload, so keep the original files. Pasting any other link still works.
+terms apply to what you upload, so keep the original files. Pasting any other link still works. People can also attach a picture to `p;avatar` or `p;banner` and leave out the URL.
 
 ## Railway persistent storage
 

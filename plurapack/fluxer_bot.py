@@ -22,7 +22,9 @@ from .bot import (
     _member_creation_options,
     _print_cli_status,
     _resolve_group,
-    _update_profile_image,
+    _configured_image_host,
+    _read_url_attachment,
+    _update_profile_image_from_message,
     _download_voice_attachment,
     _positive_environment_integer,
 )
@@ -246,9 +248,14 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     async def banner_command(ctx: Any, *, arguments: str = "") -> None:
         await image_command(ctx, "banner", arguments)
 
+    image_host = _configured_image_host()
+
     async def image_command(ctx: Any, field: str, arguments: str) -> None:
+        attachments = list(getattr(getattr(ctx, "message", ctx), "attachments", ()) or ())
         try:
-            name, _ = _update_profile_image(store, str(ctx.author.id), field, arguments)
+            name, _ = await _update_profile_image_from_message(
+                store, str(ctx.author.id), field, arguments, attachments, image_host,
+                _read_url_attachment)
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return

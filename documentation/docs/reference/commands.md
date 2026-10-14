@@ -7,8 +7,8 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `help [COMMAND]` | `h` | List every current command, or show usage and aliases for one command. |
 | `setup [SYSTEM_NAME] [DESCRIPTION]` | `s` | Create the account's system, with an optional description. |
 | `member NAME PREFIX [SUFFIX] [--avatar URL\|--a URL] [DESCRIPTION]` | `m` | Add a member and proxy tag, with an optional avatar and description. |
-| `avatar --member MEMBER URL\|--form FORM URL\|--system URL` | `av` | Change a member, form, or system avatar. Target shortcuts are `-m`, `-f`, and `-s`. |
-| `banner --member MEMBER URL\|--form FORM URL\|--system URL` | `bn` | Change a member, form, or system banner. Target shortcuts are `-m`, `-f`, and `-s`. |
+| `avatar --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `av` | Change a member, form, or system avatar. Target shortcuts are `-m`, `-f`, and `-s`. Leave out the URL and attach an image if [image uploads](../getting-started/install.md#optional-image-uploads) are enabled. |
+| `banner --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `bn` | Change a member, form, or system banner. Attach an image instead of a URL when uploads are enabled. |
 | `memberproxy MEMBER [PREFIX] [SUFFIX]` | `mt` | Add a member tag, or list tags by omitting the prefix. |
 | `memberproxy-clear MEMBER` | `mc` | Clear all proxy tags from a member. |
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |
@@ -135,6 +135,8 @@ p;member "Alex North" [alex] --avatar https://example.test/alex.png
 p;m "Alex North" [alex] --a https://example.test/alex.png
 p;avatar --member abc12 https://example.test/new-avatar.png
 p;av -f def34 https://example.test/form-avatar.png
+# With image uploads enabled, attach a picture to the message and leave out the URL:
+p;avatar --member abc12
 p;banner --system https://example.test/system-banner.png
 p;bn -m abc12 https://example.test/member-banner.png
 p;form abc12 "Alex at Sea" https://example.test/alex.png "Blue fins and a long tail."

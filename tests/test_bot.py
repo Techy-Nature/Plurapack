@@ -607,3 +607,83 @@ async def test_stoat_speech_attachment_is_wav_and_preserves_bytes():
     audio = wav_bytes()
     await platform.deliver_speech("channel", "proxy-id", audio)
     assert sent == [{"attachments": [("speech-proxy-id.wav", audio)], "replies": ["proxy-id"]}]
+
+
+class _FakeHost:
+    max_bytes = 1024
+
+    def __init__(self):
+        self.uploads = []
+
+    def upload(self, data):
+        self.uploads.append(data)
+        return "https://iili.io/hosted.png"
+
+
+async def _read(attachment, max_bytes):
+    return attachment
+
+
+async def test_attached_image_is_hosted_and_saved_for_members_forms_and_system(tmp_path):
+    store = Store(tmp_path / "attached.sqlite3")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "A:")
+    form = store.create_form("owner", member.id, "Happy")
+    host = _FakeHost()
+
+    for field, arguments in (("avatar", f"--member {member.id}"), ("banner", f"--form {form.id}"),
+                             ("avatar", "--system")):
+        await bot._update_profile_image_from_message(
+            store, "owner", field, arguments, [b"PICTURE"], host, _read)
+
+    assert host.uploads == [b"PICTURE"] * 3
+    assert store.member_selected("owner", member.id).avatar == "https://iili.io/hosted.png"
+    assert store.form_selected("owner", form.id)[0].banner == "https://iili.io/hosted.png"
+    assert store.system_info(store.system_for("owner")).logo == "https://iili.io/hosted.png"
+
+
+async def test_typed_url_wins_over_an_attachment_and_nothing_is_uploaded(tmp_path):
+    store = Store(tmp_path / "typed.sqlite3")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "A:")
+    host = _FakeHost()
+    await bot._update_profile_image_from_message(
+        store, "owner", "avatar", f"--member {member.id} https://example.test/a.png",
+        [b"PICTURE"], host, _read)
+    assert not host.uploads
+    assert store.member_selected("owner", member.id).avatar == "https://example.test/a.png"
+
+
+@pytest.mark.parametrize("attachments, host, message", [
+    ([], _FakeHost(), "requires a selector and an image URL, or attach an image"),
+    ([b"a", b"b"], _FakeHost(), "Attach exactly one image"),
+    ([b"a"], None, "not set up"),
+])
+async def test_attached_image_errors_are_clear(tmp_path, attachments, host, message):
+    store = Store(tmp_path / "errors.sqlite3")
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "A:")
+    with pytest.raises(ValueError, match=message):
+        await bot._update_profile_image_from_message(
+            store, "owner", "avatar", f"--member {member.id}", attachments, host, _read)
+
+
+async def test_unknown_member_is_rejected_before_anything_is_uploaded(tmp_path):
+    store = Store(tmp_path / "unknown.sqlite3")
+    store.create_system("owner", "Crew")
+    host = _FakeHost()
+    with pytest.raises(PermissionError):
+        await bot._update_profile_image_from_message(
+            store, "owner", "avatar", "--member nobody", [b"a"], host, _read)
+    assert not host.uploads
+
+
+async def test_stoat_attachment_reader_refuses_oversized_files_without_downloading():
+    class Asset:
+        size = 5 * 1024 * 1024
+
+        async def read(self):
+            raise AssertionError("must not download")
+
+    with pytest.raises(ValueError, match="at most"):
+        await bot._read_stoat_attachment(Asset(), 1024 * 1024)
