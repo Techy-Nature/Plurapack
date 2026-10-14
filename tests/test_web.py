@@ -542,10 +542,12 @@ async def test_group_api_crud_membership_and_system_payload(api):
         assert (await client.get(f"/api/systems/{system_id}/groups")).json() == []
         created = await client.post(f"/api/systems/{system_id}/groups", json={
             "name": "Main Crew", "alias": "main", "avatar": "https://example.com/group.png",
+            "banner": "https://example.com/group-banner.png",
         })
         assert created.status_code == 201
         group = created.json()
         assert len(group["id"]) == 8 and group["memberIds"] == []
+        assert group["banner"] == "https://example.com/group-banner.png"
         payload = (await client.get(f"/api/systems/{system_id}")).json()
         assert payload["groups"] == [group]
         assert payload["activeGroupId"] == group["id"]

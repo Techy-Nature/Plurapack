@@ -92,6 +92,10 @@ def test_member_creation_avatar_option_requires_complete_url(value):
          ("form", "Happy form", "https://example.test/form.png")),
         ("--s https://example.test/system.png",
          ("system", None, "https://example.test/system.png")),
+        ("--group 'Friends at Work' https://example.test/group.png",
+         ("group", "Friends at Work", "https://example.test/group.png")),
+        ("-g work https://example.test/group.png",
+         ("group", "work", "https://example.test/group.png")),
     ],
 )
 def test_profile_image_options_accept_long_and_short_targets(arguments, expected):
@@ -99,7 +103,7 @@ def test_profile_image_options_accept_long_and_short_targets(arguments, expected
 
 
 @pytest.mark.parametrize(
-    "arguments", ["", "--member abc12", "--system abc12 extra", "--group x https://example.test/x.png"]
+    "arguments", ["", "--member abc12", "--system abc12 extra", "--group", "--everyone x https://example.test/x.png"]
 )
 def test_profile_image_options_require_exactly_one_complete_target(arguments):
     with pytest.raises(ValueError):
@@ -119,6 +123,79 @@ def test_profile_images_update_members_forms_and_system(tmp_path):
     assert store.member_selected("owner", member.id).avatar == "https://example.test/m.png"
     assert store.form_selected("owner", form.id)[0].banner == "https://example.test/f.png"
     assert store.system_info(system_id).logo == "https://example.test/s.png"
+
+
+def test_profile_avatar_updates_a_group_by_name_alias_or_id(tmp_path):
+    store = Store(tmp_path / "groups.sqlite3")
+    store.create_system("owner", "Crew")
+    group = store.create_group("owner", "Friends at Work", "work")
+
+    assert bot._update_profile_image(
+        store, "owner", "avatar", "--group 'Friends at Work' https://example.test/1.png"
+    ) == ("Friends at Work", "https://example.test/1.png")
+    bot._update_profile_image(store, "owner", "avatar", "-g work https://example.test/2.png")
+    bot._update_profile_image(store, "owner", "avatar", f"--g {group.id} https://example.test/3.png")
+
+    assert store.group_selected("owner", group.id).avatar == "https://example.test/3.png"
+
+
+def test_group_images_reject_strangers(tmp_path):
+    store = Store(tmp_path / "groups.sqlite3")
+    store.create_system("owner", "Crew")
+    store.create_system("stranger", "Others")
+    group = store.create_group("owner", "Friends", "pals")
+
+    for field in ("avatar", "banner"):
+        with pytest.raises(PermissionError, match="Group not found"):
+            bot._update_profile_image(store, "stranger", field, f"--group {group.id} https://example.test/x.png")
+    assert store.group_selected("owner", group.id).avatar is None
+    assert store.group_selected("owner", group.id).banner is None
+
+
+def test_profile_banner_updates_a_group_without_touching_its_avatar(tmp_path):
+    store = Store(tmp_path / "groups.sqlite3")
+    store.create_system("owner", "Crew")
+    group = store.create_group("owner", "Friends at Work", "work", avatar="https://example.test/a.png")
+
+    assert bot._update_profile_image(
+        store, "owner", "banner", "-g 'Friends at Work' https://example.test/b.png"
+    ) == ("Friends at Work", "https://example.test/b.png")
+    updated = store.group_selected("owner", group.id)
+    assert (updated.avatar, updated.banner) == ("https://example.test/a.png", "https://example.test/b.png")
+    assert bot._profile_banner(updated) == "https://example.test/b.png"
+
+
+async def test_attached_group_banner_is_hosted_and_saved(tmp_path):
+    store = Store(tmp_path / "groups.sqlite3")
+    store.create_system("owner", "Crew")
+    store.create_group("owner", "Friends", "pals")
+
+    class Host:
+        max_bytes = 1024
+        def upload(self, data):
+            assert data == b"picture"
+            return "https://example.test/hosted.png"
+
+    async def read(attachment, limit): return b"picture"
+
+    result = await bot._update_profile_image_from_message(
+        store, "owner", "banner", "--group pals", [object()], Host(), read)
+    assert result == ("Friends", "https://example.test/hosted.png", True)
+    assert store.group_selected("owner", "pals").banner == "https://example.test/hosted.png"
+
+
+def test_group_banner_survives_reopening_an_older_database(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.sqlite3"
+    store = Store(path)
+    store.create_system("owner", "Crew")
+    store.create_group("owner", "Friends", "pals")
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE groups DROP COLUMN banner")
+    reopened = Store(path)
+    assert reopened.group_selected("owner", "pals").banner is None
+    reopened.update_active_group("owner", banner="https://example.test/b.png")
+    assert reopened.group_selected("owner", "pals").banner == "https://example.test/b.png"
 
 
 def test_bot_module_can_be_imported_without_stoat(monkeypatch):

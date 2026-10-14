@@ -7,8 +7,8 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `help [COMMAND]` | `h` | List every current command, or show usage and aliases for one command. |
 | `setup [SYSTEM_NAME] [DESCRIPTION]` | `s` | Create the account's system, with an optional description. |
 | `member NAME PREFIX [SUFFIX] [--avatar URL\|--a URL] [DESCRIPTION]` | `m` | Add a member and proxy tag, with an optional avatar and description. |
-| `avatar --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `av` | Change a member, form, or system avatar. Target shortcuts are `-m`, `-f`, and `-s`. Leave out the URL and attach an image if [image uploads](../getting-started/install.md#optional-image-uploads) are enabled. Attached images are uploaded anonymously and **cannot be deleted**; to keep that control, upload at <https://freeimage.host> yourself and give the link. |
-| `banner --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `bn` | Change a member, form, or system banner. Attach an image instead of a URL when uploads are enabled (anonymous and permanent, like `avatar`). |
+| `avatar --member MEMBER [URL]\|--form FORM [URL]\|--group GROUP [URL]\|--system [URL]` | `av` | Change a member, form, group, or system avatar. Target shortcuts are `-m`, `-f`, `-g`, and `-s`. Leave out the URL and attach an image if [image uploads](../getting-started/install.md#optional-image-uploads) are enabled. Attached images are uploaded anonymously and **cannot be deleted**; to keep that control, upload at <https://freeimage.host> yourself and give the link. |
+| `banner --member MEMBER [URL]\|--form FORM [URL]\|--group GROUP [URL]\|--system [URL]` | `bn` | Change a member, form, group, or system banner. Target shortcuts match `avatar`. Attach an image instead of a URL when uploads are enabled (anonymous and permanent, like `avatar`). |
 | `memberproxy MEMBER [PREFIX] [SUFFIX]` | `mt` | Add a member tag, or list tags by omitting the prefix. |
 | `memberproxy-clear MEMBER` | `mc` | Clear all proxy tags from a member. |
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |
@@ -30,7 +30,7 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `import FORMAT JSON` | `i` | Import PluralKit, Tupperbox, or Plurapack JSON. |
 | `export [FORMAT]` | `x` | Export portable metadata. |
 | `info SYSTEM_GROUP_MEMBER_OR_FORM` | `in`, `view` | Show a system and its groups, a single group, a member, or a form profile. |
-| `group create\|select\|add\|alias\|avatar ...` | `g` | Create, select, and edit the active group. |
+| `group create\|select\|add\|alias\|avatar\|banner ...` | `g` | Create, select, and edit the active group. |
 | `viewinfo [SYSTEM_OR_MEMBER]` | `vi` | Show a system card, then its member cards, or one member card. |
 | `viewgroup GROUP` | `vg` | Show one group with every member's ID, color, and description. |
 | `viewmembers [SYSTEM]` | `ml` | Show only a system's paginated member cards. |
@@ -70,15 +70,28 @@ p;group select GROUP
 p;group add MEMBER [MEMBER...]
 p;group alias NEW_ALIAS
 p;group avatar IMAGE_URL
+p;group banner IMAGE_URL
 ```
 
 Creating a group makes it the active group. Use `group select` to choose which
-existing group later `group add`, `group alias`, and `group avatar` commands
+existing group later `group add`, `group alias`, `group avatar`, and `group banner` commands
 change. A group selector may be its stable ID, full name, or alias. Quote group
 names containing spaces. Member selectors may be stable IDs, full names,
 aliases, or proxy prefixes; member names containing spaces must be quoted. The
 `g` shortcut supports all of the same operations (for example,
 `p;g select GROUP`).
+
+To change any group's avatar or banner without selecting it first, use
+`avatar` or `banner` with a group target. It accepts the group's stable ID, name, or alias, and you can
+attach an image instead of giving a URL:
+
+```text
+p;avatar --group "Friends at Work" https://example.test/group.png
+p;av -g work        (with an image attached)
+p;banner -g work https://example.test/group-banner.png
+```
+
+`info` and `viewgroup` show a group's banner under its cards.
 
 `view` is accepted as a compatibility alias for `info`, and `fronter` is
 accepted as a compatibility alias for `front`. Missing command arguments are
@@ -140,14 +153,15 @@ p;av -f def34 https://example.test/form-avatar.png
 p;avatar --member abc12
 p;banner --system https://example.test/system-banner.png
 p;bn -m abc12 https://example.test/member-banner.png
+p;bn -g work https://example.test/group-banner.png
 p;form abc12 "Alex at Sea" https://example.test/alex.png "Blue fins and a long tail."
 ```
 
-On Stoat, `info`, `viewinfo`, and `viewmember` post the banner as a link in a
-second message just under the card, and Stoat shows it as an image. Banners can't
-go inside the card because Stoat's client doesn't draw images there. Groups have
-no banner, and `viewmembers` doesn't post banners, so a long member list doesn't
-turn into dozens of messages.
+On Stoat, `info`, `viewinfo`, `viewmember`, and `viewgroup` post the banner as a
+link in a second message just under the card, and Stoat shows it as an image.
+Banners can't go inside the card because Stoat's client doesn't draw images there.
+`viewmembers` doesn't post banners, so a long member list doesn't turn into dozens
+of messages. On Fluxer, group cards list the banner link next to the avatar.
 
 The final description argument for `setup`, `member`, and `form` consumes the
 rest of the message, including line breaks. Quote names and earlier arguments

@@ -80,7 +80,8 @@ def test_native_v1_round_trip_preserves_portable_records(tmp_path):
     source.configure_speech_formatting("source", member.id, True, "whisper")
     source.configure_member_proxy("source", member.id, "A:", "")
     friends = source.create_group("source", "Friends", "friends")
-    source.update_active_group("source", avatar="https://example.test/friends.png")
+    source.update_active_group("source", avatar="https://example.test/friends.png",
+                               banner="https://example.test/friends-banner.png")
     source.add_group_members("source", [member.id])
     family = source.create_group("source", "家族", "family")
     source.update_active_group("source", avatar="https://example.test/family.png")
@@ -124,11 +125,12 @@ def test_native_v1_round_trip_preserves_portable_records(tmp_path):
     with target.connect() as db:
         memberships = {row[0] for row in db.execute("""SELECT g.name FROM groups g
             JOIN group_members gm ON gm.group_id=g.id WHERE gm.member_id=?""", (restored.id,))}
-        groups = {row["name"]: (row["alias"], row["avatar"]) for row in db.execute(
-            "SELECT name,alias,avatar FROM groups WHERE system_id=?", (restored.system_id,))}
+        groups = {row["name"]: (row["alias"], row["avatar"], row["banner"]) for row in db.execute(
+            "SELECT name,alias,avatar,banner FROM groups WHERE system_id=?", (restored.system_id,))}
     assert memberships == {"Friends", "家族"}
-    assert groups == {"Friends": ("friends", "https://example.test/friends.png"),
-                      "家族": ("family", "https://example.test/family.png")}
+    assert groups == {"Friends": ("friends", "https://example.test/friends.png",
+                                  "https://example.test/friends-banner.png"),
+                      "家族": ("family", "https://example.test/family.png", None)}
     assert target.forms_for_member(target.member_named("different-owner", "No forms or groups").id) == []
 
 
@@ -312,3 +314,29 @@ def test_empty_native_system_round_trip(tmp_path):
     assert (restored.display_name,restored.description,restored.logo,restored.banner,
             restored.system_tag,restored.show_system_tag)==("Empty 🌌","",None,None,None,1)
     assert target.export_system("target")[1] == []
+
+
+
+def test_pluralkit_group_banners_import_and_export():
+    transfer = parse_import("pluralkit", json.dumps({
+        "version": 2, "system": {"name": "Crew"}, "switches": [],
+        "members": [{"id": "abcde", "name": "Sam", "proxy_tags": []}],
+        "groups": [{"id": "fghij", "name": "Crew", "icon": "https://example.test/i.png",
+                    "banner": "https://example.test/b.png", "members": ["abcde"]}],
+    }))
+    assert (transfer.groups[0].avatar, transfer.groups[0].banner) == (
+        "https://example.test/i.png", "https://example.test/b.png")
+
+
+def test_merge_import_fills_an_empty_group_banner_but_keeps_an_existing_one(tmp_path):
+    store = Store(tmp_path / "merge.sqlite3")
+    store.create_system("owner", "Crew")
+    store.create_group("owner", "Friends", "friends")
+    store.create_group("owner", "Work", "work", banner="https://example.test/keep.png")
+    document = json.dumps({"format": "plurapack", "version": 1, "system": {"name": "Crew"},
+        "members": [], "groups": [
+            {"export_id": "g1", "name": "Friends", "alias": "friends", "banner_url": "https://example.test/new.png"},
+            {"export_id": "g2", "name": "Work", "alias": "work", "banner_url": "https://example.test/other.png"}]})
+    import_system(store, "owner", document, "plurapack", "merge")
+    assert store.group_selected("owner", "friends").banner == "https://example.test/new.png"
+    assert store.group_selected("owner", "work").banner == "https://example.test/keep.png"

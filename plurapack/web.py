@@ -91,7 +91,7 @@ def member_json(store: Store, member: Member, front: Front | None = None) -> dic
 def group_json(store: Store, account_id: str, group: Group) -> dict[str, Any]:
     members = store.group_members(account_id, group.id)
     return {"id": group.id, "systemId": group.system_id, "name": group.name,
-            "alias": group.alias, "avatar": group.avatar,
+            "alias": group.alias, "avatar": group.avatar, "banner": group.banner,
             "memberIds": [member.id for member in members]}
 
 
@@ -392,7 +392,8 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
                            store: Store = Depends(db)) -> dict[str, Any]:
         await authorized(system_id, user, store)
         group = await run(store.create_group, user.id, body.name, body.alias,
-                          str(body.avatar) if body.avatar else None)
+                          str(body.avatar) if body.avatar else None,
+                          str(body.banner) if body.banner else None)
         return await run(group_json, store, user.id, group)
 
     @app.get("/api/systems/{system_id}/groups/{group_id}")
@@ -408,8 +409,9 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
                           store: Store = Depends(db)) -> dict[str, Any]:
         await owned_group(system_id, group_id, user, store)
         changes = body.model_dump(exclude_unset=True)
-        if "avatar" in changes and changes["avatar"]:
-            changes["avatar"] = str(changes["avatar"])
+        for image in ("avatar", "banner"):
+            if image in changes and changes[image]:
+                changes[image] = str(changes[image])
         group = await run(store.update_group, user.id, group_id, **changes)
         return await run(group_json, store, user.id, group)
 

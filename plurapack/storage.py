@@ -113,6 +113,7 @@ class Group:
     name: str
     alias: str
     avatar: str | None
+    banner: str | None = None
 
 
 @dataclass(frozen=True)
@@ -245,7 +246,7 @@ class Store:
                     id TEXT PRIMARY KEY CHECK(length(id)=8),
                     system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
                     name TEXT NOT NULL COLLATE NOCASE, alias TEXT NOT NULL COLLATE NOCASE,
-                    avatar TEXT, UNIQUE(system_id,name), UNIQUE(system_id,alias)
+                    avatar TEXT, banner TEXT, UNIQUE(system_id,name), UNIQUE(system_id,alias)
                 );
                 CREATE TABLE IF NOT EXISTS group_members (
                     group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
@@ -342,6 +343,10 @@ class Store:
                 db.executemany("INSERT INTO active_groups VALUES (?,?)", (
                     (row["system_id"], replacements[row["group_id"]]) for row in active
                 ))
+            # After the legacy rebuild above, so a rebuilt table gains it too.
+            group_columns = {row[1] for row in db.execute("PRAGMA table_info(groups)")}
+            if "banner" not in group_columns:
+                db.execute("ALTER TABLE groups ADD COLUMN banner TEXT")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
             # Seed the normalized table when opening an older database. The
             # legacy columns remain as the primary tag for API compatibility.
@@ -769,7 +774,7 @@ class Store:
         return self.form_selected(account_id, selector)
 
     def create_group(self, account_id: str, name: str, alias: str,
-                     avatar: str | None = None) -> Group:
+                     avatar: str | None = None, banner: str | None = None) -> Group:
         system_id = self.system_for(account_id)
         if system_id is None:
             raise PermissionError("Create a system first.")
@@ -781,13 +786,17 @@ class Store:
         avatar = avatar.strip() if avatar else None
         if avatar and not re.fullmatch(r"https?://\S+", avatar):
             raise ValueError("Group avatar must be an HTTP or HTTPS URL.")
+        banner = banner.strip() if banner else None
+        if banner and not re.fullmatch(r"https?://\S+", banner):
+            raise ValueError("Group banner must be an HTTP or HTTPS URL.")
         try:
             with self.connect() as db:
                 while True:
                     group_id = new_group_id(db)
                     try:
-                        db.execute("INSERT INTO groups(id,system_id,name,alias,avatar) VALUES (?,?,?,?,?)",
-                                   (group_id, system_id, name, alias, avatar))
+                        db.execute("INSERT INTO groups(id,system_id,name,alias,avatar,banner) "
+                                   "VALUES (?,?,?,?,?,?)",
+                                   (group_id, system_id, name, alias, avatar, banner))
                         db.execute("""INSERT INTO active_groups(system_id,group_id) VALUES (?,?)
                             ON CONFLICT(system_id) DO UPDATE SET group_id=excluded.group_id""",
                                    (system_id, group_id))
@@ -865,7 +874,7 @@ class Store:
         group = self.group_selected(account_id, group_id)
         if group is None or group.id != group_id:
             raise PermissionError("Group not found or not owned by this account.")
-        if not changes or not set(changes) <= {"name", "alias", "avatar"}:
+        if not changes or not set(changes) <= {"name", "alias", "avatar", "banner"}:
             raise ValueError("No supported group fields were supplied.")
         if "name" in changes:
             if changes["name"] is None:
@@ -879,10 +888,11 @@ class Store:
             changes["alias"] = changes["alias"].strip()
             if not re.fullmatch(r"[^\s:]{1,24}", changes["alias"]):
                 raise ValueError("Group alias must be 1–24 characters without spaces or colons.")
-        if "avatar" in changes:
-            changes["avatar"] = changes["avatar"].strip() if changes["avatar"] else None
-            if changes["avatar"] and not re.fullmatch(r"https?://\S+", changes["avatar"]):
-                raise ValueError("Group avatar must be an HTTP or HTTPS URL.")
+        for image in ("avatar", "banner"):
+            if image in changes:
+                changes[image] = changes[image].strip() if changes[image] else None
+                if changes[image] and not re.fullmatch(r"https?://\S+", changes[image]):
+                    raise ValueError(f"Group {image} must be an HTTP or HTTPS URL.")
         try:
             with self.connect() as db:
                 db.execute(f"UPDATE groups SET {','.join(f'{key}=?' for key in changes)} "
