@@ -85,7 +85,7 @@ COMMAND_HELP = {
         "m", "NAME PREFIX [SUFFIX] [--avatar URL|--a URL] [DESCRIPTION]",
         "Add a member and proxy tag.",
     ),
-    "avatar": ("av", "--member MEMBER [URL]|--form FORM [URL]|--system [URL]", "Change a profile avatar. You can attach an image instead of a URL; attached images are uploaded anonymously and permanently (freeimage.host by default) and cannot be deleted. Upload at https://freeimage.host yourself to keep that control."),
+    "avatar": ("av", "--member MEMBER [URL]|--form FORM [URL]|--group GROUP [URL]|--system [URL]", "Change a member, form, group, or system avatar. You can attach an image instead of a URL; attached images are uploaded anonymously and permanently (freeimage.host by default) and cannot be deleted. Upload at https://freeimage.host yourself to keep that control."),
     "banner": ("bn", "--member MEMBER [URL]|--form FORM [URL]|--system [URL]", "Change a profile banner. Attached images are uploaded anonymously and permanently, like avatar."),
     "memberproxy": ("mt", "MEMBER [PREFIX] [SUFFIX]", "Add or list member proxy tags."),
     "memberproxy-clear": ("mc", "MEMBER", "Clear every proxy tag from a member."),
@@ -143,8 +143,20 @@ _MEMBER_AVATAR_OPTION = re.compile(r"(?<!\S)(?:--avatar|--a)(?:\s+(\S+))?")
 _PROFILE_TARGETS = {
     "--member": "member", "-m": "member", "--m": "member",
     "--form": "form", "-f": "form", "--f": "form",
+    "--group": "group", "-g": "group", "--g": "group",
     "--system": "system", "-s": "system", "--s": "system",
 }
+
+GROUP_BANNER_UNSUPPORTED = (
+    "Groups have an avatar but no banner. Use `avatar --group GROUP` instead, "
+    "or choose --member, --form, or --system for a banner."
+)
+
+
+def _reject_group_banner(target: str, field: str) -> None:
+    """Groups only store an avatar; fail before anything is uploaded."""
+    if target == "group" and field != "avatar":
+        raise ValueError(GROUP_BANNER_UNSUPPORTED)
 
 
 def _member_creation_options(suffix: str, description: str) -> tuple[str, str, str | None]:
@@ -179,7 +191,7 @@ def _profile_image_options(arguments: str, attached: bool = False) -> tuple[str,
     except ValueError as error:
         raise ValueError(f"Invalid arguments: {error}") from error
     if not values or values[0] not in _PROFILE_TARGETS:
-        raise ValueError("Choose exactly one target: --member, --form, or --system.")
+        raise ValueError("Choose exactly one target: --member, --form, --group, or --system.")
     target = _PROFILE_TARGETS[values[0]]
     expected = 2 if target == "system" else 3
     selector = None if target == "system" else (values[1] if len(values) > 1 else None)
@@ -201,6 +213,8 @@ def _check_profile_image_target(store: Store, account_id: str, target: str, sele
         raise PermissionError("Member not found or not owned by this account.")
     if target == "form" and store.form_selected(account_id, selector or "") is None:
         raise PermissionError("Form not found or not owned by this account.")
+    if target == "group" and store.group_selected(account_id, selector or "") is None:
+        raise PermissionError("Group not found or not owned by this account.")
     if target == "system" and store.system_for(account_id) is None:
         raise PermissionError("Create a system first.")
 
@@ -214,6 +228,7 @@ def _update_profile_image(
     a target but no URL.
     """
     target, selector, typed = _profile_image_options(arguments, attached=url is not None)
+    _reject_group_banner(target, field)
     url = typed or url
     if url is None:
         raise ValueError("Give an image URL or attach an image.")
@@ -226,6 +241,10 @@ def _update_profile_image(
         form, _ = store.form_selected(account_id, selector or "")
         updated = store.update_form(account_id, form.id, **{field: url})
         return updated.display_name, url
+    if target == "group":
+        group = store.group_selected(account_id, selector or "")
+        updated = store.update_group(account_id, group.id, avatar=url)
+        return updated.name, url
     system_id = store.system_for(account_id)
     system_field = "logo" if field == "avatar" else field
     updated = store.update_system(account_id, system_id, **{system_field: url})
@@ -288,6 +307,7 @@ async def _update_profile_image_from_message(
     the image host, so the reply can warn that the upload is permanent.
     """
     target, selector, typed = _profile_image_options(arguments, attached=bool(attachments))
+    _reject_group_banner(target, field)
     if typed is not None:
         return (*_update_profile_image(store, account_id, field, arguments), False)
     if len(attachments) != 1:

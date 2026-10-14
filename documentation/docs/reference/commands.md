@@ -7,8 +7,8 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `help [COMMAND]` | `h` | List every current command, or show usage and aliases for one command. |
 | `setup [SYSTEM_NAME] [DESCRIPTION]` | `s` | Create the account's system, with an optional description. |
 | `member NAME PREFIX [SUFFIX] [--avatar URL\|--a URL] [DESCRIPTION]` | `m` | Add a member and proxy tag, with an optional avatar and description. |
-| `avatar --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `av` | Change a member, form, or system avatar. Target shortcuts are `-m`, `-f`, and `-s`. Leave out the URL and attach an image if [image uploads](../getting-started/install.md#optional-image-uploads) are enabled. Attached images are uploaded anonymously and **cannot be deleted**; to keep that control, upload at <https://freeimage.host> yourself and give the link. |
-| `banner --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `bn` | Change a member, form, or system banner. Attach an image instead of a URL when uploads are enabled (anonymous and permanent, like `avatar`). |
+| `avatar --member MEMBER [URL]\|--form FORM [URL]\|--group GROUP [URL]\|--system [URL]` | `av` | Change a member, form, group, or system avatar. Target shortcuts are `-m`, `-f`, `-g`, and `-s`. Leave out the URL and attach an image if [image uploads](../getting-started/install.md#optional-image-uploads) are enabled. Attached images are uploaded anonymously and **cannot be deleted**; to keep that control, upload at <https://freeimage.host> yourself and give the link. |
+| `banner --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `bn` | Change a member, form, or system banner. Groups don't have banners. Attach an image instead of a URL when uploads are enabled (anonymous and permanent, like `avatar`). |
 | `memberproxy MEMBER [PREFIX] [SUFFIX]` | `mt` | Add a member tag, or list tags by omitting the prefix. |
 | `memberproxy-clear MEMBER` | `mc` | Clear all proxy tags from a member. |
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |
@@ -79,6 +79,15 @@ names containing spaces. Member selectors may be stable IDs, full names,
 aliases, or proxy prefixes; member names containing spaces must be quoted. The
 `g` shortcut supports all of the same operations (for example,
 `p;g select GROUP`).
+
+To change any group's avatar without selecting it first, use `avatar` with a
+group target. It accepts the group's stable ID, name, or alias, and you can
+attach an image instead of giving a URL:
+
+```text
+p;avatar --group "Friends at Work" https://example.test/group.png
+p;av -g work        (with an image attached)
+```
 
 `view` is accepted as a compatibility alias for `info`, and `fronter` is
 accepted as a compatibility alias for `front`. Missing command arguments are
