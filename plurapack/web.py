@@ -26,6 +26,7 @@ from .web_models import (ActiveGroupUpdate, FormCreate, FormPatch, FrontUpdate,
                          GroupCreate, GroupMemberUpdate, GroupPatch, MemberCreate,
                          MemberPatch, ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
 from .web_models import VoicePatch
+from .imagehost import ImageHost, ImageHostError
 from .voice_service import VoiceService, selected_voice_type, voice_json
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .browser_audio import BrowserAudioStore
@@ -116,7 +117,8 @@ def front_json(front: Front | None) -> dict[str, Any]:
 
 def create_app(store: Store | None = None, static_root: Path | None = ROOT,
                browser_audio: BrowserAudioStore | None = None,
-               voice_service: VoiceService | None = None) -> FastAPI:
+               voice_service: VoiceService | None = None,
+               image_host: ImageHost | None = None) -> FastAPI:
     app = FastAPI(title="Plurapack Web API", version="1")
     if store is None:
         database = resolve_database_path()
@@ -135,6 +137,7 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         except ValueError:
             voice_service = None
     app.state.voice_service = voice_service
+    app.state.image_host = image_host if image_host is not None else ImageHost.from_environment()
     app.state.login_service = LoginService(app.state.store)
     app.state.login_start_limiter = LoginStartLimiter(
         int(os.getenv("PLURAPACK_LOGIN_START_LIMIT", "10"))
@@ -257,14 +260,28 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
                                secure=cookie_secure(), samesite="lax")
         return response
 
+    @app.post("/api/images")
+    async def upload_image(request: Request, image: UploadFile = File(...),
+                           user: WebUser = Depends(require_authenticated_user)) -> dict[str, str]:
+        """Host a picked picture and return its URL; Plurapack still stores only the URL."""
+        host = request.app.state.image_host
+        if host is None:
+            raise HTTPException(503, "Image uploads are not configured on this server.")
+        data = await image.read(host.max_bytes + 1)
+        try:
+            return {"url": await asyncio.to_thread(host.upload, data)}
+        except ImageHostError as error:
+            raise HTTPException(502 if error.upstream else 422, str(error)) from error
+
     @app.get("/api/account")
-    async def account(user: WebUser = Depends(require_authenticated_user),
+    async def account(request: Request, user: WebUser = Depends(require_authenticated_user),
                       store: Store = Depends(db)) -> dict[str, Any]:
         systems = await run(store.systems_for_account, user.id)
         summaries = [{"id": item.id, "name": item.display_name, "tag": item.system_tag,
                       "memberCount": len(await run(store.members_for_system, item.id))} for item in systems]
         return {"authenticated": True, "id": user.id, "username": user.username,
                 "displayName": user.username, "avatar": user.avatar,
+                "imageUpload": request.app.state.image_host is not None,
                 "systemId": summaries[0]["id"] if summaries else None,
                 "user": {"id": user.id, "username": user.username, "avatar": user.avatar},
                 "systems": summaries}

@@ -104,6 +104,10 @@ This small in-memory limit does not retain permanent IP history and intentionall
 `X-Forwarded-For`, so deployments behind a reverse proxy should enforce any
 client-aware rate limit at that trusted proxy.
 
+### Optional image uploads
+
+Set `PLURAPACK_IMAGE_HOST_KEY` to add an upload button to the dashboard's image picker (default host: freeimage.host; override with `PLURAPACK_IMAGE_HOST_URL`, limit with `PLURAPACK_IMAGE_MAX_BYTES`). Plurapack stores only the returned link. See the install guide for details.
+
 ### Browser voice playback
 
 Voice playback modes have destination-based meanings: `send` uploads the one
