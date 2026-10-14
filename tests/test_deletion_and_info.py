@@ -484,3 +484,49 @@ async def test_info_on_a_large_group_and_system_stays_within_stoat_limits(tmp_pa
         await bot.get_command("info").callback(ctx, selector=selector)
         assert sum(len(embed.description) for embed in sent[0]) <= 1800
         assert len(sent[0]) <= 10
+
+
+@pytest.mark.parametrize("command, kind", [
+    ("viewmember", "member"), ("viewinfo", "member"), ("viewinfo", "system"),
+])
+async def test_view_commands_post_the_banner_link_under_the_card(tmp_path, command, kind):
+    database = tmp_path / f"{command}-{kind}.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Jaden", "[j]", "")
+    store.update_member("owner", member.id, banner="https://example.test/jaden.png")
+    other = store.create_system("other", "Quiet System")  # no members, so one page
+    store.update_system("other", other, banner="https://example.test/system.png")
+    selector, url = ((member.id, "https://example.test/jaden.png") if kind == "member"
+                     else (other, "https://example.test/system.png"))
+    sent = []
+
+    async def send(*args, **kwargs):
+        sent.append((args, kwargs))
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    callback = bot.get_command(command).callback
+    await (callback(ctx, selector=selector))
+
+    assert sent[0][1]["embeds"]
+    assert sent[-1] == ((url,), {})
+    assert len(sent) == 2
+
+
+async def test_view_commands_without_a_banner_send_only_the_card(tmp_path):
+    database = tmp_path / "view-no-banner.sqlite3"
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Jaden", "[j]", "")
+    sent = []
+
+    async def send(*args, **kwargs):
+        sent.append((args, kwargs))
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    await bot.get_command("viewmember").callback(ctx, selector=member.id)
+    assert len(sent) == 1 and sent[0][1]["embeds"]

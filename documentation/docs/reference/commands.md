@@ -142,6 +142,12 @@ p;bn -m abc12 https://example.test/member-banner.png
 p;form abc12 "Alex at Sea" https://example.test/alex.png "Blue fins and a long tail."
 ```
 
+On Stoat, `info`, `viewinfo`, and `viewmember` post the banner as a link in a
+second message just under the card, and Stoat shows it as an image. Banners can't
+go inside the card because Stoat's client doesn't draw images there. Groups have
+no banner, and `viewmembers` doesn't post banners, so a long member list doesn't
+turn into dozens of messages.
+
 The final description argument for `setup`, `member`, and `form` consumes the
 rest of the message, including line breaks. Quote names and earlier arguments
 that contain spaces; use `""` for an omitted suffix or picture when a later
