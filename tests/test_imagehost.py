@@ -4,7 +4,18 @@ import pytest
 
 from plurapack.imagehost import ImageHost, ImageHostError, sniff_image
 
-PNG = b"\x89PNG\r\n\x1a\n" + b"0" * 32
+def _png_1x1() -> bytes:
+    import struct
+    import zlib
+
+    def chunk(kind, body):
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\x00\xff\x00\x00")) + chunk(b"IEND", b""))
+
+
+PNG = _png_1x1()  # a real, metadata-free 1x1 PNG
 
 
 def host(reply, **kwargs):
@@ -39,7 +50,7 @@ def test_upload_posts_a_multipart_form_and_returns_the_https_url():
     body = request.data
     assert b'name="key"\r\n\r\nsecret-key' in body
     assert b'name="action"\r\n\r\nupload' in body
-    assert b'name="source"; filename="image.png"' in body and PNG in body
+    assert b'name="source"; filename="image.png"' in body and PNG in body  # clean PNGs pass unchanged
 
 
 @pytest.mark.parametrize("data, message", [
@@ -173,7 +184,7 @@ def test_shrinking_can_be_turned_off():
 
 
 def test_a_corrupt_picture_over_the_threshold_is_refused_clearly():
-    broken = PNG + b"not really image data" * 50
+    broken = PNG[:20] + b"not really image data" * 50  # header, then garbage
     image_host, seen = host(ok(), compress_over=100)
     with pytest.raises(ImageHostError, match="could not be read") as caught:
         image_host.upload(broken)
@@ -191,3 +202,116 @@ def test_compress_over_environment_setting(monkeypatch):
     monkeypatch.setenv("PLURAPACK_IMAGE_COMPRESS_OVER", "big")
     with pytest.raises(ValueError, match="whole number"):
         ImageHost.from_environment()
+
+
+
+# ---- metadata removal on every upload ----------------------------------------------------
+
+from plurapack.imagehost import strip_metadata  # noqa: E402
+
+
+def _pixels(data):
+    import io
+
+    with Image.open(io.BytesIO(data)) as image:
+        return image.convert("RGBA").tobytes(), image.size
+
+
+def _photo(**save):
+    import io
+    import os
+
+    buffer = io.BytesIO()
+    Image.frombytes("RGB", (64, 32), os.urandom(64 * 32 * 3)).save(buffer, **save)
+    return buffer.getvalue()
+
+
+def _exif(orientation=1):
+    exif = Image.Exif()
+    exif[0x010F] = "SecretCameraMaker"
+    exif[0x0112] = orientation
+    exif[0x8825] = {1: "N", 2: (43.0, 32.0, 0.0)}  # GPS block
+    return exif
+
+
+@pytest.mark.parametrize("progressive", [False, True])
+def test_jpeg_metadata_is_removed_without_touching_the_picture(progressive):
+    original = _photo(format="JPEG", exif=_exif(), comment=b"private note", quality=90,
+                      progressive=progressive)
+    assert b"SecretCameraMaker" in original and b"private note" in original
+    stripped = strip_metadata(original + b"PHONE-TRAILER-WITH-MORE-TAGS")
+    assert b"SecretCameraMaker" not in stripped and b"private note" not in stripped
+    assert b"Exif" not in stripped and b"PHONE-TRAILER" not in stripped
+    assert stripped.endswith(b"\xff\xd9")
+    assert _pixels(stripped) == _pixels(original)
+
+
+def test_rotated_jpeg_is_turned_upright_before_its_tags_are_removed():
+    original = _photo(format="JPEG", exif=_exif(orientation=6))
+    stripped = strip_metadata(original)
+    assert b"SecretCameraMaker" not in stripped and b"Exif" not in stripped
+    assert _pixels(stripped)[1] == (32, 64)
+
+
+def test_jpeg_colour_profile_is_kept():
+    import io
+
+    from PIL import ImageCms
+
+    profile = ImageCms.ImageCmsProfile(ImageCms.createProfile("sRGB")).tobytes()
+    original = _photo(format="JPEG", icc_profile=profile, exif=_exif())
+    with Image.open(io.BytesIO(strip_metadata(original))) as image:
+        assert image.info.get("icc_profile") == profile
+
+
+def test_png_text_and_exif_chunks_are_removed():
+    from PIL import PngImagePlugin
+
+    info = PngImagePlugin.PngInfo()
+    info.add_text("Comment", "where I live")
+    info.add_itxt("Author", "real name")
+    original = _photo(format="PNG", pnginfo=info, exif=_exif())
+    stripped = strip_metadata(original)
+    for secret in (b"where I live", b"real name", b"SecretCameraMaker", b"tEXt", b"iTXt", b"eXIf"):
+        assert secret not in stripped
+    assert _pixels(stripped) == _pixels(original)
+
+
+def test_webp_exif_and_xmp_are_removed():
+    xmp = b'<x:xmpmeta xmlns:x="adobe:ns:meta/">SecretXMP</x:xmpmeta>'
+    original = _photo(format="WEBP", lossless=True, exif=_exif(), xmp=xmp)
+    assert b"SecretXMP" in original and b"SecretCameraMaker" in original
+    stripped = strip_metadata(original)
+    assert b"SecretXMP" not in stripped and b"SecretCameraMaker" not in stripped
+    assert _pixels(stripped) == _pixels(original)
+
+
+def test_gif_comments_are_removed_but_animation_and_looping_stay():
+    import io
+    import os
+
+    frames = [Image.frombytes("RGB", (20, 20), os.urandom(1200)).convert("P") for _ in range(3)]
+    buffer = io.BytesIO()
+    frames[0].save(buffer, "GIF", save_all=True, append_images=frames[1:], duration=100, loop=0,
+                   comment=b"secret comment")
+    original = buffer.getvalue()
+    assert b"secret comment" in original
+    stripped = strip_metadata(original + b"junk after trailer")
+    assert b"secret comment" not in stripped and b"junk after trailer" not in stripped
+    with Image.open(io.BytesIO(stripped)) as image:
+        assert image.n_frames == 3 and image.info.get("loop") == 0
+
+
+def test_every_upload_is_stripped_even_under_the_shrink_threshold():
+    original = _photo(format="JPEG", exif=_exif())
+    image_host, seen = host(ok(), compress_over=10_000_000)
+    image_host.upload(original)
+    sent = sent_image(seen[0])
+    assert b"SecretCameraMaker" not in seen[0].data
+    assert b'filename="image.jpg"' in seen[0].data and _pixels(sent) == _pixels(original)
+
+
+def test_a_truncated_picture_is_refused():
+    original = _photo(format="JPEG", exif=_exif())
+    with pytest.raises(ImageHostError, match="could not be read"):
+        strip_metadata(original[: len(original) // 2])

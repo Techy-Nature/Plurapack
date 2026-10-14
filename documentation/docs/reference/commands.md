@@ -7,8 +7,8 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `help [COMMAND]` | `h` | List every current command, or show usage and aliases for one command. |
 | `setup [SYSTEM_NAME] [DESCRIPTION]` | `s` | Create the account's system, with an optional description. |
 | `member NAME PREFIX [SUFFIX] [--avatar URL\|--a URL] [DESCRIPTION]` | `m` | Add a member and proxy tag, with an optional avatar and description. |
-| `avatar --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `av` | Change a member, form, or system avatar. Target shortcuts are `-m`, `-f`, and `-s`. Leave out the URL and attach an image if [image uploads](../getting-started/install.md#optional-image-uploads) are enabled. |
-| `banner --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `bn` | Change a member, form, or system banner. Attach an image instead of a URL when uploads are enabled. |
+| `avatar --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `av` | Change a member, form, or system avatar. Target shortcuts are `-m`, `-f`, and `-s`. Leave out the URL and attach an image if [image uploads](../getting-started/install.md#optional-image-uploads) are enabled. Attached images are uploaded anonymously and **cannot be deleted**; to keep that control, upload at <https://freeimage.host> yourself and give the link. |
+| `banner --member MEMBER [URL]\|--form FORM [URL]\|--system [URL]` | `bn` | Change a member, form, or system banner. Attach an image instead of a URL when uploads are enabled (anonymous and permanent, like `avatar`). |
 | `memberproxy MEMBER [PREFIX] [SUFFIX]` | `mt` | Add a member tag, or list tags by omitting the prefix. |
 | `memberproxy-clear MEMBER` | `mc` | Clear all proxy tags from a member. |
 | `alias MEMBER [ALIAS]` | `a` | Set or clear a short selector. |

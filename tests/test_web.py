@@ -685,7 +685,9 @@ async def test_image_upload_requires_login_and_configuration_and_returns_the_hos
     configured = httpx.ASGITransport(app=create_app(store, static_root=None, image_host=host))
     async with httpx.AsyncClient(transport=configured, base_url="http://test") as client:
         client.cookies.update(cookie())
-        assert (await client.get("/api/account")).json()["imageUpload"] is True
+        account = (await client.get("/api/account")).json()
+        assert account["imageUpload"] is True
+        assert "permanent" in account["imageUploadNotice"] and "https://freeimage.host" in account["imageUploadNotice"]
         uploaded = await client.post("/api/images", files=files)
         assert uploaded.status_code == 200 and uploaded.json() == {"url": "https://iili.io/x.png"}
         rejected = await client.post("/api/images", files={"image": ("a.txt", b"hello", "text/plain")})
