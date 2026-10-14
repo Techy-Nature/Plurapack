@@ -26,3 +26,17 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,summary:focus-vi
 dialog.dialog-fallback[open]{position:fixed;inset:50% auto auto 50%;z-index:10;display:block;max-height:calc(100dvh - 2rem);margin:0;overflow:auto;transform:translate(-50%,-50%);box-shadow:0 0 0 100vmax #000b}
 
 @media(max-width:700px){.sidebar{overflow-y:auto}.voice-control button{width:100%}}
+
+/* Sidebar list switch: show members, groups, or both without one list covering the other. */
+.list-switch{display:grid;grid-template-columns:1fr 1fr auto;gap:2px;padding:2px;border:1px solid var(--line);border-radius:.65rem;background:#091019}
+.list-switch button{min-height:36px;padding:.3rem .55rem;border:0;border-radius:.5rem;background:transparent;color:var(--muted);font-size:.85rem;white-space:nowrap}
+.list-switch button[aria-pressed="true"]{background:#17352f;color:var(--text);box-shadow:inset 0 0 0 1px var(--accent)}
+.list-switch .count{color:var(--muted);font-size:.75rem}
+.sidebar-panel{min-height:0;display:flex;flex-direction:column;gap:.6rem}
+#membersPanel,#groupsPanel{flex:1 1 0}
+#groupsPanel .group-list{min-height:0;max-height:none;flex:1 1 auto;margin-top:0}
+.sidebar[data-view="members"] #groupsPanel,.sidebar[data-view="groups"] #membersPanel{display:none}
+.sidebar[data-view="both"] #membersPanel{flex-grow:3}
+.sidebar[data-view="both"] #groupsPanel{flex-grow:2}
+@media(max-width:700px){#membersPanel,#groupsPanel{flex:none}.sidebar[data-view="both"] #groupsPanel .group-list{max-height:120px}}
+@media(min-width:701px){.sidebar{overflow-y:auto}.sidebar>*{flex-shrink:0}.sidebar[data-view="both"] #membersPanel{min-height:250px}.sidebar[data-view="both"] #groupsPanel{min-height:150px}}
