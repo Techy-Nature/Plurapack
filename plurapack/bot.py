@@ -19,7 +19,7 @@ import wave
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from .proxy import Incoming, ProxyService
 from .chatterbox import ChatterboxBackend
@@ -30,6 +30,7 @@ from .login import LoginError, LoginService
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
 from .config import (StorageConfigurationError, resolve_database_path,
                      resolve_voice_max_reference_seconds)
+from .imagehost import ImageHost, ImageHostError
 from .voice_service import VoiceService
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 
@@ -84,7 +85,7 @@ COMMAND_HELP = {
         "m", "NAME PREFIX [SUFFIX] [--avatar URL|--a URL] [DESCRIPTION]",
         "Add a member and proxy tag.",
     ),
-    "avatar": ("av", "--member MEMBER URL|--form FORM URL|--system URL", "Change a profile avatar."),
+    "avatar": ("av", "--member MEMBER [URL]|--form FORM [URL]|--system [URL]", "Change a profile avatar. Attach an image instead of a URL if uploads are enabled."),
     "banner": ("bn", "--member MEMBER URL|--form FORM URL|--system URL", "Change a profile banner."),
     "memberproxy": ("mt", "MEMBER [PREFIX] [SUFFIX]", "Add or list member proxy tags."),
     "memberproxy-clear": ("mc", "MEMBER", "Clear every proxy tag from a member."),
@@ -162,8 +163,12 @@ def _member_creation_options(suffix: str, description: str) -> tuple[str, str, s
     return suffix, cleaned_description, avatar
 
 
-def _profile_image_options(arguments: str) -> tuple[str, str | None, str]:
-    """Parse one explicitly targeted avatar or banner update."""
+def _profile_image_options(arguments: str, attached: bool = False) -> tuple[str, str | None, str | None]:
+    """Parse one explicitly targeted avatar or banner update.
+
+    With ``attached`` set, the image URL may be left out; the URL then comes back as
+    ``None`` and the caller supplies the hosted URL of the attached picture.
+    """
     try:
         values = shlex.split(arguments)
     except ValueError as error:
@@ -172,11 +177,12 @@ def _profile_image_options(arguments: str) -> tuple[str, str | None, str]:
         raise ValueError("Choose exactly one target: --member, --form, or --system.")
     target = _PROFILE_TARGETS[values[0]]
     expected = 2 if target == "system" else 3
+    selector = None if target == "system" else (values[1] if len(values) > 1 else None)
+    if attached and len(values) == expected - 1 and (target == "system" or selector):
+        return target, selector, None
     if len(values) != expected:
-        raise ValueError(
-            f"{values[0]} requires {'a selector and an image URL' if target != 'system' else 'an image URL'}."
-        )
-    selector = None if target == "system" else values[1]
+        subject = "a selector and an image URL" if target != "system" else "an image URL"
+        raise ValueError(f"{values[0]} requires {subject}, or attach an image to the message.")
     url = values[-1]
     parsed = urllib.parse.urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
@@ -184,30 +190,103 @@ def _profile_image_options(arguments: str) -> tuple[str, str | None, str]:
     return target, selector, url
 
 
+def _check_profile_image_target(store: Store, account_id: str, target: str, selector: str | None) -> None:
+    """Fail early, before any upload, if the chosen member, form, or system is unavailable."""
+    if target == "member" and store.member_selected(account_id, selector or "") is None:
+        raise PermissionError("Member not found or not owned by this account.")
+    if target == "form" and store.form_selected(account_id, selector or "") is None:
+        raise PermissionError("Form not found or not owned by this account.")
+    if target == "system" and store.system_for(account_id) is None:
+        raise PermissionError("Create a system first.")
+
+
 def _update_profile_image(
-    store: Store, account_id: str, field: str, arguments: str
+    store: Store, account_id: str, field: str, arguments: str, url: str | None = None
 ) -> tuple[str, str]:
-    """Update an owned member, form, or current system image field."""
-    target, selector, url = _profile_image_options(arguments)
+    """Update an owned member, form, or current system image field.
+
+    ``url`` is the hosted address of an attached picture, used when the arguments name
+    a target but no URL.
+    """
+    target, selector, typed = _profile_image_options(arguments, attached=url is not None)
+    url = typed or url
+    if url is None:
+        raise ValueError("Give an image URL or attach an image.")
+    _check_profile_image_target(store, account_id, target, selector)
     if target == "member":
         member = store.member_selected(account_id, selector or "")
-        if member is None:
-            raise PermissionError("Member not found or not owned by this account.")
         updated = store.update_member(account_id, member.id, **{field: url})
         return updated.name, url
     if target == "form":
-        selected = store.form_selected(account_id, selector or "")
-        if selected is None:
-            raise PermissionError("Form not found or not owned by this account.")
-        form, _ = selected
+        form, _ = store.form_selected(account_id, selector or "")
         updated = store.update_form(account_id, form.id, **{field: url})
         return updated.display_name, url
     system_id = store.system_for(account_id)
-    if system_id is None:
-        raise PermissionError("Create a system first.")
     system_field = "logo" if field == "avatar" else field
     updated = store.update_system(account_id, system_id, **{system_field: url})
     return updated.display_name, url
+
+
+async def _read_stoat_attachment(attachment: Any, max_bytes: int) -> bytes:
+    """Read an attached picture, refusing oversized files before downloading them."""
+    if (getattr(attachment, "size", 0) or 0) > max_bytes:
+        raise ValueError(f"Images can be at most {max_bytes // (1024 * 1024)} MB.")
+    return await attachment.read()
+
+
+async def _read_url_attachment(attachment: Any, max_bytes: int) -> bytes:
+    """Download an attachment by URL (Fluxer), capped at ``max_bytes``."""
+    url = str(getattr(attachment, "url", ""))
+    if not url.startswith(("http://", "https://")):
+        raise ValueError("The attached image has no downloadable URL.")
+
+    def download() -> bytes:
+        request = urllib.request.Request(url, headers={"User-Agent": "Plurapack/image-upload"})
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+                data = response.read(max_bytes + 1)
+        except (OSError, TimeoutError) as error:
+            raise ValueError("The attached image could not be downloaded.") from error
+        if len(data) > max_bytes:
+            raise ValueError(f"Images can be at most {max_bytes // (1024 * 1024)} MB.")
+        return data
+
+    return await asyncio.to_thread(download)
+
+
+IMAGE_UPLOAD_UNAVAILABLE = (
+    "Image uploads are not set up on this server, so give an image URL instead."
+)
+
+
+def _configured_image_host() -> Any:
+    """The optional image host, or ``None`` when unset or misconfigured."""
+    try:
+        return ImageHost.from_environment()
+    except ValueError as error:
+        _print_cli_status(f"Image uploads disabled: {error}")
+        return None
+
+
+async def _update_profile_image_from_message(
+    store: Store, account_id: str, field: str, arguments: str, attachments: list[Any],
+    image_host: Any, read_attachment: Callable[[Any, int], Awaitable[bytes]],
+) -> tuple[str, str]:
+    """Update an image from a typed URL, or from one attached picture hosted on demand."""
+    target, selector, typed = _profile_image_options(arguments, attached=bool(attachments))
+    if typed is not None:
+        return _update_profile_image(store, account_id, field, arguments)
+    if len(attachments) != 1:
+        raise ValueError("Attach exactly one image, or give an image URL.")
+    if image_host is None:
+        raise ValueError(IMAGE_UPLOAD_UNAVAILABLE)
+    _check_profile_image_target(store, account_id, target, selector)
+    data = await read_attachment(attachments[0], image_host.max_bytes)
+    try:
+        hosted = await asyncio.to_thread(image_host.upload, data)
+    except ImageHostError as error:
+        raise ValueError(str(error)) from error
+    return _update_profile_image(store, account_id, field, arguments, url=hosted)
 
 
 def _help_pages(prefix: str, selector: str = "", limit: int = 1800) -> list[str]:
@@ -774,9 +853,14 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await ctx.send(f"Added **{created.name}** (`{created.id}`); voice is Off.")
 
+    image_host = _configured_image_host()
+
     async def update_image(ctx: commands.Context, field: str, arguments: str) -> None:
+        attachments = list(getattr(ctx.message, "attachments", ()) or ())
         try:
-            name, _ = _update_profile_image(store, str(ctx.author.id), field, arguments)
+            name, _ = await _update_profile_image_from_message(
+                store, str(ctx.author.id), field, arguments, attachments, image_host,
+                _read_stoat_attachment)
         except (PermissionError, ValueError) as error:
             await ctx.send(str(error))
             return
