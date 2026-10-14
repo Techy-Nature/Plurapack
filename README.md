@@ -106,7 +106,7 @@ client-aware rate limit at that trusted proxy.
 
 ### Optional image uploads
 
-Set `PLURAPACK_IMAGE_HOST_KEY` to add an upload button to the dashboard's image picker (default host: freeimage.host; override with `PLURAPACK_IMAGE_HOST_URL`, limit with `PLURAPACK_IMAGE_MAX_BYTES`). Plurapack stores only the returned link. See the install guide for details.
+Set `PLURAPACK_IMAGE_HOST_KEY` to add an upload button to the dashboard's image picker (default host: freeimage.host; override with `PLURAPACK_IMAGE_HOST_URL`, limit with `PLURAPACK_IMAGE_MAX_BYTES`; pictures over `PLURAPACK_IMAGE_COMPRESS_OVER`, 1 MB by default, are shrunk to WebP first). Plurapack stores only the returned link. See the install guide for details.
 
 ### Browser voice playback
 

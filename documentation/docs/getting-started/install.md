@@ -106,10 +106,11 @@ from the picker instead, set these service variables and redeploy:
 | --- | --- |
 | `PLURAPACK_IMAGE_HOST_KEY` | Your API key for the image host. Uploads are off until this is set. |
 | `PLURAPACK_IMAGE_HOST_URL` | Upload endpoint. Defaults to `https://freeimage.host/api/1/upload`. Must be `https`. |
-| `PLURAPACK_IMAGE_MAX_BYTES` | Largest accepted file. Defaults to 8 MiB. |
+| `PLURAPACK_IMAGE_MAX_BYTES` | Largest file accepted before shrinking. Defaults to 20 MiB. |
+| `PLURAPACK_IMAGE_COMPRESS_OVER` | Pictures bigger than this many bytes are shrunk to WebP before upload. Defaults to `1000000` (1 MB). `0` turns shrinking off. |
 
 Plurapack still stores only the returned link. Only PNG, JPEG, GIF, and WebP files are
-accepted, judged by their contents. The host can delete images or go offline, and its
+accepted, judged by their contents. A picture over the shrink limit is converted to WebP, limited to 2048 pixels on its long side (1024 for animations), and stripped of metadata such as camera and location tags; smaller pictures are uploaded as they are. The host can delete images or go offline, and its
 terms apply to what you upload, so keep the original files. Pasting any other link still works. People can also attach a picture to `p;avatar` or `p;banner` and leave out the URL.
 
 ## Railway persistent storage
