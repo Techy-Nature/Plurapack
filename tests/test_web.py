@@ -1,3 +1,4 @@
+import io
 import re
 
 import httpx
@@ -673,7 +674,11 @@ async def test_image_upload_requires_login_and_configuration_and_returns_the_hos
     monkeypatch.delenv("PLURAPACK_IMAGE_HOST_KEY", raising=False)
     store = Store(tmp_path / "images.sqlite3")
     store.create_system("owner", "Test System")
-    png = b"\x89PNG\r\n\x1a\n" + b"0" * 16
+    # Uploads are opened with Pillow before hosting, so this must be a real PNG.
+    from PIL import Image
+    buffer = io.BytesIO()
+    Image.new("RGB", (2, 2), "white").save(buffer, "PNG")
+    png = buffer.getvalue()
     files = {"image": ("pic.png", png, "image/png")}
 
     unconfigured = httpx.ASGITransport(app=create_app(store, static_root=None))

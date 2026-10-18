@@ -374,10 +374,29 @@ async def test_backend_rejects_settings_non_audio_and_oversized(voice_store, mon
         await backend.synthesize("private", member)
 
 
-async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, monkeypatch):
+SPOKEN = "hello *waves* **there** ~~no~~"
+FORMATTED_START = [{"text": "hello", "style": "normal"}, {"text": "there", "style": "emphasis"}]
+
+
+@pytest.mark.parametrize("formatting, strikethrough, payload", [
+    # Off is the default for new members: the whole message is spoken as
+    # written, *actions* and all, through the plain-text path.
+    (False, "normal", {"text": SPOKEN}),
+    # On: *actions* are skipped, **bold** is emphasised, and ~~crossed-out~~
+    # text follows the member's p;voiceformat choice.
+    (True, "omit", {"parts": FORMATTED_START}),
+    (True, "normal", {"parts": [*FORMATTED_START, {"text": "no", "style": "normal"}]}),
+    (True, "mumble", {"parts": [*FORMATTED_START, {"text": "no", "style": "mumble"}]}),
+    (True, "whisper", {"parts": [*FORMATTED_START, {"text": "no", "style": "whisper"}]}),
+])
+async def test_modal_speech_follows_voiceformat_and_returns_one_wav(voice_store, monkeypatch,
+                                                                    formatting, strikethrough,
+                                                                    payload):
     from tests.test_custom_voices import wav_bytes
     member = voice_store.configure_voice("owner", "Alex", "Jordan.wav", {}, "send", "generic")
-    member = voice_store.configure_speech_formatting("owner", member.id, True, "omit")
+    if formatting:
+        member = voice_store.configure_speech_formatting("owner", member.id, True, strikethrough)
+    assert bool(member.speech_formatting) is formatting
     backend = ChatterboxBackend("https://modal.example/invoke")
     calls, delivered = [], []
     audio = wav_bytes()
@@ -388,11 +407,10 @@ async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, mon
 
     monkeypatch.setattr(backend, "_raw_request", request)
     queue = SpeechQueue(backend, lambda job, result: delivered.append(result))
-    queue.submit(SpeechJob("c", "p", "hello *waves* **there** ~~no~~", member))
+    queue.submit(SpeechJob("c", "p", SPOKEN, member))
     await queue.run_one()
-    assert calls == [{"text": "hello there", "voice_id": "generic:Jordan"}]
+    assert calls == [{**payload, "voice_id": "generic:Jordan"}]
     assert delivered == [audio]
-    assert not hasattr(backend, "synthesize_styled")
 
 
 async def test_modal_text_limit_applies_after_omissions_and_never_logs_text(voice_store, monkeypatch, caplog):
@@ -406,7 +424,7 @@ async def test_modal_text_limit_applies_after_omissions_and_never_logs_text(voic
     queue = SpeechQueue(backend, lambda job, result: delivered.append(result))
     queue.submit(SpeechJob("c", "good", "hello *" + "x" * 600 + "*", member))
     await queue.run_one()
-    assert calls == [{"text": "hello", "voice_id": "generic:Jordan"}]
+    assert calls == [{"parts": [{"text": "hello", "style": "normal"}], "voice_id": "generic:Jordan"}]
     queue.submit(SpeechJob("c", "bad", "private " * 100, member))
     with pytest.raises(ChatterboxError, match="500 characters"):
         await queue.run_one()
