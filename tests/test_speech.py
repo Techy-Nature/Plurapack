@@ -374,17 +374,29 @@ async def test_backend_rejects_settings_non_audio_and_oversized(voice_store, mon
         await backend.synthesize("private", member)
 
 
-@pytest.mark.parametrize("strikethrough, crossed_out", [
-    ("omit", []),
-    ("normal", [{"text": "no", "style": "normal"}]),
-    ("mumble", [{"text": "no", "style": "mumble"}]),
-    ("whisper", [{"text": "no", "style": "whisper"}]),
+SPOKEN = "hello *waves* **there** ~~no~~"
+FORMATTED_START = [{"text": "hello", "style": "normal"}, {"text": "there", "style": "emphasis"}]
+
+
+@pytest.mark.parametrize("formatting, strikethrough, payload", [
+    # Off is the default for new members: the whole message is spoken as
+    # written, *actions* and all, through the plain-text path.
+    (False, "normal", {"text": SPOKEN}),
+    # On: *actions* are skipped, **bold** is emphasised, and ~~crossed-out~~
+    # text follows the member's p;voiceformat choice.
+    (True, "omit", {"parts": FORMATTED_START}),
+    (True, "normal", {"parts": [*FORMATTED_START, {"text": "no", "style": "normal"}]}),
+    (True, "mumble", {"parts": [*FORMATTED_START, {"text": "no", "style": "mumble"}]}),
+    (True, "whisper", {"parts": [*FORMATTED_START, {"text": "no", "style": "whisper"}]}),
 ])
-async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, monkeypatch,
-                                                                 strikethrough, crossed_out):
+async def test_modal_speech_follows_voiceformat_and_returns_one_wav(voice_store, monkeypatch,
+                                                                    formatting, strikethrough,
+                                                                    payload):
     from tests.test_custom_voices import wav_bytes
     member = voice_store.configure_voice("owner", "Alex", "Jordan.wav", {}, "send", "generic")
-    member = voice_store.configure_speech_formatting("owner", member.id, True, strikethrough)
+    if formatting:
+        member = voice_store.configure_speech_formatting("owner", member.id, True, strikethrough)
+    assert member.speech_formatting is formatting or bool(member.speech_formatting) == formatting
     backend = ChatterboxBackend("https://modal.example/invoke")
     calls, delivered = [], []
     audio = wav_bytes()
@@ -395,14 +407,9 @@ async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, mon
 
     monkeypatch.setattr(backend, "_raw_request", request)
     queue = SpeechQueue(backend, lambda job, result: delivered.append(result))
-    queue.submit(SpeechJob("c", "p", "hello *waves* **there** ~~no~~", member))
+    queue.submit(SpeechJob("c", "p", SPOKEN, member))
     await queue.run_one()
-    # Semantic formatting sends styled parts (v05): *actions* are omitted,
-    # **bold** is emphasised, ~~crossed-out~~ text follows the member's
-    # p;voiceformat choice, and Modal returns them joined as one WAV.
-    assert calls == [{"parts": [{"text": "hello", "style": "normal"},
-                                {"text": "there", "style": "emphasis"}, *crossed_out],
-                      "voice_id": "generic:Jordan"}]
+    assert calls == [{**payload, "voice_id": "generic:Jordan"}]
     assert delivered == [audio]
 
 
