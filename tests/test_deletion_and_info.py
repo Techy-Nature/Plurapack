@@ -360,7 +360,7 @@ async def test_viewgroup_reports_unknown_groups_and_ignores_non_groups(tmp_path)
     assert [reply[0][0] for reply in replies] == ["Group not found. Use an exact group name, alias, or ID."] * 2
 
 
-async def test_viewgroup_pages_by_total_text_so_stoat_accepts_each_message(tmp_path):
+async def test_viewgroup_pages_by_total_text_so_stoat_accepts_each_message(tmp_path, monkeypatch):
     database = tmp_path / "viewgroup-size.sqlite3"
     store = Store(database)
     store.create_system("owner", "Crew")
@@ -375,7 +375,8 @@ async def test_viewgroup_pages_by_total_text_so_stoat_accepts_each_message(tmp_p
 
     ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
     bot = create_bot("p;", str(database))
-    bot.state.http.add_reaction_to_message = lambda *a, **k: _noop()
+    # stoat.py's HTTPClient attributes are read-only, so stub the method on its class.
+    monkeypatch.setattr(type(bot.state.http), "add_reaction_to_message", lambda *a, **k: _noop())
     await bot.get_command("viewgroup").callback(ctx, selector="big")
 
     assert len(replies) == 1  # the first page is what is sent immediately
@@ -462,7 +463,7 @@ async def test_info_without_a_banner_sends_only_the_card(tmp_path):
     assert len(sent) == 1
 
 
-async def test_info_on_a_large_group_and_system_stays_within_stoat_limits(tmp_path):
+async def test_info_on_a_large_group_and_system_stays_within_stoat_limits(tmp_path, monkeypatch):
     database = tmp_path / "info-large.sqlite3"
     store = Store(database)
     system_id = store.create_system("owner", "Crew")
@@ -478,7 +479,8 @@ async def test_info_on_a_large_group_and_system_stays_within_stoat_limits(tmp_pa
 
     ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
     bot = create_bot("p;", str(database))
-    bot.state.http.add_reaction_to_message = lambda *a, **k: _noop()
+    # stoat.py's HTTPClient attributes are read-only, so stub the method on its class.
+    monkeypatch.setattr(type(bot.state.http), "add_reaction_to_message", lambda *a, **k: _noop())
     for selector in ("big", system_id):
         sent.clear()
         await bot.get_command("info").callback(ctx, selector=selector)

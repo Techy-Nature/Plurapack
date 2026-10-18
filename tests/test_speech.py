@@ -390,9 +390,12 @@ async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, mon
     queue = SpeechQueue(backend, lambda job, result: delivered.append(result))
     queue.submit(SpeechJob("c", "p", "hello *waves* **there** ~~no~~", member))
     await queue.run_one()
-    assert calls == [{"text": "hello there", "voice_id": "generic:Jordan"}]
+    # Semantic formatting sends styled parts (v05): action text is omitted,
+    # **bold** is emphasised, and Modal returns them joined as one WAV.
+    assert calls == [{"parts": [{"text": "hello", "style": "normal"},
+                                {"text": "there", "style": "emphasis"}],
+                      "voice_id": "generic:Jordan"}]
     assert delivered == [audio]
-    assert not hasattr(backend, "synthesize_styled")
 
 
 async def test_modal_text_limit_applies_after_omissions_and_never_logs_text(voice_store, monkeypatch, caplog):
@@ -406,7 +409,7 @@ async def test_modal_text_limit_applies_after_omissions_and_never_logs_text(voic
     queue = SpeechQueue(backend, lambda job, result: delivered.append(result))
     queue.submit(SpeechJob("c", "good", "hello *" + "x" * 600 + "*", member))
     await queue.run_one()
-    assert calls == [{"text": "hello", "voice_id": "generic:Jordan"}]
+    assert calls == [{"parts": [{"text": "hello", "style": "normal"}], "voice_id": "generic:Jordan"}]
     queue.submit(SpeechJob("c", "bad", "private " * 100, member))
     with pytest.raises(ChatterboxError, match="500 characters"):
         await queue.run_one()
