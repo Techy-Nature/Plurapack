@@ -396,7 +396,7 @@ async def test_modal_speech_follows_voiceformat_and_returns_one_wav(voice_store,
     member = voice_store.configure_voice("owner", "Alex", "Jordan.wav", {}, "send", "generic")
     if formatting:
         member = voice_store.configure_speech_formatting("owner", member.id, True, strikethrough)
-    assert member.speech_formatting is formatting or bool(member.speech_formatting) == formatting
+    assert bool(member.speech_formatting) is formatting
     backend = ChatterboxBackend("https://modal.example/invoke")
     calls, delivered = [], []
     audio = wav_bytes()
