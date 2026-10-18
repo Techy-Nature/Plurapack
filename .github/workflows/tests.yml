@@ -19,7 +19,19 @@ jobs:
       # .[dev] brings pytest, pytest-asyncio, httpx, stoat.py and fluxer.py,
       # plus the core dashboard dependencies (fastapi, uvicorn, Pillow, ...).
       - run: python -m pip install -e '.[dev]'
-      - run: python -m pytest -q
+      - name: Run pytest
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m pytest -q -rfE 2>&1 | tee pytest.log
+      # List each failing test on the PR page, not only in the raw log.
+      - name: Annotate failures
+        if: failure()
+        shell: bash
+        run: |
+          grep -E '^(FAILED|ERROR) ' pytest.log | cut -c1-400 | while IFS= read -r line; do
+            echo "::error title=pytest::$line"
+          done
 
   javascript:
     name: Dashboard JavaScript tests
