@@ -374,10 +374,17 @@ async def test_backend_rejects_settings_non_audio_and_oversized(voice_store, mon
         await backend.synthesize("private", member)
 
 
-async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, monkeypatch):
+@pytest.mark.parametrize("strikethrough, crossed_out", [
+    ("omit", []),
+    ("normal", [{"text": "no", "style": "normal"}]),
+    ("mumble", [{"text": "no", "style": "mumble"}]),
+    ("whisper", [{"text": "no", "style": "whisper"}]),
+])
+async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, monkeypatch,
+                                                                 strikethrough, crossed_out):
     from tests.test_custom_voices import wav_bytes
     member = voice_store.configure_voice("owner", "Alex", "Jordan.wav", {}, "send", "generic")
-    member = voice_store.configure_speech_formatting("owner", member.id, True, "omit")
+    member = voice_store.configure_speech_formatting("owner", member.id, True, strikethrough)
     backend = ChatterboxBackend("https://modal.example/invoke")
     calls, delivered = [], []
     audio = wav_bytes()
@@ -390,10 +397,11 @@ async def test_modal_formatting_joins_spoken_parts_into_one_wav(voice_store, mon
     queue = SpeechQueue(backend, lambda job, result: delivered.append(result))
     queue.submit(SpeechJob("c", "p", "hello *waves* **there** ~~no~~", member))
     await queue.run_one()
-    # Semantic formatting sends styled parts (v05): action text is omitted,
-    # **bold** is emphasised, and Modal returns them joined as one WAV.
+    # Semantic formatting sends styled parts (v05): *actions* are omitted,
+    # **bold** is emphasised, ~~crossed-out~~ text follows the member's
+    # p;voiceformat choice, and Modal returns them joined as one WAV.
     assert calls == [{"parts": [{"text": "hello", "style": "normal"},
-                                {"text": "there", "style": "emphasis"}],
+                                {"text": "there", "style": "emphasis"}, *crossed_out],
                       "voice_id": "generic:Jordan"}]
     assert delivered == [audio]
 
