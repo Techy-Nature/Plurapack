@@ -560,6 +560,9 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         shared ProxyService, so handling it here as well would edit twice.
         """
 
+    async def reproxy_command(ctx: Any, *, selector: str = "") -> None:
+        """Registered for help and command lookup only; on_message does the work."""
+
     _register_command(bot, "help", help_command)
     _register_command(bot, "login", login_command)
     _register_command(bot, "setup", setup_command)
@@ -573,7 +576,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         "pronouns": pronouns_command, "formpronouns": formpronouns_command,
         "systemtag": systemtag_command, "systemtagshow": systemtagshow_command,
         "front": front_command, "autoproxy": autoproxy_command, "autofront": autofront_command,
-        "color": color_command, "edit": edit_command, "link": link_command, "verify": verify_command,
+        "color": color_command, "edit": edit_command, "reproxy": reproxy_command, "link": link_command, "verify": verify_command,
         "import": import_command, "export": export_command, "viewinfo": viewinfo_command,
         "info": info_command, "viewgroup": viewgroup_command, "viewmembers": viewmembers_command, "viewmember": viewmember_command,
         "group": group_command, "deletemember": deletemember_command,

@@ -25,6 +25,7 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `autofront on\|off` | `af` | Opt in to making autoproxy follow the first/current fronter. |
 | `color MEMBER HEX` | `c` | Set a six-digit username color. |
 | `edit [-append\|-prepend] NEW_TEXT` | `e` | Edit the proxied message you reply to, or your latest one in this channel. `pk;edit` and `tul!edit` also work. See [Edit a proxy](../guides/proxying.md#edit-a-proxy). |
+| `reproxy MEMBER_OR_FORM` | `rp` | Repost the proxied message you reply to, or your latest one in this channel, as another member or form. `pk;reproxy` and `pk;rp` also work. See [Change who sent an existing message](../guides/proxying.md#change-who-sent-an-existing-message). |
 | `link` | `l` | Create a single-use account connection code. |
 | `verify CODE` | `v` | Connect an account using a code. |
 | `import FORMAT JSON` | `i` | Import PluralKit, Tupperbox, or Plurapack JSON. |

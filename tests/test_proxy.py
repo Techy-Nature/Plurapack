@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from plurapack.proxy import EditCommandError, EditRequest, Incoming, ProxyService
+from plurapack.proxy import EditCommandError, EditRequest, Incoming, ProxyService, ReproxyRequest
 from plurapack.storage import Store, short_hash
 
 
@@ -302,3 +302,81 @@ def test_non_edit_commands_and_text_are_not_edit_commands(store):
         assert service.parse_edit_command(content) is None
     assert service.parse_edit_command("  p; edit  -append  text ") == EditRequest("text", "append", True)
     assert service.parse_edit_command("tul!edit -nope") == EditRequest("-nope", "replace", False)
+
+
+@pytest.mark.parametrize("command", ["p;reproxy", "p;rp", "pk;reproxy", "PK;RP", "pk!reproxy", "tul!reproxy"])
+async def test_reproxy_command_replying_to_a_proxy_works_with_familiar_prefixes(store, command):
+    platform, service = await _proxied(store)
+    sam = store.add_member("owner", "Sam", "[sam]")
+    message = Incoming("cmd", "channel", "owner", f"{command} Sam", reply_to_id="proxy-1")
+    assert await service.handle(message) == "proxy-2"
+    assert platform.reproxied == [("proxy-1", sam.id)]
+    assert platform.deleted_proxies == [("channel", "proxy-1")]
+    assert platform.deleted == ["source-1", "cmd"]
+    assert store.proxy_owned_by("proxy-2", "owner")
+    # It must never be re-sent as a brand new proxy.
+    assert len(platform.sent) == 1
+
+
+@pytest.mark.parametrize("selector", ["sam", "[sam]", "SAM"])
+async def test_reproxy_command_without_reply_uses_latest_proxy_and_any_selector(store, selector):
+    platform, service = await _proxied(store)
+    sam = store.add_member("owner", "Sam", "[sam]")
+    assert await service.handle(Incoming("cmd", "channel", "owner", f"p;reproxy {selector}")) == "proxy-2"
+    assert platform.reproxied == [("proxy-1", sam.id)]
+
+
+async def test_reproxy_command_accepts_member_ids(store):
+    platform, service = await _proxied(store)
+    sam = store.add_member("owner", "Sam", "[sam]")
+    assert await service.handle(Incoming("cmd", "channel", "owner", f"p;rp {sam.id}")) == "proxy-2"
+    assert platform.reproxied == [("proxy-1", sam.id)]
+
+
+async def test_reproxy_command_accepts_form_ids(store):
+    platform, service = await _proxied(store)
+    alex = store.member_named("owner", "Alex")
+    form = store.create_form("owner", alex.id, "Alex at Sea", prefix="sea:")
+    assert await service.handle(Incoming("cmd", "channel", "owner", f"p;reproxy {form.id}",
+                                         reply_to_id="proxy-1")) == "proxy-2"
+    assert platform.reproxied == [("proxy-1", alex.id)]
+
+
+async def test_reproxy_command_explains_mistakes_with_our_prefix(store):
+    platform, service = await _proxied(store)
+    with pytest.raises(EditCommandError, match="Add who should send it"):
+        await service.handle(Incoming("a", "channel", "owner", "p;reproxy", reply_to_id="proxy-1"))
+    with pytest.raises(EditCommandError, match="No member or form called “Nobody”"):
+        await service.handle(Incoming("b", "channel", "owner", "p;reproxy Nobody", reply_to_id="proxy-1"))
+    with pytest.raises(EditCommandError, match="isn't one of your"):
+        await service.handle(Incoming("c", "channel", "stranger", "p;rp Alex", reply_to_id="proxy-1"))
+    with pytest.raises(EditCommandError, match="no recent proxied message"):
+        await service.handle(Incoming("d", "elsewhere", "owner", "p;reproxy Alex"))
+    assert platform.reproxied == []
+
+
+async def test_borrowed_reproxy_prefixes_stay_quiet_for_other_bots(store):
+    platform, service = await _proxied(store)
+    assert await service.handle(Incoming("a", "channel", "owner", "pk;reproxy Alex",
+                                         reply_to_id="pk-message")) is None
+    assert await service.handle(Incoming("b", "elsewhere", "owner", "pk;rp Alex")) is None
+    assert await service.handle(Incoming("c", "channel", "owner", "pk;rp SomeoneOnlyPKKnows",
+                                         reply_to_id="proxy-1")) is None
+    assert platform.reproxied == [] and platform.deleted == ["source-1"]
+
+
+async def test_reproxy_command_is_not_autoproxied(store):
+    platform, service = await _proxied(store)
+    store.add_member("owner", "Sam", "[sam]")
+    store.configure_autoproxy("owner", "alex")
+    await service.handle(Incoming("cmd", "channel", "owner", "pk;rp Sam"))
+    assert len(platform.reproxied) == 1
+    assert len(platform.sent) == 1
+
+
+def test_non_reproxy_commands_and_text_are_not_reproxy_commands(store):
+    service = ProxyService(store, FakePlatform())
+    for content in ["p;reproxying", "p;help reproxy", "reproxy Sam", "[alex] p;rp Sam", "p;edit Sam"]:
+        assert service.parse_reproxy_command(content) is None
+    assert service.parse_reproxy_command("  p; rp   Alex at Sea ") == ReproxyRequest("Alex at Sea", True)
+    assert service.parse_reproxy_command("pk;reproxy Sam") == ReproxyRequest("Sam", False)
