@@ -83,7 +83,35 @@ React to the proxied message with ❌ or 🗑️. An authorized owner of that sy
 
 ## Change who sent an existing message
 
-Reply to an existing proxy with only a member's full name, stable member ID, alias, proxy prefix, or form ID. Plurapack reposts the existing content with the selected presentation and removes the old proxy and selector reply after the replacement succeeds.
+Proxied as the wrong member? There are three ways to switch it.
+
+### Reply with the reproxy command
+
+1. Reply to one of your system's proxied messages.
+2. Type `p;reproxy` (or the shortcut `p;rp`) followed by who should have sent it.
+
+```text
+p;reproxy Sam
+```
+
+### Re-proxy your latest message
+
+Send `p;reproxy MEMBER` without replying. Plurapack reposts the newest message
+you proxied in that channel.
+
+### Reply with just the name
+
+Reply to an existing proxy with only a member's full name, stable member ID,
+alias, proxy prefix, or form ID.
+
+Every method accepts a member's full name, stable member ID, alias, proxy
+prefix, or form ID. Plurapack reposts the existing content with the selected
+presentation and removes the old proxy and your command after the replacement
+succeeds. If a member has speech turned on, the message is spoken again in the
+new member's voice.
+
+`pk;reproxy`, `pk;rp`, and `pk!reproxy` work as well. As with editing, those
+borrowed spellings stay quiet for messages another bot proxied.
 
 ## Failure behavior
 

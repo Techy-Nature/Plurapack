@@ -106,6 +106,11 @@ COMMAND_HELP = {
         "Edit the proxied message you reply to, or your latest one in this channel. "
         "pk;edit and tul!edit work too.",
     ),
+    "reproxy": (
+        "rp", "MEMBER_OR_FORM",
+        "Repost the proxied message you reply to, or your latest one in this channel, "
+        "as another member or form. pk;reproxy works too.",
+    ),
     "color": ("c", "MEMBER HEX", "Set a member username color."),
     "link": ("l", "", "Create a single-use account link code."),
     "verify": ("v", "CODE", "Connect an account with a link code."),
@@ -1450,6 +1455,14 @@ def create_bot(prefix: str, database: str) -> Any:
         The work happens in ``proxy_listener`` through the shared ProxyService,
         which is the one place that sees ``p;edit``, ``pk;edit`` and
         ``tul!edit`` alike (plus the reply). Doing it here too would edit twice.
+        """
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["reproxy"]])
+    async def reproxy(ctx: commands.Context, *, selector: str = "") -> None:
+        """Registered for help and lookup only; ``proxy_listener`` does the work.
+
+        Like ``edit``, every spelling (p;reproxy, p;rp, pk;reproxy) goes through
+        the shared ProxyService so it runs exactly once.
         """
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["systemtag"]])

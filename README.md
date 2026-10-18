@@ -163,8 +163,8 @@ mismatched nested resources return `404`.
 - Text proxying through stoat.py masquerades. The replacement is posted and recorded before the source is deleted. Bot messages, commands, in-flight messages, and persisted duplicate source IDs are ignored.
 - Stoat group DMs support the normal prefix commands and masqueraded proxies, including member/form names and avatars. If the bot lacks permission to delete another user's message, the original tagged message remains visible beside the successful proxy.
 - Every proxy record retains platform message IDs, system/member IDs, channel and initiating owner, but **not message content**.
-- React to one of your proxies with ✏️ or 📝, then send its replacement text in the same channel, to edit it. React with ❌ or 🗑️ to delete it. Shared-system owners may manage one another's proxies.
-- Re-proxy an existing message by replying to it with only the new member's display name, stable five-character ID, or proxy prefix. The replacement is posted and recorded before the old proxy and selector reply are removed.
+- Edit a proxy with `p;edit NEW_TEXT` (reply to it, or send it alone to edit your latest proxy in the channel), or react with ✏️ or 📝 and then send its replacement text in the same channel. React with ❌ or 🗑️ to delete it. Shared-system owners may manage one another's proxies.
+- Re-proxy an existing message with `p;reproxy MEMBER` (reply to it, or send it alone to re-proxy your latest proxy in the channel), or by replying to it with only the new member's display name, stable five-character ID, or proxy prefix. `pk;reproxy` and `pk;rp` work too. The replacement is posted and recorded before the old proxy and selector reply are removed.
 - A bounded, cancellable, asynchronous speech queue and Chatterbox HTTP backend. Playback is Off by default. Edits and re-proxy operations invalidate stale audio and queue speech for the replacement text and selected member.
 
 No live Stoat messages or Chatterbox requests were sent while developing this release.
@@ -271,6 +271,8 @@ p;viewmembers                  # member cards only, two embeds per responsive pa
 p;deletemember abc12           # permanently remove member, forms, and records
 p;deletesystem                 # reply to its warning with the exact system ID
 
+p;edit fixed text              # edit the proxy you reply to, or your latest one
+p;reproxy Sam                  # repost the proxy you reply to, or your latest one, as Sam
 React ✏️ / 📝, then send text   # edit one of your system's proxies
 React ❌ / 🗑️                  # delete one of your system's proxies
 Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
@@ -280,7 +282,7 @@ Every command also has a one- or two-letter shortcut: `s` (setup), `m` (member),
 `i` (import), `x` (export), `l` (link), `c` (color), `v` (verify), `vo` (voice),
 `of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `mt` (memberproxy),
 `mc` (memberproxy-clear), `ft` (formproxy), `fc` (formproxy-clear), `fr` (front),
-`ap` (autoproxy), `af` (autofront), `vi` (viewinfo), `vg` (viewgroup), `ml`
+`ap` (autoproxy), `af` (autofront), `e` (edit), `rp` (reproxy), `vi` (viewinfo), `vg` (viewgroup), `ml`
 (viewmembers), `vm` (viewmember), `dm` (deletemember), and `ds` (deletesystem).
 
 View pagers use Unicode left/right arrows by default and accept configured Stoat

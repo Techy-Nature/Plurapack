@@ -10,10 +10,12 @@ from .speech import SpeechJob, SpeechQueue
 
 
 # People moving from other proxy bots keep typing their old prefix out of habit.
-# These are recognised for the edit command only, so ``pk;edit`` and
-# ``tul!edit`` behave like ``p;edit`` instead of being proxied as new messages.
+# These are recognised for the edit and reproxy commands only, so ``pk;edit``
+# and ``pk;reproxy`` behave like ``p;edit`` and ``p;reproxy`` instead of being
+# proxied as new messages.
 COMPATIBLE_EDIT_PREFIXES = ("pk;", "pk!", "tul!")
 EDIT_COMMAND_NAMES = frozenset({"edit", "e"})
+REPROXY_COMMAND_NAMES = frozenset({"reproxy", "rp"})
 _EDIT_MODES = {
     "-append": "append", "--append": "append", "-a": "append",
     "-prepend": "prepend", "--prepend": "prepend", "-p": "prepend",
@@ -31,6 +33,12 @@ class EditRequest:
     mode: str = "replace"  # replace, append, or prepend
     # False for borrowed prefixes (pk;, tul!). Those may be aimed at another
     # bot in the same server, so Plurapack stays quiet unless it owns the target.
+    native: bool = True
+
+
+@dataclass(frozen=True)
+class ReproxyRequest:
+    selector: str
     native: bool = True
 
 
@@ -114,12 +122,11 @@ class ProxyService:
             return True
         return False
 
-    def parse_edit_command(self, content: str) -> EditRequest | None:
-        """Recognise ``p;edit``/``p;e`` and the PluralKit/Tupperbox spellings.
+    def _split_command(self, content: str, names: frozenset[str]) -> tuple[str, bool] | None:
+        """Return ``(arguments, native)`` when *content* is one of *names*.
 
-        Returns ``None`` for anything that is not an edit command. Leading
-        ``-append``/``-prepend`` flags (PluralKit's names, plus ``-a``/``-p``)
-        are consumed; everything after them is kept exactly, newlines included.
+        Accepts our prefix and the PluralKit/Tupperbox spellings; ``native`` is
+        False for the borrowed ones.
         """
         stripped = content.lstrip()
         lowered = stripped.casefold()
@@ -131,15 +138,116 @@ class ProxyService:
         else:
             return None
         match = _COMMAND_WORD.match(remainder)
-        if match is None or match.group(1).casefold() not in EDIT_COMMAND_NAMES:
+        if match is None or match.group(1).casefold() not in names:
             return None
-        body, mode = match.group(2) or "", "replace"
+        return match.group(2) or "", native
+
+    def parse_edit_command(self, content: str) -> EditRequest | None:
+        """Recognise ``p;edit``/``p;e`` and the PluralKit/Tupperbox spellings.
+
+        Returns ``None`` for anything that is not an edit command. Leading
+        ``-append``/``-prepend`` flags (PluralKit's names, plus ``-a``/``-p``)
+        are consumed; everything after them is kept exactly, newlines included.
+        """
+        parsed = self._split_command(content, EDIT_COMMAND_NAMES)
+        if parsed is None:
+            return None
+        (body, native), mode = parsed, "replace"
         while True:
             flag = _COMMAND_WORD.match(body)
             if flag is None or flag.group(1).casefold() not in _EDIT_MODES:
                 break
             mode, body = _EDIT_MODES[flag.group(1).casefold()], flag.group(2) or ""
         return EditRequest(body.strip(), mode, native)
+
+    def parse_reproxy_command(self, content: str) -> ReproxyRequest | None:
+        """Recognise ``p;reproxy``/``p;rp`` and ``pk;reproxy``/``pk;rp``."""
+        parsed = self._split_command(content, REPROXY_COMMAND_NAMES)
+        if parsed is None:
+            return None
+        selector, native = parsed
+        return ReproxyRequest(selector.strip(), native)
+
+    def _command_target(self, message: Incoming, native: bool, usage: str,
+                        action: str) -> str | None:
+        """The replied-to proxy, or this account's latest one in the channel.
+
+        Returns ``None`` when a borrowed prefix was evidently meant for another
+        bot; raises ``EditCommandError`` with a friendly reason otherwise.
+        """
+        if message.reply_to_id:
+            target = message.reply_to_id
+            if not self.store.proxy_owned_by(target, message.author_id, message.channel_id):
+                if not native:
+                    return None
+                raise EditCommandError(
+                    f"That isn't one of your system's proxied messages, so it can't be {action}. "
+                    f"Reply to one of your proxied messages with {usage}, or send {usage} "
+                    f"without replying to use your latest one here."
+                )
+            return target
+        target = self.store.latest_proxy_for(message.author_id, message.channel_id)
+        if target is None:
+            if not native:
+                return None
+            raise EditCommandError(
+                f"There's no recent proxied message from you in this channel to change. "
+                f"Reply to the message you want to change with {usage}."
+            )
+        return target
+
+    async def reproxy_with_command(self, message: Incoming, request: ReproxyRequest) -> str | None:
+        """Repost the replied-to (or latest) proxy as another member or form."""
+        usage = f"`{self.command_prefix}reproxy MEMBER`"
+        target = self._command_target(message, request.native, usage, "re-proxied")
+        if target is None:
+            return None
+        if not request.selector:
+            raise EditCommandError(
+                f"Add who should send it after the command, for example {usage}. "
+                "A member name, ID, alias, proxy prefix, or form ID all work."
+            )
+        member = self.store.proxy_identity(message.author_id, request.selector)
+        if member is None:
+            if not request.native:
+                return None
+            raise EditCommandError(
+                f"No member or form called “{request.selector}” was found in your system. "
+                "Use a member name, ID, alias, proxy prefix, or form ID."
+            )
+        replacement_id = await self._reproxy(message, target, member)
+        if replacement_id is not None:
+            # A finished reproxy replaces any half-started ✏️ reaction edit here.
+            self._pending_edits.pop((message.author_id, message.channel_id), None)
+        return replacement_id
+
+    async def _reproxy(self, message: Incoming, old_proxy_id: str, member: Member) -> str | None:
+        """Post *old_proxy_id* again as *member*, then remove the old proxy and *message*."""
+        member = replace(member, name=self.store.proxy_name(
+            member, message.server_id, message.channel_id
+        ))
+        self._invalidate_speech(old_proxy_id)
+        text = self._proxy_text.get(old_proxy_id) if self.speech_queue else None
+        if self.speech_queue and text is None:
+            content_reader = getattr(self.platform, "proxy_content", None)
+            if content_reader:
+                try:
+                    text = await content_reader(message.channel_id, old_proxy_id)
+                except Exception as error:
+                    logging.getLogger(__name__).error(
+                        "Could not read proxy for speech (%s)", type(error).__name__
+                    )
+        replacement_id = await self.platform.send_reproxy(message, old_proxy_id, member)
+        if not self.store.replace_proxy(old_proxy_id, replacement_id, member, message.author_id):
+            await self.platform.delete_proxy(message.channel_id, replacement_id)
+            return None
+        self._delete_speech(old_proxy_id)
+        if text is not None:
+            self._queue_speech(message.channel_id, replacement_id, text, member,
+                               message.author_id)
+        await self.platform.delete_proxy(message.channel_id, old_proxy_id)
+        await self.platform.delete_source(message)
+        return replacement_id
 
     async def edit_with_command(self, message: Incoming, request: EditRequest) -> str | None:
         """Edit the replied-to proxy, or this account's latest proxy in the channel.
@@ -148,25 +256,9 @@ class ProxyService:
         evidently meant for another bot.
         """
         usage = f"`{self.command_prefix}edit new text`"
-        if message.reply_to_id:
-            target = message.reply_to_id
-            if not self.store.proxy_owned_by(target, message.author_id, message.channel_id):
-                if not request.native:
-                    return None
-                raise EditCommandError(
-                    "That isn't one of your system's proxied messages, so it can't be edited. "
-                    f"Reply to one of your proxied messages with {usage}, or send {usage} "
-                    "without replying to edit your latest one here."
-                )
-        else:
-            target = self.store.latest_proxy_for(message.author_id, message.channel_id)
-            if target is None:
-                if not request.native:
-                    return None
-                raise EditCommandError(
-                    "There's no recent proxied message from you in this channel to edit. "
-                    f"Reply to the message you want to change with {usage}."
-                )
+        target = self._command_target(message, request.native, usage, "edited")
+        if target is None:
+            return None
         if not request.text:
             raise EditCommandError(f"Add the new text after the command, for example {usage}.")
         new_text = request.text
@@ -194,6 +286,9 @@ class ProxyService:
         edit_request = self.parse_edit_command(message.content)
         if edit_request is not None:
             return await self.edit_with_command(message, edit_request)
+        reproxy_request = self.parse_reproxy_command(message.content)
+        if reproxy_request is not None:
+            return await self.reproxy_with_command(message, reproxy_request)
         if message.content.startswith(self.command_prefix):
             return None
         edit_key = (message.author_id, message.channel_id)
@@ -215,34 +310,9 @@ class ProxyService:
 
         if message.reply_to_id and self.store.proxy_owned_by(
                 message.reply_to_id, message.author_id, message.channel_id):
-            member = self.store.proxy_identity(message.author_id, message.content)
+            member = self.store.proxy_identity(message.author_id, message.content.strip())
             if member:
-                member = replace(member, name=self.store.proxy_name(
-                    member, message.server_id, message.channel_id
-                ))
-                old_proxy_id = message.reply_to_id
-                self._invalidate_speech(old_proxy_id)
-                text = self._proxy_text.get(old_proxy_id) if self.speech_queue else None
-                if self.speech_queue and text is None:
-                    content_reader = getattr(self.platform, "proxy_content", None)
-                    if content_reader:
-                        try:
-                            text = await content_reader(message.channel_id, old_proxy_id)
-                        except Exception as error:
-                            logging.getLogger(__name__).error(
-                                "Could not read proxy for speech (%s)", type(error).__name__
-                            )
-                replacement_id = await self.platform.send_reproxy(message, old_proxy_id, member)
-                if not self.store.replace_proxy(message.reply_to_id, replacement_id, member, message.author_id):
-                    await self.platform.delete_proxy(message.channel_id, replacement_id)
-                    return None
-                self._delete_speech(old_proxy_id)
-                if text is not None:
-                    self._queue_speech(message.channel_id, replacement_id, text, member,
-                                       message.author_id)
-                await self.platform.delete_proxy(message.channel_id, old_proxy_id)
-                await self.platform.delete_source(message)
-                return replacement_id
+                return await self._reproxy(message, message.reply_to_id, member)
         match = self.store.match_member(message.author_id, message.content)
         if match:
             member, body = match
