@@ -138,7 +138,7 @@ COMMAND_SHORTCUTS = {name: details[0] for name, details in COMMAND_HELP.items()}
 
 # Compatibility names people commonly try based on the nouns used by other
 # plural proxy bots and by Plurapack's own UI.
-COMMAND_ALIASES = {"front": ["fronter"], "info": ["view"]}
+COMMAND_ALIASES = {"front": ["fronter", "switch", "sw"], "info": ["view"]}
 
 PREVIOUS_EMOJI = "⬅️"
 NEXT_EMOJI = "➡️"

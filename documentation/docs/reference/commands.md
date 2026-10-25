@@ -20,7 +20,7 @@ Examples use the default `p;` prefix. Every command has a unique one- or two-let
 | `formpronouns FORM [PRONOUNS]` | `fp` | Override form pronouns, or restore inheritance by omitting the value. |
 | `systemtag [TAG]` | `st` | Set the tag shown after member and form names, or clear it. |
 | `systemtagshow SCOPE on\|off\|default` | `ts` | Set system visibility or a server/channel override. |
-| `front MEMBER_OR_FORM` | `fr` | Switch the current member and optional form. |
+| `front MEMBER_OR_FORM` | `fr`, `switch`, `sw` | Switch the current member and optional form. |
 | `autoproxy MEMBER_OR_OFF` | `ap` | Proxy untagged messages as a member; Off by default. |
 | `autofront on\|off` | `af` | Opt in to making autoproxy follow the first/current fronter. |
 | `color MEMBER HEX` | `c` | Set a six-digit username color. |
@@ -94,8 +94,8 @@ p;banner -g work https://example.test/group-banner.png
 
 `info` and `viewgroup` show a group's banner under its cards.
 
-`view` is accepted as a compatibility alias for `info`, and `fronter` is
-accepted as a compatibility alias for `front`. Missing command arguments are
+`view` is accepted as a compatibility alias for `info`, and `fronter`,
+`switch`, and `sw` are accepted as aliases for `front`. Missing command arguments are
 reported in chat with the missing argument and a pointer to the command's help
 instead of only producing an operator-side traceback.
 
