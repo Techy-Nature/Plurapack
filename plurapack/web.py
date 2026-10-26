@@ -31,6 +31,7 @@ from .voice_service import VoiceService, selected_voice_type, voice_json
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .browser_audio import BrowserAudioStore
 from .config import resolve_database_path, resolve_voice_max_reference_seconds
+from .public_api import API_PREFIX, CORS_HEADERS, add_cors, api_rate_limiter, create_public_api
 from .transfer import MAX_FILE_SIZE, TransferError, export_system, import_system
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -142,6 +143,16 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
     app.state.login_start_limiter = LoginStartLimiter(
         int(os.getenv("PLURAPACK_LOGIN_START_LIMIT", "10"))
     )
+    app.state.api_rate_limiter = api_rate_limiter()
+
+    @app.middleware("http")
+    async def public_api_cors(request: Request, call_next: Callable[..., Any]) -> Response:
+        """Let pages on any origin read the token-authenticated v1 API, and only that API."""
+        if not request.url.path.startswith(API_PREFIX):
+            return await call_next(request)
+        if request.method == "OPTIONS":
+            return Response(status_code=204, headers=CORS_HEADERS)
+        return add_cors(await call_next(request))
 
     @app.middleware("http")
     async def prevent_api_caching(request: Request, call_next: Callable[..., Any]) -> Response:
@@ -210,6 +221,8 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         if service is None:
             raise HTTPException(503, "Custom voice storage is not configured")
         return service
+
+    app.include_router(create_public_api())
 
     @app.get("/api/health")
     async def health() -> dict[str, str]:

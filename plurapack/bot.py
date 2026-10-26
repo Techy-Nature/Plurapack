@@ -26,6 +26,7 @@ from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .browser_audio import BrowserAudioStore
 from .storage import Group, Member, Store, System
+from .api_commands import privacy_reply, token_reply
 from .login import LoginError, LoginService
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
 from .config import (StorageConfigurationError, resolve_database_path,
@@ -114,6 +115,10 @@ COMMAND_HELP = {
     "color": ("c", "MEMBER HEX", "Set a member username color."),
     "link": ("l", "", "Create a single-use account link code."),
     "verify": ("v", "CODE", "Connect an account with a link code."),
+    "privacy": ("pv", "[system|front public|private] | member MEMBER public|private|hide|show FIELD... | group GROUP public|private",
+                "Choose what the public API shows. Everything starts private."),
+    "token": ("tk", "create [read:public|read:private] [NAME] | list | revoke TOKEN_ID|all",
+              "Manage API tokens for outside dashboards and viewers. Create them in a DM."),
     "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
     "export": ("x", "[FORMAT] [--forms-loss|--forms-members]", "Export portable system metadata."),
     "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]", "Show system or member information."),
@@ -652,6 +657,20 @@ def _is_group_channel(channel: Any, sdk: Any) -> bool:
     """Return whether *channel* is the SDK's explicit group-DM model."""
     group_channel = getattr(sdk, "GroupChannel", None)
     return group_channel is not None and isinstance(channel, group_channel)
+
+
+async def _is_private_stoat_channel(ctx: Any, sdk: Any) -> bool:
+    """Return whether a command came from a one-to-one DM, failing closed when unsure."""
+    private_types = tuple(kind for kind in (getattr(sdk, "DMChannel", None),
+                                            getattr(sdk, "SavedMessagesChannel", None)) if kind)
+    channel = getattr(ctx, "channel", None)
+    base_channel = getattr(sdk, "BaseChannel", None)
+    if channel is not None and base_channel is not None and not isinstance(channel, base_channel):
+        try:
+            channel = await ctx.bot.fetch_channel(channel.id)
+        except Exception:
+            return False
+    return bool(private_types) and isinstance(channel, private_types)
 
 
 def _incoming_from_stoat_message(message: Any, author: Any) -> Incoming:
@@ -1206,6 +1225,17 @@ def create_bot(prefix: str, database: str) -> Any:
             await ctx.send(str(error))
             return
         await ctx.send(f"Account connected to system `{system_id}`.")
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["privacy"]])
+    async def privacy(ctx: commands.Context, target: str = "", *, arguments: str = "") -> None:
+        """Show or change what the public API may reveal."""
+        await ctx.send(privacy_reply(store, ctx.author.id, target, arguments, prefix))
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["token"]])
+    async def token(ctx: commands.Context, action: str = "", *, arguments: str = "") -> None:
+        """Create, list, or revoke API tokens; secrets are only issued in DMs."""
+        private_channel = action.casefold() == "create" and await _is_private_stoat_channel(ctx, stoat)
+        await ctx.send(token_reply(store, ctx.author.id, action, arguments, prefix, private_channel))
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["voice"]])
     async def voice(ctx: commands.Context, *, arguments: str = "") -> None:

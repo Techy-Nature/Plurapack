@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import secrets
 import sqlite3
@@ -14,6 +15,10 @@ from .voice import normalize_voice_settings
 
 
 MAX_PROXY_TAGS = 100
+MAX_API_TOKENS = 25
+API_TOKEN_SCOPES = ("read:public", "read:private")
+# Member fields that can be hidden from the public API while the member stays visible.
+PRIVACY_FIELDS = ("description", "pronouns", "avatar", "banner", "color", "forms")
 
 
 def short_hash(length: int) -> str:
@@ -127,6 +132,31 @@ class Voice:
     created_at: int
     updated_at: int
     created_by: str
+
+
+@dataclass(frozen=True)
+class SystemPrivacy:
+    """What the public API may show for a whole system; everything starts private."""
+    system_public: bool = False
+    front_public: bool = False
+
+
+@dataclass(frozen=True)
+class MemberPrivacy:
+    public: bool = False
+    hidden_fields: frozenset[str] = frozenset()
+
+
+@dataclass(frozen=True)
+class ApiToken:
+    """A hashed, system-scoped credential for outside tools; the secret is never stored."""
+    id: str
+    system_id: str
+    name: str
+    scope: str
+    created_by: str
+    created_at: int
+    last_used_at: int | None
 
 
 class Store:
@@ -266,6 +296,28 @@ class Store:
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS one_default_voice_per_member
                     ON voices(member_id) WHERE is_default=1;
+                -- Public API visibility. A missing row means private.
+                CREATE TABLE IF NOT EXISTS system_privacy (
+                    system_id TEXT PRIMARY KEY REFERENCES systems(id) ON DELETE CASCADE,
+                    system_public INTEGER NOT NULL DEFAULT 0 CHECK(system_public IN (0,1)),
+                    front_public INTEGER NOT NULL DEFAULT 0 CHECK(front_public IN (0,1))
+                );
+                CREATE TABLE IF NOT EXISTS member_privacy (
+                    member_id TEXT PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
+                    public INTEGER NOT NULL DEFAULT 0 CHECK(public IN (0,1)),
+                    hidden_fields TEXT NOT NULL DEFAULT '[]'
+                );
+                CREATE TABLE IF NOT EXISTS group_privacy (
+                    group_id TEXT PRIMARY KEY REFERENCES groups(id) ON DELETE CASCADE,
+                    public INTEGER NOT NULL DEFAULT 0 CHECK(public IN (0,1))
+                );
+                CREATE TABLE IF NOT EXISTS api_tokens (
+                    id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    scope TEXT NOT NULL CHECK(scope IN ('read:public','read:private')),
+                    created_by TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER
+                );
             """)
             columns = {row[1] for row in db.execute("PRAGMA table_info(members)")}
             if "color" not in columns:
@@ -612,6 +664,7 @@ class Store:
             db.execute("DELETE FROM current_fronts WHERE system_id=?", (system_id,))
             db.execute("DELETE FROM autoproxy_settings WHERE system_id=?", (system_id,))
             db.execute("DELETE FROM links WHERE system_id=?", (system_id,))
+            db.execute("DELETE FROM api_tokens WHERE system_id=?", (system_id,))
             db.execute("DELETE FROM members WHERE system_id=?", (system_id,))
             db.execute("DELETE FROM owners WHERE system_id=?", (system_id,))
             db.execute("DELETE FROM systems WHERE id=?", (system_id,))
@@ -1608,3 +1661,166 @@ class Store:
                        (voice.id, voice.member_id, voice.name, voice.storage_id,
                         voice.storage_provider, int(voice.is_default), voice.created_at,
                         voice.updated_at, voice.created_by))
+
+    def _owned_system_id(self, account_id: str) -> str:
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        return system_id
+
+    def system_privacy(self, system_id: str) -> SystemPrivacy:
+        with self.connect() as db:
+            row = db.execute("SELECT system_public,front_public FROM system_privacy WHERE system_id=?",
+                             (system_id,)).fetchone()
+        return SystemPrivacy(bool(row[0]), bool(row[1])) if row else SystemPrivacy()
+
+    def configure_system_privacy(self, account_id: str, target: str, public: bool) -> SystemPrivacy:
+        """Make the system card or its current front public or private in the API."""
+        system_id = self._owned_system_id(account_id)
+        column = {"system": "system_public", "front": "front_public"}.get(target)
+        if column is None:
+            raise ValueError("System privacy target must be system or front.")
+        with self.connect() as db:
+            db.execute(f"""INSERT INTO system_privacy(system_id,{column}) VALUES (?,?)
+                ON CONFLICT(system_id) DO UPDATE SET {column}=excluded.{column}""",
+                       (system_id, int(public)))
+        return self.system_privacy(system_id)
+
+    @staticmethod
+    def _member_privacy(row: sqlite3.Row | None) -> MemberPrivacy:
+        if row is None:
+            return MemberPrivacy()
+        return MemberPrivacy(bool(row["public"]), frozenset(json.loads(row["hidden_fields"])))
+
+    def member_privacy(self, member_id: str) -> MemberPrivacy:
+        with self.connect() as db:
+            row = db.execute("SELECT public,hidden_fields FROM member_privacy WHERE member_id=?",
+                             (member_id,)).fetchone()
+        return self._member_privacy(row)
+
+    def member_privacy_for_system(self, system_id: str) -> dict[str, MemberPrivacy]:
+        """Return every member's privacy, including the private default for unset members."""
+        with self.connect() as db:
+            rows = db.execute("""SELECT m.id, p.public, p.hidden_fields FROM members m
+                LEFT JOIN member_privacy p ON p.member_id=m.id WHERE m.system_id=?""",
+                              (system_id,)).fetchall()
+        return {row["id"]: (self._member_privacy(row) if row["public"] is not None else MemberPrivacy())
+                for row in rows}
+
+    def configure_member_privacy(self, account_id: str, selector: str, public: bool | None = None,
+                                 hide: Iterable[str] = (), show: Iterable[str] = ()
+                                 ) -> tuple[Member, MemberPrivacy]:
+        """Change one owned member's API visibility and hidden fields."""
+        member = self.member_selected(account_id, selector)
+        if member is None:
+            raise PermissionError("Member not found or not owned by this account.")
+        hide, show = {field.casefold() for field in hide}, {field.casefold() for field in show}
+        unknown = (hide | show) - set(PRIVACY_FIELDS)
+        if unknown:
+            raise ValueError(f"Unknown privacy field: {', '.join(sorted(unknown))}. "
+                             f"Fields are {', '.join(PRIVACY_FIELDS)}.")
+        current = self.member_privacy(member.id)
+        hidden = (set(current.hidden_fields) | hide) - show
+        visible = current.public if public is None else public
+        with self.connect() as db:
+            db.execute("""INSERT INTO member_privacy(member_id,public,hidden_fields) VALUES (?,?,?)
+                ON CONFLICT(member_id) DO UPDATE SET public=excluded.public,
+                hidden_fields=excluded.hidden_fields""",
+                       (member.id, int(visible), json.dumps(sorted(hidden))))
+        return member, self.member_privacy(member.id)
+
+    def public_group_ids(self, system_id: str) -> set[str]:
+        with self.connect() as db:
+            rows = db.execute("""SELECT g.id FROM groups g JOIN group_privacy p ON p.group_id=g.id
+                WHERE g.system_id=? AND p.public=1""", (system_id,)).fetchall()
+        return {row[0] for row in rows}
+
+    def configure_group_privacy(self, account_id: str, selector: str, public: bool) -> Group:
+        group = self.group_selected(account_id, selector)
+        if group is None:
+            raise PermissionError("Group not found or not owned by this account.")
+        with self.connect() as db:
+            db.execute("""INSERT INTO group_privacy(group_id,public) VALUES (?,?)
+                ON CONFLICT(group_id) DO UPDATE SET public=excluded.public""",
+                       (group.id, int(public)))
+        return group
+
+    def system_front(self, system_id: str) -> Front | None:
+        """Return a system's current front by system ID rather than by owner account."""
+        with self.connect() as db:
+            row = db.execute("SELECT member_id,form_id FROM current_fronts WHERE system_id=?",
+                             (system_id,)).fetchone()
+        if not row:
+            return None
+        member = self.public_member_by_id(str(row["member_id"]))
+        if member is None or member.system_id != system_id:
+            return None
+        selected = self.public_form_by_id(str(row["form_id"])) if row["form_id"] else None
+        return Front(member, selected[0] if selected else None)
+
+    @staticmethod
+    def _api_token(row: sqlite3.Row) -> ApiToken:
+        return ApiToken(row["id"], row["system_id"], row["name"], row["scope"],
+                        row["created_by"], row["created_at"], row["last_used_at"])
+
+    def create_api_token(self, account_id: str, scope: str = "read:public",
+                         name: str = "") -> tuple[ApiToken, str]:
+        """Create a token and return it with its secret, which is only available now."""
+        system_id = self._owned_system_id(account_id)
+        scope = scope.strip().casefold()
+        if scope not in API_TOKEN_SCOPES:
+            raise ValueError(f"Token scope must be {' or '.join(API_TOKEN_SCOPES)}.")
+        name = " ".join(name.split()) or "API token"
+        if len(name) > 80:
+            raise ValueError("Token name must be 80 characters or fewer.")
+        with self.connect() as db:
+            count = db.execute("SELECT COUNT(*) FROM api_tokens WHERE system_id=?",
+                               (system_id,)).fetchone()[0]
+            if count >= MAX_API_TOKENS:
+                raise ValueError(f"A system can have at most {MAX_API_TOKENS} API tokens; revoke one first.")
+            while True:
+                token_id = short_hash(8)
+                secret = f"ppk_{token_id}_{secrets.token_urlsafe(32)}"
+                try:
+                    db.execute("INSERT INTO api_tokens VALUES (?,?,?,?,?,?,?,NULL)",
+                               (token_id, hashlib.sha256(secret.encode()).hexdigest(), system_id,
+                                name, scope, account_id, int(time.time())))
+                    break
+                except sqlite3.IntegrityError:
+                    continue
+            row = db.execute("SELECT * FROM api_tokens WHERE id=?", (token_id,)).fetchone()
+        return self._api_token(row), secret
+
+    def api_tokens(self, account_id: str) -> list[ApiToken]:
+        system_id = self._owned_system_id(account_id)
+        with self.connect() as db:
+            rows = db.execute("SELECT * FROM api_tokens WHERE system_id=? ORDER BY created_at,id",
+                              (system_id,)).fetchall()
+        return [self._api_token(row) for row in rows]
+
+    def revoke_api_token(self, account_id: str, token_id: str) -> int:
+        """Delete one of the system's tokens, or every token with `all`; returns the count."""
+        system_id = self._owned_system_id(account_id)
+        token_id = token_id.strip()
+        with self.connect() as db:
+            if token_id.casefold() == "all":
+                deleted = db.execute("DELETE FROM api_tokens WHERE system_id=?", (system_id,)).rowcount
+            else:
+                deleted = db.execute("DELETE FROM api_tokens WHERE system_id=? AND id=?",
+                                     (system_id, token_id)).rowcount
+        if not deleted and token_id.casefold() != "all":
+            raise ValueError("No API token with that ID belongs to your system.")
+        return deleted
+
+    def resolve_api_token(self, secret: str) -> ApiToken | None:
+        """Look up a presented token by hash, recording use at most once a minute."""
+        digest = hashlib.sha256(secret.strip().encode()).hexdigest()
+        now = int(time.time())
+        with self.connect() as db:
+            row = db.execute("SELECT * FROM api_tokens WHERE token_hash=?", (digest,)).fetchone()
+            if row is None:
+                return None
+            if row["last_used_at"] is None or row["last_used_at"] < now - 60:
+                db.execute("UPDATE api_tokens SET last_used_at=? WHERE id=?", (now, row["id"]))
+                row = db.execute("SELECT * FROM api_tokens WHERE id=?", (row["id"],)).fetchone()
+        return self._api_token(row)
