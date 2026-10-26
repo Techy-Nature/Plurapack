@@ -16,7 +16,7 @@ from .voice import normalize_voice_settings
 
 MAX_PROXY_TAGS = 100
 MAX_API_TOKENS = 25
-API_TOKEN_SCOPES = ("read:public", "read:private")
+API_TOKEN_SCOPES = ("read:public", "read:private", "write")
 # Member fields that can be hidden from the public API while the member stays visible.
 PRIVACY_FIELDS = ("description", "pronouns", "avatar", "banner", "color", "forms")
 
@@ -315,7 +315,7 @@ class Store:
                     id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
                     system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
                     name TEXT NOT NULL,
-                    scope TEXT NOT NULL CHECK(scope IN ('read:public','read:private')),
+                    scope TEXT NOT NULL CHECK(scope IN ('read:public','read:private','write')),
                     created_by TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER
                 );
             """)
@@ -399,6 +399,21 @@ class Store:
             group_columns = {row[1] for row in db.execute("PRAGMA table_info(groups)")}
             if "banner" not in group_columns:
                 db.execute("ALTER TABLE groups ADD COLUMN banner TEXT")
+            tokens_sql = db.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='api_tokens'"
+            ).fetchone()[0]
+            if "'write'" not in tokens_sql:
+                # The first API release only allowed read scopes in its CHECK constraint.
+                db.execute("ALTER TABLE api_tokens RENAME TO api_tokens_read_only")
+                db.execute("""CREATE TABLE api_tokens (
+                    id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    scope TEXT NOT NULL CHECK(scope IN ('read:public','read:private','write')),
+                    created_by TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER
+                )""")
+                db.execute("INSERT INTO api_tokens SELECT * FROM api_tokens_read_only")
+                db.execute("DROP TABLE api_tokens_read_only")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS member_system_alias ON members(system_id, alias) WHERE alias IS NOT NULL")
             # Seed the normalized table when opening an older database. The
             # legacy columns remain as the primary tag for API compatibility.
@@ -1769,7 +1784,7 @@ class Store:
         system_id = self._owned_system_id(account_id)
         scope = scope.strip().casefold()
         if scope not in API_TOKEN_SCOPES:
-            raise ValueError(f"Token scope must be {' or '.join(API_TOKEN_SCOPES)}.")
+            raise ValueError(f"Token scope must be {', '.join(API_TOKEN_SCOPES[:-1])} or {API_TOKEN_SCOPES[-1]}.")
         name = " ".join(name.split()) or "API token"
         if len(name) > 80:
             raise ValueError("Token name must be 80 characters or fewer.")

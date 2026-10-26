@@ -699,6 +699,11 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         async def login_page() -> FileResponse:
             return FileResponse(static_root / "login.html", headers=dashboard_headers)
 
+        @app.get("/viewer", include_in_schema=False)
+        async def member_viewer() -> FileResponse:
+            # A public, dependency-free example client of the v1 API.
+            return FileResponse(static_root / "viewer.html", headers=dashboard_headers)
+
         @app.get("/", include_in_schema=False)
         async def index() -> HTMLResponse:
             return HTMLResponse(dashboard_index, headers=dashboard_headers)

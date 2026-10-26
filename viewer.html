@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Plurapack Member Viewer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #14121b; --panel: #1d1a28; --panel-2: #262236; --line: #322c47;
+      --text: #ece8f6; --muted: #a59fbb; --accent: #9d86e9; --danger: #f08a9b;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text);
+           font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    main { max-width: 960px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 20px; }
+    h1, h2, h3, p { margin: 0; }
+    button, input { font: inherit; color: inherit; }
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+    .lookup { display: flex; flex-wrap: wrap; gap: 8px; }
+    .lookup input { flex: 1 1 180px; min-width: 0; padding: 10px 12px; border-radius: 10px;
+                    background: var(--panel-2); border: 1px solid var(--line); }
+    .lookup input:focus, .search:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+    .primary { padding: 10px 16px; border: 0; border-radius: 10px; background: var(--accent);
+               color: #14121b; font-weight: 600; cursor: pointer; }
+    details.token { color: var(--muted); font-size: 14px; flex-basis: 100%; }
+    details.token summary { cursor: pointer; }
+    details.token p { margin: 6px 0; }
+    .banner { width: 100%; height: 140px; object-fit: cover; border-radius: 10px; margin-bottom: 12px; display: block; }
+    .system { display: flex; gap: 14px; align-items: center; }
+    .system img.logo { width: 72px; height: 72px; border-radius: 16px; object-fit: cover; background: var(--panel-2); flex: none; }
+    .tag { color: var(--muted); font-weight: 400; }
+    .muted { color: var(--muted); }
+    .fronters { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 8px; }
+    .chip { display: inline-flex; align-items: center; gap: 8px; padding: 4px 12px 4px 4px;
+            border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); }
+    .chip img, .chip .dot { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; background: var(--line); }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .search { flex: 1 1 200px; min-width: 0; padding: 10px 12px; border-radius: 10px;
+              background: var(--panel); border: 1px solid var(--line); }
+    .filter { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line);
+              background: var(--panel); cursor: pointer; }
+    .filter[aria-pressed="true"] { background: var(--accent); color: #14121b; border-color: var(--accent); }
+    .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
+    .member { background: var(--panel); border: 1px solid var(--line); border-left-width: 4px;
+              border-radius: 12px; padding: 14px; display: grid; gap: 8px; min-width: 0; }
+    .member header { display: flex; gap: 12px; align-items: center; min-width: 0; }
+    .member img.avatar, .member .placeholder { width: 52px; height: 52px; border-radius: 50%; object-fit: cover;
+                                               background: var(--panel-2); flex: none; }
+    .member .name { font-weight: 600; overflow-wrap: anywhere; }
+    .member .description { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); font-size: 15px; }
+    .forms { display: flex; flex-wrap: wrap; gap: 6px; }
+    .forms span { font-size: 13px; padding: 2px 8px; border-radius: 999px; background: var(--panel-2); color: var(--muted); }
+    .fronting { font-size: 12px; font-weight: 600; color: #14121b; background: var(--accent);
+                padding: 1px 8px; border-radius: 999px; margin-left: 6px; vertical-align: 2px; }
+    .error { color: var(--danger); }
+    [hidden] { display: none !important; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <form class="lookup" id="lookup">
+        <label for="system-id" class="muted" hidden>System ID</label>
+        <input id="system-id" name="system" placeholder="System ID, like abcde12345" autocomplete="off" spellcheck="false" required>
+        <button class="primary" type="submit">View</button>
+        <details class="token">
+          <summary>Viewing your own system? Add a token</summary>
+          <p>A <code>read:private</code> token shows private members too. It stays in this tab only, and is never put in the link.</p>
+          <input id="token" type="password" placeholder="ppk_…" autocomplete="off" spellcheck="false">
+        </details>
+      </form>
+      <p id="status" class="muted" role="status" style="margin-top:10px">Enter a system ID to see its public members.</p>
+    </section>
+
+    <section class="panel" id="system" hidden>
+      <img class="banner" id="system-banner" alt="" hidden>
+      <div class="system">
+        <img class="logo" id="system-logo" alt="" hidden>
+        <div>
+          <h1><span id="system-name"></span> <span class="tag" id="system-tag"></span></h1>
+          <p class="muted" id="system-count"></p>
+        </div>
+      </div>
+      <p id="system-description" style="margin-top:12px; white-space:pre-wrap"></p>
+      <div id="front-panel" hidden style="margin-top:14px">
+        <h2 class="muted" style="font-size:14px; font-weight:600">Fronting now</h2>
+        <div class="fronters" id="fronters"></div>
+      </div>
+    </section>
+
+    <section id="members-panel" hidden style="display:grid; gap:12px">
+      <div class="toolbar">
+        <input class="search" id="search" type="search" placeholder="Search members" aria-label="Search members">
+      </div>
+      <div class="toolbar" id="groups" aria-label="Filter by group"></div>
+      <div class="grid" id="members"></div>
+      <p class="muted" id="empty" hidden>No members match.</p>
+    </section>
+  </main>
+
+  <script>
+    "use strict";
+    const API = new URL("/api/v1", window.location.href).href;
+    const state = { members: [], groups: [], frontIds: new Set(), group: null, query: "" };
+    const $ = (id) => document.getElementById(id);
+
+    function storage(action, value) {
+      try {
+        if (action === "get") return sessionStorage.getItem("plurapack-viewer-token") || "";
+        if (value) sessionStorage.setItem("plurapack-viewer-token", value);
+        else sessionStorage.removeItem("plurapack-viewer-token");
+      } catch (error) { /* Private windows may block storage; the viewer still works. */ }
+      return "";
+    }
+
+    function safeUrl(value) {
+      try {
+        const url = new URL(value);
+        return url.protocol === "https:" || url.protocol === "http:" ? url.href : null;
+      } catch (error) { return null; }
+    }
+
+    function setImage(element, value) {
+      const url = value && safeUrl(value);
+      element.hidden = !url;
+      if (url) element.src = url; else element.removeAttribute("src");
+    }
+
+    function element(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = text;
+      return node;
+    }
+
+    async function get(path) {
+      const token = $("token").value.trim();
+      const response = await fetch(API + path, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        cache: "no-store",
+      });
+      if (response.status === 404) return null;
+      if (!response.ok) {
+        let message = `Request failed (${response.status})`;
+        try { message = (await response.json()).message || message; } catch (error) { /* keep default */ }
+        throw new Error(message);
+      }
+      return response.json();
+    }
+
+    function avatarNode(url, className) {
+      const safe = url && safeUrl(url);
+      if (!safe) return element("div", className === "avatar" ? "placeholder" : "dot");
+      const image = element("img", className);
+      image.alt = "";
+      image.loading = "lazy";
+      image.referrerPolicy = "no-referrer";
+      image.src = safe;
+      return image;
+    }
+
+    function memberCard(member) {
+      const card = element("article", "member");
+      card.style.borderLeftColor = member.color || "var(--line)";
+      const header = element("header");
+      header.append(avatarNode(member.avatar, "avatar"));
+      const text = element("div");
+      const name = element("div", "name", member.name);
+      if (state.frontIds.has(member.id)) name.append(element("span", "fronting", "fronting"));
+      text.append(name);
+      if (member.pronouns) text.append(element("div", "muted", member.pronouns));
+      header.append(text);
+      card.append(header);
+      if (member.description) card.append(element("p", "description", member.description));
+      if (member.forms && member.forms.length) {
+        const forms = element("div", "forms");
+        member.forms.forEach((form) => forms.append(element("span", null, form.displayName)));
+        card.append(forms);
+      }
+      return card;
+    }
+
+    function renderMembers() {
+      const query = state.query.toLocaleLowerCase();
+      const group = state.groups.find((item) => item.id === state.group);
+      const visible = state.members.filter((member) =>
+        (!group || group.memberIds.includes(member.id)) &&
+        (!query || [member.name, member.pronouns, member.description]
+          .some((value) => value && value.toLocaleLowerCase().includes(query))));
+      $("members").replaceChildren(...visible.map(memberCard));
+      $("empty").hidden = visible.length > 0;
+    }
+
+    function renderGroups() {
+      const all = element("button", "filter", "Everyone");
+      all.type = "button";
+      const buttons = [all, ...state.groups.map((group) => {
+        const button = element("button", "filter", group.name);
+        button.type = "button";
+        button.dataset.group = group.id;
+        return button;
+      })];
+      buttons.forEach((button) => {
+        button.setAttribute("aria-pressed", String((button.dataset.group || null) === state.group));
+        button.addEventListener("click", () => {
+          state.group = button.dataset.group || null;
+          renderGroups();
+          renderMembers();
+        });
+      });
+      $("groups").replaceChildren(...buttons);
+      $("groups").hidden = state.groups.length === 0;
+    }
+
+    function renderFronters(data) {
+      const fronters = data ? data.fronters : [];
+      state.frontIds = new Set(fronters.map((fronter) => fronter.member.id));
+      $("front-panel").hidden = !data;
+      $("fronters").replaceChildren(...(fronters.length ? fronters.map(({ member }) => {
+        const chip = element("span", "chip");
+        chip.append(avatarNode(member.avatar, ""), element("span", null, member.name));
+        return chip;
+      }) : [element("span", "muted", "Nobody is shown as fronting.")]));
+    }
+
+    async function load(systemId) {
+      $("status").className = "muted";
+      $("status").textContent = "Loading…";
+      $("system").hidden = true;
+      $("members-panel").hidden = true;
+      try {
+        const system = await get(`/systems/${encodeURIComponent(systemId)}`);
+        if (!system) {
+          $("status").textContent = "That system doesn't exist or isn't public.";
+          return;
+        }
+        const [members, groups, fronters] = await Promise.all([
+          get(`/systems/${encodeURIComponent(systemId)}/members`),
+          get(`/systems/${encodeURIComponent(systemId)}/groups`),
+          get(`/systems/${encodeURIComponent(systemId)}/fronters`),
+        ]);
+        state.members = members ? members.members : [];
+        state.groups = groups ? groups.groups : [];
+        state.group = null;
+        setImage($("system-banner"), system.banner);
+        setImage($("system-logo"), system.logo);
+        $("system-name").textContent = system.name;
+        $("system-tag").textContent = system.tag || "";
+        $("system-count").textContent = `${system.memberCount} member${system.memberCount === 1 ? "" : "s"} shown`;
+        $("system-description").textContent = system.description || "";
+        $("system-description").hidden = !system.description;
+        document.title = `${system.name} · Plurapack Member Viewer`;
+        renderFronters(fronters);
+        renderGroups();
+        renderMembers();
+        $("system").hidden = false;
+        $("members-panel").hidden = false;
+        $("status").textContent = "";
+      } catch (error) {
+        $("status").className = "error";
+        $("status").textContent = error.message;
+      }
+    }
+
+    $("lookup").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const systemId = $("system-id").value.trim();
+      storage("set", $("token").value.trim());
+      const url = new URL(window.location.href);
+      url.searchParams.set("system", systemId);
+      history.replaceState(null, "", url);
+      load(systemId);
+    });
+    $("search").addEventListener("input", (event) => {
+      state.query = event.target.value.trim();
+      renderMembers();
+    });
+
+    $("token").value = storage("get");
+    const initial = new URL(window.location.href).searchParams.get("system");
+    if (initial) {
+      $("system-id").value = initial;
+      load(initial);
+    }
+  </script>
+</body>
+</html>
