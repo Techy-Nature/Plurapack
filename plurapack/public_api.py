@@ -1,10 +1,12 @@
-"""Read-only, token-authenticated v1 API for outside dashboards and member viewers.
+"""Token-authenticated v1 API for outside dashboards and member viewers.
 
 Requests without a token, or with a `read:public` token, only ever see what a
 system has made public with `privacy`. A `read:private` token sees its own
 system in full. Hidden things are left out entirely (or answered with 404)
 so their existence is not revealed. Account IDs, link codes, voices, and
-proxy-message records are never part of these responses.
+proxy-message records are never part of these responses. A `write` token
+can also read everything in its own system, switch fronts, and edit member
+profiles, acting as the owner account that created it.
 """
 from __future__ import annotations
 
@@ -14,6 +16,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 from .login import LoginStartLimiter
 from .storage import ApiToken, Form, Group, Member, MemberPrivacy, Store, System
@@ -22,8 +25,8 @@ API_PREFIX = "/api/v1"
 RATE_WINDOW = 60
 CORS_HEADERS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Authorization",
+    "Access-Control-Allow-Methods": "GET, PUT, PATCH, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": "Authorization, Content-Type",
     "Access-Control-Expose-Headers": "Retry-After",
     "Access-Control-Max-Age": "600",
 }
@@ -34,8 +37,34 @@ class Viewer:
     token: ApiToken | None
 
     def full_access(self, system_id: str) -> bool:
-        return (self.token is not None and self.token.scope == "read:private"
+        return (self.token is not None and self.token.scope in {"read:private", "write"}
                 and self.token.system_id == system_id)
+
+
+class WriteModel(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class FronterUpdate(WriteModel):
+    """Switch to a member (using their default form) or to one explicit form."""
+    member_id: str | None = Field(None, alias="memberId", pattern=r"^[0-9a-f]{5}$")
+    form_id: str | None = Field(None, alias="formId", pattern=r"^[0-9a-f]{5}$")
+
+    @model_validator(mode="after")
+    def exactly_one(self) -> "FronterUpdate":
+        if (self.member_id is None) == (self.form_id is None):
+            raise ValueError("send exactly one of memberId or formId")
+        return self
+
+
+class MemberProfileUpdate(WriteModel):
+    """Profile fields an outside tool may change; proxy tags and voices stay bot/dashboard-only."""
+    name: str | None = Field(None, min_length=1, max_length=80)
+    pronouns: str | None = Field(None, max_length=64)
+    description: str | None = Field(None, max_length=1000)
+    color: str | None = Field(None, pattern=r"^#[0-9A-Fa-f]{6}$")
+    avatar: HttpUrl | None = None
+    banner: HttpUrl | None = None
 
 
 def api_rate_limiter() -> LoginStartLimiter:
@@ -122,6 +151,29 @@ def create_public_api() -> APIRouter:
             raise HTTPException(429, "Too many API requests; try again shortly",
                                 headers={"Retry-After": str(RATE_WINDOW)})
         return Viewer(token)
+
+    async def writer(system_id: str, who: Viewer = Depends(viewer),
+                     store: Store = Depends(db)) -> str:
+        """Return the owner account a write token acts as, or refuse the request."""
+        token = who.token
+        if token is None:
+            raise HTTPException(401, "This endpoint needs a write token",
+                                headers={"WWW-Authenticate": "Bearer"})
+        if token.system_id != system_id:
+            raise not_found()
+        if token.scope != "write":
+            raise HTTPException(403, "This token can only read; create a `write` token to make changes")
+        if not await run(store.account_has_system, token.created_by, system_id):
+            raise HTTPException(403, "The account that created this token no longer owns the system")
+        return token.created_by
+
+    async def write(function: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        try:
+            return await asyncio.to_thread(function, *args, **kwargs)
+        except PermissionError:
+            raise not_found() from None
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
 
     def not_found() -> HTTPException:
         return HTTPException(404, "Resource not found")
@@ -238,5 +290,52 @@ def create_public_api() -> APIRouter:
     async def fronters(system_id: str, who: Viewer = Depends(viewer),
                        store: Store = Depends(db)) -> dict[str, Any]:
         return await run(fronters_payload, store, system_id, who)
+
+    def owned_member_id(store: Store, system_id: str, member_id: str) -> None:
+        member = store.public_member_by_id(member_id)
+        if member is None or member.system_id != system_id:
+            raise not_found()
+
+    def owned_form_id(store: Store, system_id: str, form_id: str) -> None:
+        selected = store.public_form_by_id(form_id)
+        if selected is None or selected[1].system_id != system_id:
+            raise not_found()
+
+    @router.put("/systems/{system_id}/fronters", summary="Switch who is fronting (write token)")
+    async def switch_fronter(system_id: str, body: FronterUpdate, account: str = Depends(writer),
+                             who: Viewer = Depends(viewer),
+                             store: Store = Depends(db)) -> dict[str, Any]:
+        # Check ownership by ID first, so a name can never select another system's member.
+        if body.form_id:
+            await write(owned_form_id, store, system_id, body.form_id)
+        else:
+            await write(owned_member_id, store, system_id, body.member_id)
+        await write(store.switch_front, account, body.form_id or body.member_id)
+        return await run(fronters_payload, store, system_id, who)
+
+    @router.delete("/systems/{system_id}/fronters", summary="Clear the current front (write token)")
+    async def clear_fronter(system_id: str, account: str = Depends(writer),
+                            store: Store = Depends(db)) -> dict[str, Any]:
+        await write(store.clear_front, account)
+        return {"fronters": []}
+
+    @router.patch("/systems/{system_id}/members/{member_id}",
+                  summary="Edit a member's profile (write token)")
+    async def edit_member(system_id: str, member_id: str, body: MemberProfileUpdate,
+                          account: str = Depends(writer), who: Viewer = Depends(viewer),
+                          store: Store = Depends(db)) -> dict[str, Any]:
+        await write(owned_member_id, store, system_id, member_id)
+        changes = body.model_dump(exclude_unset=True)
+        if "description" in changes and changes["description"] is None:
+            changes["description"] = ""
+        if "name" in changes and changes["name"] is None:
+            raise HTTPException(422, "name cannot be null")
+        changes = {key: str(value) if key in {"avatar", "banner"} and value else value
+                   for key, value in changes.items()}
+        if "pronouns" in changes:
+            await write(store.configure_pronouns, account, member_id, changes.pop("pronouns"))
+        if changes:
+            await write(store.update_member, account, member_id, **changes)
+        return await run(member_payload, store, system_id, member_id, who)
 
     return router

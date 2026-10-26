@@ -1,6 +1,6 @@
 # Public API for dashboards and viewers
 
-Plurapack has a read-only API that outside tools can use, such as dashboards, member viewers, or front-status widgets. It runs on the same server as the Plurapack dashboard, so if your dashboard is at `https://plurapack.example`, the API is at `https://plurapack.example/api/v1`. Interactive documentation for every endpoint is at `/docs`.
+Plurapack has an API that outside tools can use, such as dashboards, member viewers, or front-status widgets. It runs on the same server as the Plurapack dashboard, so if your dashboard is at `https://plurapack.example`, the API is at `https://plurapack.example/api/v1`. Interactive documentation for every endpoint is at `/docs`.
 
 !!! note "Everything starts private"
     Outside tools see nothing until you choose to share it. A member you never make public is left out of every response completely. It doesn't show up as a blank entry.
@@ -55,10 +55,12 @@ Public data needs no token. Use a token when a tool needs to know which system i
     ```text
     p;token create read:public Front widget
     p;token create read:private My own dashboard
+    p;token create write Stream Deck front switcher
     ```
 
     - `read:public` sees the same things as an anonymous visitor, and lets the tool look up your system ID.
     - `read:private` sees your whole system, including private members, hidden fields, proxy tags, and privacy settings. Only give it to tools you run or fully trust.
+    - `write` can do everything `read:private` can, and it can also switch who is fronting and edit member profiles. It acts as the account that created it. Only give it to tools you run yourself.
 
 3. Copy the token right away. It's shown once, and Plurapack only keeps a hash of it.
 4. Use `p;token list` to see your tokens, and `p;token revoke TOKEN_ID` (or `p;token revoke all`) to cancel them. Every owner account linked to the system can manage its tokens.
@@ -81,11 +83,36 @@ curl -H "Authorization: Bearer ppk_..." https://plurapack.example/api/v1/me
 | `GET /api/v1/systems/{systemId}/groups/{groupId}` | One visible group. |
 | `GET /api/v1/systems/{systemId}/fronters` | `{"fronters": [{"member": {...}, "formId": ...}]}`, or an empty list. |
 
+With a `write` token, a tool can also make changes:
+
+| Endpoint | Does |
+| --- | --- |
+| `PUT /api/v1/systems/{systemId}/fronters` | Switch front. Send `{"memberId": "..."}` (uses their default form) or `{"formId": "..."}`. Returns the new fronters. |
+| `DELETE /api/v1/systems/{systemId}/fronters` | Clear the current front. |
+| `PATCH /api/v1/systems/{systemId}/members/{memberId}` | Change any of `name`, `pronouns`, `description`, `color` (`#RRGGBB`), `avatar`, and `banner`. Returns the updated member. |
+
+```bash
+curl -X PUT -H "Authorization: Bearer ppk_..." -H "Content-Type: application/json" \
+  -d '{"memberId": "abcde"}' https://plurapack.example/api/v1/systems/abcde12345/fronters
+```
+
+Proxy tags, voices, groups, privacy, and deleting things stay in the bot and dashboard on purpose. A read-only token gets `403` from these endpoints, and a token can never change another system.
+
 Anything that's private, or doesn't exist, returns `404` with `{"message": "Resource not found"}`, so a tool can't tell the difference. Hidden fields are returned as `null`, and hidden forms as `[]`. An invalid or revoked token returns `401`. It never falls back to the public view.
 
-### Example: a dark member viewer
+## Built-in member viewer
 
-Pages on any website may call the API from the browser. This page lists a system's public members:
+Every Plurapack server includes a ready-made, dark member viewer at `/viewer`. It shows the system card, who is fronting, a member search, and group filters. Share a link like this:
+
+```text
+https://plurapack.example/viewer?system=abcde12345
+```
+
+Visitors only see what you've made public. To see your own private members, open **Viewing your own system? Add a token** and paste a `read:private` token. The token stays in that browser tab and is never added to the link.
+
+### Example: build your own viewer
+
+Pages on any website may call the API from the browser. This small page lists a system's public members:
 
 ```html
 <!doctype html>

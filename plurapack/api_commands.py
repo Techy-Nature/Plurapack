@@ -119,7 +119,7 @@ def _token_line(token: ApiToken) -> str:
 
 
 def token_usage(prefix: str) -> str:
-    return (f"Usage: `{prefix}token create [read:public|read:private] [NAME]` (in a DM), "
+    return (f"Usage: `{prefix}token create [read:public|read:private|write] [NAME]` (in a DM), "
             f"`{prefix}token list`, or `{prefix}token revoke TOKEN_ID|all`.")
 
 
@@ -134,14 +134,19 @@ def token_reply(store: Store, account_id: str, action: str, arguments: str, pref
                 return ("For safety, create API tokens in a direct message with me. "
                         "Nothing was created.")
             scope = "read:public"
-            if words and words[0].casefold().startswith("read:"):
+            if words and (words[0].casefold().startswith("read:") or words[0].casefold() == "write"):
                 scope = words.pop(0)
             token, secret = store.create_api_token(account_id, scope, " ".join(words))
+            warning = {
+                "read:public": "",
+                "read:private": " Keep it to tools you trust, because it can see private members.",
+                "write": (" Keep it to tools you trust: it can see private members, switch fronts, "
+                          "and edit member profiles."),
+            }[token.scope]
             return (f"API token **{token.name}** (`{token.id}`, {token.scope}):\n"
                     f"```\n{secret}\n```\n"
                     "Copy it now; it will not be shown again. Outside tools send it as the "
-                    "`Authorization: Bearer TOKEN` header. Keep `read:private` tokens to tools you "
-                    f"trust, because they can see private members. Revoke it with "
+                    f"`Authorization: Bearer TOKEN` header.{warning} Revoke it with "
                     f"`{prefix}token revoke {token.id}`.")
         if action == "list":
             tokens = store.api_tokens(account_id)

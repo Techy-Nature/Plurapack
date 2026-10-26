@@ -74,11 +74,12 @@ of at least 32 characters and configure `STOAT_BOT_TOKEN` and/or
 
 ### Public API for outside tools
 
-A read-only, token-authenticated API under `/api/v1` lets outside dashboards and
-member viewers read a system's data, from any website origin. Everything starts private.
+A token-authenticated API under `/api/v1` lets outside dashboards and member
+viewers read a system's data, from any website origin. Everything starts private.
 Owners choose what is public with `p;privacy` and create hashed, revocable tokens in a
-DM with `p;token create`. See the
-[public API guide](documentation/docs/guides/public-api.md).
+DM with `p;token create`. `write` tokens can also switch fronts and edit member
+profiles. A dark member viewer built on the API is served at `/viewer?system=ID`.
+See the [public API guide](documentation/docs/guides/public-api.md).
 
 The API provides `/api/account`, authorized system/member/form CRUD, front
 retrieval and switching, and `/api/health`; interactive OpenAPI documentation is

@@ -67,7 +67,7 @@ def test_tokens_are_hashed_listed_and_revoked(system):
     assert store.resolve_api_token(secret + "x") is None
     assert [t.name for t in store.api_tokens("owner")] == ["My viewer"]
     with pytest.raises(ValueError):
-        store.create_api_token("owner", "write")
+        store.create_api_token("owner", "admin")
     with pytest.raises(ValueError):
         store.revoke_api_token("owner", "nope")
     assert store.revoke_api_token("owner", token.id) == 1
@@ -250,3 +250,112 @@ async def test_stoat_private_channel_detection():
         SimpleNamespace(channel=partial, bot=SimpleNamespace(fetch_channel=fetch_dm)), sdk)
     assert not await bot._is_private_stoat_channel(
         SimpleNamespace(channel=partial, bot=SimpleNamespace(fetch_channel=fetch_fail)), sdk)
+
+
+async def test_write_token_switches_and_clears_the_front(system):
+    store, system_id, nova, kellin, _ = system
+    _, secret = store.create_api_token("owner", "write", "Switcher")
+    _, reader = store.create_api_token("owner", "read:private")
+    async with client_for(store) as client:
+        url = f"/api/v1/systems/{system_id}/fronters"
+        switched = await client.put(url, json={"memberId": kellin.id}, headers=bearer(secret))
+        assert switched.status_code == 200
+        assert switched.json()["fronters"][0]["member"]["id"] == kellin.id
+        assert store.current_front("owner").member.id == kellin.id
+
+        form = store.forms_for_member(nova.id)[0]
+        switched = await client.put(url, json={"formId": form.id}, headers=bearer(secret))
+        assert switched.json()["fronters"][0]["formId"] == form.id
+
+        assert (await client.delete(url, headers=bearer(secret))).json() == {"fronters": []}
+        assert store.current_front("owner") is None
+
+        assert (await client.put(url, json={}, headers=bearer(secret))).status_code == 422
+        assert (await client.put(url, json={"memberId": kellin.id},
+                                 headers=bearer(reader))).status_code == 403
+        assert (await client.put(url, json={"memberId": kellin.id})).status_code == 401
+
+
+async def test_write_token_cannot_reach_another_system(system):
+    store, system_id, nova, _, _ = system
+    other_id = store.create_system("other", "Elsewhere")
+    stranger = store.add_member("other", "Stranger", "s:", "")
+    _, secret = store.create_api_token("owner", "write")
+    async with client_for(store) as client:
+        # Another system's member, addressed through this system, is not found.
+        response = await client.put(f"/api/v1/systems/{system_id}/fronters",
+                                    json={"memberId": stranger.id}, headers=bearer(secret))
+        assert response.status_code == 404
+        response = await client.patch(f"/api/v1/systems/{other_id}/members/{stranger.id}",
+                                      json={"pronouns": "x"}, headers=bearer(secret))
+        assert response.status_code == 404
+        assert store.public_member_by_id(stranger.id).pronouns is None
+
+
+async def test_write_token_edits_member_profiles(system):
+    store, system_id, nova, _, _ = system
+    _, secret = store.create_api_token("owner", "write")
+    async with client_for(store) as client:
+        url = f"/api/v1/systems/{system_id}/members/{nova.id}"
+        response = await client.patch(url, headers=bearer(secret), json={
+            "pronouns": " she/they ", "description": None, "color": "#112233",
+            "avatar": "https://example.test/new.png"})
+        assert response.status_code == 200
+        body = response.json()
+        assert (body["pronouns"], body["description"], body["color"]) == ("she/they", "", "#112233")
+        assert body["avatar"] == "https://example.test/new.png"
+        assert (await client.patch(url, headers=bearer(secret),
+                                   json={"voiceSettings": {}})).status_code == 422
+        assert (await client.patch(url, headers=bearer(secret),
+                                   json={"name": "Kellin"})).status_code == 422
+        assert (await client.patch(url, headers=bearer(secret),
+                                   json={"color": "red"})).status_code == 422
+
+
+async def test_write_preflight_allows_json_bodies(system):
+    store, system_id, *_ = system
+    async with client_for(store) as client:
+        preflight = await client.options(f"/api/v1/systems/{system_id}/fronters")
+        assert "PUT" in preflight.headers["access-control-allow-methods"]
+        assert "Content-Type" in preflight.headers["access-control-allow-headers"]
+
+
+def test_read_only_token_table_is_upgraded_for_write_tokens(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.sqlite3"
+    store = Store(path)
+    store.create_system("owner", "Old")
+    _, secret = store.create_api_token("owner", "read:private")
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE api_tokens RENAME TO new_tokens")
+        db.execute("""CREATE TABLE api_tokens (
+            id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE,
+            system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE, name TEXT NOT NULL,
+            scope TEXT NOT NULL CHECK(scope IN ('read:public','read:private')),
+            created_by TEXT NOT NULL, created_at INTEGER NOT NULL, last_used_at INTEGER)""")
+        db.execute("INSERT INTO api_tokens SELECT * FROM new_tokens")
+        db.execute("DROP TABLE new_tokens")
+    reopened = Store(path)
+    assert reopened.resolve_api_token(secret) is not None
+    token, _ = reopened.create_api_token("owner", "write")
+    assert token.scope == "write"
+
+
+def test_write_token_reply_warns_about_its_power(system):
+    store, *_ = system
+    reply = token_reply(store, "owner", "create", "write Front switcher", "p;", private_channel=True)
+    assert "switch fronts" in reply
+    assert store.api_tokens("owner")[0].scope == "write"
+
+
+async def test_member_viewer_page_is_served(tmp_path):
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    app = create_app(Store(tmp_path / "viewer.sqlite3"), static_root=root)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        response = await client.get("/viewer")
+    assert response.status_code == 200
+    assert "color-scheme: dark" in response.text
+    assert "/api/v1" in response.text
+    # The viewer must never inject API text as HTML.
+    assert "innerHTML" not in response.text

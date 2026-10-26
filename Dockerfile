@@ -8,7 +8,7 @@ WORKDIR /app
 COPY pyproject.toml ./
 COPY plurapack ./plurapack
 COPY main.py ./
-COPY index.html login.html app.js dashboard_helpers.js voice_playback.js styles.css ./
+COPY index.html login.html viewer.html app.js dashboard_helpers.js voice_playback.js styles.css ./
 
 # Which chat platforms to install: stoat, fluxer, or stoat,fluxer (the default).
 # On Railway, set a PLURAPACK_PLATFORMS service variable to change this.

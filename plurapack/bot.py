@@ -117,7 +117,7 @@ COMMAND_HELP = {
     "verify": ("v", "CODE", "Connect an account with a link code."),
     "privacy": ("pv", "[system|front public|private] | member MEMBER public|private|hide|show FIELD... | group GROUP public|private",
                 "Choose what the public API shows. Everything starts private."),
-    "token": ("tk", "create [read:public|read:private] [NAME] | list | revoke TOKEN_ID|all",
+    "token": ("tk", "create [read:public|read:private|write] [NAME] | list | revoke TOKEN_ID|all",
               "Manage API tokens for outside dashboards and viewers. Create them in a DM."),
     "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
     "export": ("x", "[FORMAT] [--forms-loss|--forms-members]", "Export portable system metadata."),
