@@ -77,6 +77,13 @@ class MemberPatch(APIModel):
         return "" if value is None else value
 
 
+class VoiceShortcutUpdate(APIModel):
+    prefix: str = Field(min_length=1, max_length=32)
+    suffix: str = Field("", max_length=32)
+    form_id: str | None = Field(None, alias="formId")
+    voice_id: str | None = Field(None, alias="voiceId")
+
+
 class VoicePatch(APIModel):
     name: str | None = Field(None, min_length=1, max_length=80)
     is_default: bool | None = Field(None, alias="isDefault")

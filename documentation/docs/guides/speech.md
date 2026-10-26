@@ -63,6 +63,10 @@ For example, if Jaden has custom voices called `Calm` and `Loud`:
 3. `jl: hello` now proxies as Jaden and speaks with `Loud`. Jaden's other tags keep
    using the selected (default) voice.
 
+In the dashboard, open the member: under **Voice shortcuts** in the Voice / TTS
+panel at the top, every member and form proxy tag has a dropdown. Pick a custom
+voice, or **Selected voice** to undo it; the change saves right away.
+
 If the tag does not exist yet, the command adds it to the member first. A form ID
 works in place of the member, so a form's tags can have their own voices too; the
 voice must still belong to the form's member. `off` (or `none`/`default`) returns

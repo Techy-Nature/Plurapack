@@ -1454,10 +1454,17 @@ class Store:
                        (primary.prefix, primary.suffix, target.id))
         return self.proxy_tags(form_id=target.id) if form else self.proxy_tags(member_id=target.id)
 
-    def tag_identity(self, account_id: str, selector: str) -> tuple[Member, Form | None]:
-        """Resolve a member or form selector to its base member and optional form."""
-        member = self.member_selected(account_id, selector)
-        if member is not None:
+    def tag_identity(self, account_id: str, selector: str,
+                     form: bool | None = None) -> tuple[Member, Form | None]:
+        """Resolve a member or form selector to its base member and optional form.
+
+        ``form`` limits the lookup to forms (True) or members (False); by default
+        a member wins and forms are tried second.
+        """
+        member = self.member_selected(account_id, selector) if form is not True else None
+        if member is not None or form is False:
+            if member is None:
+                raise PermissionError("Member not found or not owned by this account.")
             return member, None
         selected = self.form_selected(account_id, selector)
         if selected is None:
@@ -1466,14 +1473,15 @@ class Store:
         return member, form
 
     def configure_tag_voice(self, account_id: str, selector: str, prefix: str, suffix: str = "",
-                            voice_id: str | None = None) -> list[tuple[ProxyTag, Voice | None]]:
+                            voice_id: str | None = None, *,
+                            form: bool | None = None) -> list[tuple[ProxyTag, Voice | None]]:
         """Make one proxy tag speak with a specific custom voice of its member.
 
         The tag is added first when the member or form does not have it yet, so a
         single command creates a working shortcut. ``voice_id=None`` returns the
         tag to the member's selected voice; the tag itself is kept.
         """
-        member, form = self.tag_identity(account_id, selector)
+        member, form = self.tag_identity(account_id, selector, form)
         prefix, suffix = prefix.strip(), suffix.strip()
         if not prefix:
             raise ValueError("A voice shortcut needs a proxy prefix.")

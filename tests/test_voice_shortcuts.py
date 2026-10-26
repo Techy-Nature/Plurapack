@@ -120,3 +120,50 @@ async def test_proxy_and_its_edits_keep_the_shortcut_voice(shortcut_setup):
                                     EditRequest("hi"))
     await queue.run_one()
     assert backend.references == [f"{loud.storage_id}.wav"] * 2
+
+
+async def test_dashboard_lists_and_sets_voice_shortcuts(tmp_path, monkeypatch):
+    import httpx
+    from plurapack.web import create_app
+    from plurapack.web_auth import COOKIE_NAME, WebUser, create_session_cookie
+
+    monkeypatch.setenv("PLURAPACK_SESSION_SECRET", "test-secret-that-is-longer-than-thirty-two-bytes")
+    monkeypatch.setenv("PLURAPACK_COOKIE_SECURE", "false")
+    store = Store(tmp_path / "web.sqlite3")
+    system_id = store.create_system("owner", "Crew")
+    store.create_system("other", "Other")
+    member = store.add_member("owner", "Jaden", "j:")
+    form = store.create_form("owner", member.id, "Little", prefix="lil:")
+    service = VoiceService(store, MemoryStorage())
+    loud = service.upload_member_voice("owner", member.id, "Loud", wav_bytes())
+    app = create_app(store, static_root=None, voice_service=service)
+    path = f"/api/systems/{system_id}/members/{member.id}"
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
+        body = {"prefix": "lil:", "formId": form.id, "voiceId": loud.id}
+        assert (await client.put(path + "/voice-shortcuts", json=body)).status_code == 401
+        client.cookies.update({COOKIE_NAME: create_session_cookie(WebUser("other", "Other"))})
+        assert (await client.put(path + "/voice-shortcuts", json=body)).status_code in {403, 404}
+        client.cookies.update({COOKIE_NAME: create_session_cookie(WebUser("owner", "Owner"))})
+
+        listed = (await client.get(path)).json()["voice"]["shortcuts"]
+        assert listed == [
+            {"formId": None, "formName": None, "prefix": "j:", "suffix": "", "voiceId": None},
+            {"formId": form.id, "formName": "Little", "prefix": "lil:", "suffix": "", "voiceId": None},
+        ]
+        updated = await client.put(path + "/voice-shortcuts", json=body)
+        assert updated.status_code == 200
+        assert updated.json()[1]["voiceId"] == loud.id
+        assert store.match_proxy("owner", "lil: hi")[2] == loud.id
+
+        cleared = await client.put(path + "/voice-shortcuts", json={**body, "voiceId": None})
+        assert cleared.json()[1]["voiceId"] is None
+        missing = await client.put(path + "/voice-shortcuts", json={**body, "voiceId": "nope"})
+        assert missing.status_code == 422
+
+
+def test_dashboard_offers_a_voice_dropdown_per_proxy_tag():
+    from pathlib import Path
+    script = (Path(__file__).parent.parent / "app.js").read_text()
+    assert "shortcutPicker(m,voices)" in script
+    assert "data-shortcut-index" in script and "/voice-shortcuts" in script
+    assert '<option value="">Selected voice</option>' in script
