@@ -13,6 +13,7 @@ Plurapack reads configuration from environment variables. It does not automatica
 | `PLURAPACK_TTS_API_KEY` | For protected Modal TTS | — | Modal proxy credential (`wk-....ws-....`), sent server-to-server as `Authorization: Bearer ...`. |
 | `PLURAPACK_TTS_QUEUE_LIMIT` | No | `8` | Pending speech limit, from 1 to 1000. |
 | `PLURAPACK_TTS_WORKERS` | No | `1` | Speech workers, from 1 to 4. |
+| `PLURAPACK_API_RATE_LIMIT` | No | `120` | Public API requests allowed per minute for each token, or each client without a token. |
 
 Restart the bot after changing its process environment. Keep secrets out of Git, shell history where possible, support messages, and screenshots.
 

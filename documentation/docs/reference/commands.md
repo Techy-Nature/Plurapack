@@ -28,6 +28,8 @@ Examples use the default `p;` prefix. Every command also works with `pk;`, `tul;
 | `reproxy MEMBER_OR_FORM` | `rp` | Repost the proxied message you reply to, or your latest one in this channel, as another member or form. `pk;reproxy`, `tul;reproxy`, `tup;reproxy`, and their `rp` shortcuts also work. See [Change who sent an existing message](../guides/proxying.md#change-who-sent-an-existing-message). |
 | `link` | `l` | Create a single-use account connection code. |
 | `verify CODE` | `v` | Connect an account using a code. |
+| `privacy [system\|front public\|private]`, `privacy member MEMBER public\|private\|hide\|show FIELD...`, `privacy group GROUP public\|private` | `pv` | Choose what the [public API](../guides/public-api.md) shows. Everything starts private. With no arguments, shows the current settings. |
+| `token create [read:public\|read:private] [NAME]\|list\|revoke TOKEN_ID\|all` | `tk` | Manage [API tokens](../guides/public-api.md#step-2-create-a-token-optional) for outside tools. Tokens can only be created in a direct message with the bot. |
 | `import FORMAT JSON` | `i` | Import PluralKit, Tupperbox, or Plurapack JSON. |
 | `export [FORMAT]` | `x` | Export portable metadata. |
 | `info SYSTEM_GROUP_MEMBER_OR_FORM` | `in`, `view` | Show a system and its groups, a single group, a member, or a form profile. |

@@ -438,3 +438,25 @@ async def test_fluxer_viewgroup_splits_long_groups_into_several_messages(tmp_pat
 async def test_fluxer_accepts_every_command_prefix(tmp_path, content, prefix):
     client = create_fluxer_bot("p;", str(tmp_path / "prefixes.sqlite3"))
     assert await client._check_prefix(SimpleNamespace(content=content)) == prefix
+
+
+async def test_fluxer_token_create_requires_a_direct_message(tmp_path, monkeypatch):
+    database = tmp_path / "tokens.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    store.create_system("123", "Fluxer system")
+    replies = []
+
+    async def send(message, **kwargs): replies.append(message)
+    in_server = SimpleNamespace(author=SimpleNamespace(id=123), send=send,
+                                channel=SimpleNamespace(type=0))
+    in_dm = SimpleNamespace(author=SimpleNamespace(id=123), send=send,
+                            channel=SimpleNamespace(type=1))
+
+    await commands["token"](in_server, "create", arguments="read:private Viewer")
+    assert "Nothing was created" in replies[-1]
+    await commands["tk"](in_dm, "create", arguments="read:private Viewer")
+    assert "ppk_" in replies[-1]
+    assert [token.scope for token in store.api_tokens("123")] == ["read:private"]
+    await commands["pv"](in_server, "system", arguments="public")
+    assert replies[-1] == "Your system card is now public in the API."

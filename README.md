@@ -72,6 +72,14 @@ At minimum, also configure `PLURAPACK_SESSION_SECRET` as a stable random value
 of at least 32 characters and configure `STOAT_BOT_TOKEN` and/or
 `FLUXER_BOT_TOKEN`.
 
+### Public API for outside tools
+
+A read-only, token-authenticated API under `/api/v1` lets outside dashboards and
+member viewers read a system's data, from any website origin. Everything starts private.
+Owners choose what is public with `p;privacy` and create hashed, revocable tokens in a
+DM with `p;token create`. See the
+[public API guide](documentation/docs/guides/public-api.md).
+
 The API provides `/api/account`, authorized system/member/form CRUD, front
 retrieval and switching, and `/api/health`; interactive OpenAPI documentation is
 at `/docs`. Plurapack does not rely on Stoat OAuth. Instead, `/login` creates a

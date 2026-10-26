@@ -38,6 +38,7 @@ from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .login import LoginError, LoginService
 from .proxy import EditCommandError, Incoming, ProxyService, command_prefixes
 from .storage import Group, Member, Store, System
+from .api_commands import privacy_reply, token_reply
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
 from .config import resolve_voice_max_reference_seconds
 
@@ -284,6 +285,24 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     async def verify_command(ctx: Any, token: str) -> None:
         await run(ctx, lambda: store.redeem_link(account(ctx), token),
                   lambda system_id: f"Account connected to system `{system_id}`.")
+
+    async def privacy_command(ctx: Any, target: str = "", *, arguments: str = "") -> None:
+        await ctx.send(privacy_reply(store, account(ctx), target, arguments, prefix))
+
+    async def is_private_channel(ctx: Any) -> bool:
+        """Only one-to-one DMs may receive token secrets; unknown channels fail closed."""
+        channel = getattr(ctx, "channel", None)
+        if channel is None:
+            try:
+                channel = await bot.fetch_channel(str(ctx.channel_id))
+            except Exception:
+                return False
+        dm_type = getattr(getattr(fluxer, "ChannelType", None), "DM", 1)
+        return getattr(channel, "type", None) == dm_type
+
+    async def token_command(ctx: Any, action: str = "", *, arguments: str = "") -> None:
+        private_channel = action.casefold() == "create" and await is_private_channel(ctx)
+        await ctx.send(token_reply(store, account(ctx), action, arguments, prefix, private_channel))
 
     async def alias_command(ctx: Any, selector: str, alias: str = "") -> None:
         await run(ctx, lambda: store.configure_alias(account(ctx), selector, alias or None),
@@ -578,6 +597,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         "systemtag": systemtag_command, "systemtagshow": systemtagshow_command,
         "front": front_command, "autoproxy": autoproxy_command, "autofront": autofront_command,
         "color": color_command, "edit": edit_command, "reproxy": reproxy_command, "link": link_command, "verify": verify_command,
+        "privacy": privacy_command, "token": token_command,
         "import": import_command, "export": export_command, "viewinfo": viewinfo_command,
         "info": info_command, "viewgroup": viewgroup_command, "viewmembers": viewmembers_command, "viewmember": viewmember_command,
         "group": group_command, "deletemember": deletemember_command,

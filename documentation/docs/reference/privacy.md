@@ -8,6 +8,10 @@ Plurapack stores the relationship between Stoat account IDs, system IDs, members
 
 Plurapack does **not** retain proxied message content in its database. Link codes are stored only as hashes. Portable exports exclude account IDs, linking codes, proxy-message records, message content, and voice settings.
 
+## Public API
+
+The [public API](../guides/public-api.md) only shows what a system has made public with `privacy`. Systems, members, groups, and the current front all start private. API tokens are stored only as hashes, can only be created in a direct message with the bot, and are deleted along with their system. The API never returns account IDs, link codes, voice data, or proxy-message records.
+
 ## Operational responsibilities
 
 - Protect the SQLite database like account data.
