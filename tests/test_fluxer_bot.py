@@ -429,3 +429,12 @@ async def test_fluxer_viewgroup_splits_long_groups_into_several_messages(tmp_pat
     await commands["viewgroup"](ctx, selector="big")
     assert len(replies) > 1 and all(len(reply) <= 2000 for reply in replies)
     assert all(member_id in "".join(replies) for member_id in ids)
+
+
+@pytest.mark.parametrize(("content", "prefix"), [
+    ("p;front Alex", "p;"), ("pk;front Alex", "pk;"), ("tul;front Alex", "tul;"),
+    ("tup;fr Alex", "tup;"), ("hello", None),
+])
+async def test_fluxer_accepts_every_command_prefix(tmp_path, content, prefix):
+    client = create_fluxer_bot("p;", str(tmp_path / "prefixes.sqlite3"))
+    assert await client._check_prefix(SimpleNamespace(content=content)) == prefix

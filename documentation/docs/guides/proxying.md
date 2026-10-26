@@ -66,12 +66,15 @@ p;edit -prepend Correction:
 
 ### Coming from PluralKit or Tupperbox?
 
-Your old habits work. `pk;edit`, `pk!edit`, `pk;e`, and `tul!edit` are all
-treated the same as `p;edit`, whether you reply or not. PluralKit's
+Your old habits work. Every Plurapack command answers to `pk;`, `tul;`, and
+`tup;` as well as `p;`, so `pk;front Alex` or `tup;help` behave exactly like
+the `p;` versions. For editing, `pk;edit`, `pk!edit`, `pk;e`, `tul;edit`,
+`tup;edit`, and `tul!edit` are all treated the same as `p;edit`, whether you
+reply or not. PluralKit's
 `-append` and `-prepend` options work too.
 
-If PluralKit or Tupperbox is also in the server, Plurapack only answers these
-borrowed spellings for messages it proxied itself, so it won't complain about
+If PluralKit or Tupperbox is also in the server, Plurapack only answers the
+borrowed spellings (`pk;`, `pk!`, and `tul!`) for messages it proxied itself, so it won't complain about
 the other bot's messages. Replying to the exact message is the most reliable
 way to edit when both bots are around.
 
@@ -110,7 +113,7 @@ presentation and removes the old proxy and your command after the replacement
 succeeds. If a member has speech turned on, the message is spoken again in the
 new member's voice.
 
-`pk;reproxy`, `pk;rp`, and `pk!reproxy` work as well. As with editing, those
+`pk;reproxy`, `pk;rp`, `pk!reproxy`, `tul;reproxy`, and `tup;rp` work as well. As with editing, those
 borrowed spellings stay quiet for messages another bot proxied.
 
 ## Failure behavior

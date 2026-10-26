@@ -19,6 +19,7 @@ from .bot import (
     COMMAND_SHORTCUTS,
     _group_member_detail,
     _help_pages,
+    _prefix_summary,
     _member_creation_options,
     _print_cli_status,
     _resolve_group,
@@ -35,7 +36,7 @@ from .browser_audio import BrowserAudioStore
 from .voice_service import VoiceService
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .login import LoginError, LoginService
-from .proxy import EditCommandError, Incoming, ProxyService
+from .proxy import EditCommandError, Incoming, ProxyService, command_prefixes
 from .storage import Group, Member, Store, System
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
 from .config import resolve_voice_max_reference_seconds
@@ -177,7 +178,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     # Proxies necessarily inspect ordinary message text, so request Fluxer's
     # privileged content intent in addition to its normal bot event set.
     intents = fluxer.Intents.default() | fluxer.Intents.MESSAGE_CONTENT
-    bot = _plurapack_fluxer_bot_class(fluxer)(command_prefix=prefix, intents=intents)
+    bot = _plurapack_fluxer_bot_class(fluxer)(command_prefix=command_prefixes(prefix), intents=intents)
     store = Store(database)
     voice_max_seconds = resolve_voice_max_reference_seconds()
     try:
@@ -592,7 +593,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
 
     @bot.event
     async def on_ready() -> None:
-        _print_cli_status(f"Fluxer ready to use. Command prefix: {prefix}")
+        _print_cli_status(f"Fluxer ready to use. Command prefix: {_prefix_summary(prefix)}")
 
     @bot.event
     async def on_message(message: Any) -> None:
