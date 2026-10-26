@@ -1,0 +1,17 @@
+{
+  "name": "plurapack-app",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Plurapack dashboard as a desktop (WebKit) and Android app, built with Tauri 2.",
+  "scripts": {
+    "tauri": "tauri",
+    "icons": "tauri icon icon-source.png",
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "android:init": "tauri android init",
+    "android:build": "tauri android build --apk"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.4"
+  }
+}

@@ -699,3 +699,28 @@ async def test_image_upload_requires_login_and_configuration_and_returns_the_hos
         assert uploaded.status_code == 200 and uploaded.json() == {"url": "https://iili.io/x.png"}
         rejected = await client.post("/api/images", files={"image": ("a.txt", b"hello", "text/plain")})
         assert rejected.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_dashboard_creates_lists_and_revokes_api_tokens(api):
+    store, system_id, other_id, transport = api
+    base = f"/api/systems/{system_id}/api-tokens"
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
+        assert (await client.get(base)).json() == []
+        created = await client.post(base, json={"name": "Viewer", "scope": "write"})
+        assert created.status_code == 201
+        token = created.json()
+        assert token["scope"] == "write" and token["name"] == "Viewer"
+        assert token["secret"].startswith(f"ppk_{token['id']}_")
+        assert store.resolve_api_token(token["secret"]).id == token["id"]
+        listed = (await client.get(base)).json()
+        assert [entry["id"] for entry in listed] == [token["id"]]
+        assert "secret" not in listed[0]
+        assert (await client.post(base, json={"scope": "admin"})).status_code == 422
+        assert (await client.post(base, json={})).json()["scope"] == "read:public"
+        assert (await client.delete(f"{base}/{token['id']}")).status_code == 204
+        assert store.resolve_api_token(token["secret"]) is None
+        assert (await client.delete(f"{base}/{token['id']}")).status_code == 404
+        assert (await client.get(f"/api/systems/{other_id}/api-tokens")).status_code == 403
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.get(base)).status_code == 401

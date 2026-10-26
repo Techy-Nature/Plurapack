@@ -30,6 +30,10 @@ short per-operation connections allow safe concurrent access. The existing
 `owners.account_id` primary key intentionally limits each account to one linked
 system; the account response uses a `systems` list only as a stable API shape.
 
+### Desktop and Android app
+
+[`native/`](native/README.md) wraps the dashboard as a [Tauri 2](https://v2.tauri.app/) app: WebKit on macOS and Linux, WebView2 on Windows, and an Android APK. The **App builds** GitHub Actions workflow builds every platform; [`native/README.md`](native/README.md) has step-by-step instructions for downloading or building it yourself. The dashboard's **🔑 API tokens** page creates, lists, and revokes `read:public`, `read:private`, and `write` tokens.
+
 ### Railway deployment
 
 Railway automatically builds the included `Dockerfile`. It installs Plurapack

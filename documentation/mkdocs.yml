@@ -14,6 +14,7 @@ nav:
       - Members, aliases, and forms: guides/members-and-forms.md
       - Share a system: guides/share-a-system.md
       - Public API for dashboards: guides/public-api.md
+      - Desktop and Android app: guides/app.md
       - Import, export, and backups: guides/import-export.md
       - Optional speech: guides/speech.md
   - Reference:

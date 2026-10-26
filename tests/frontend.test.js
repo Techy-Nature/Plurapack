@@ -188,3 +188,24 @@ test("group dialogs fall back when native modal support is unavailable", () => {
   assert.equal(h.dialogOpenMode({}), "fallback");
   assert.equal(h.dialogOpenMode(null), "fallback");
 });
+
+test("API token helpers build endpoints and describe scopes", () => {
+  assert.deepEqual(h.selectTokens(), { kind: "tokens" });
+  assert.equal(h.apiTokensEndpoint("sys 1"), "/api/systems/sys%201/api-tokens");
+  assert.equal(h.apiTokensEndpoint("sys", "tok"), "/api/systems/sys/api-tokens/tok");
+  assert.deepEqual(h.TOKEN_SCOPES.map((scope) => scope.id), ["read:public", "read:private", "write"]);
+  assert.equal(h.tokenScope("write").label, "Write");
+  assert.equal(h.tokenScope("custom").label, "custom");
+  assert.equal(h.formatTimestamp(null), "Never");
+  assert.equal(h.formatTimestamp(0, "—"), "—");
+  assert.equal(h.formatTimestamp(1767225600), "2026-01-01");
+});
+
+test("only the app's own launcher origins count as an app launcher", () => {
+  assert.equal(h.appLauncherUrl("tauri://localhost"), "tauri://localhost/?setup=1");
+  assert.equal(h.appLauncherUrl("http://tauri.localhost/index.html"), "http://tauri.localhost/?setup=1");
+  assert.equal(h.appLauncherUrl("https://evil.example"), null);
+  assert.equal(h.appLauncherUrl("javascript:alert(1)"), null);
+  assert.equal(h.appLauncherUrl("not a url"), null);
+  assert.equal(h.appLauncherUrl(""), null);
+});

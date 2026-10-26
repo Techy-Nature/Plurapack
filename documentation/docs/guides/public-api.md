@@ -49,6 +49,17 @@ To undo any of these, use `private` instead of `public`.
 
 Public data needs no token. Use a token when a tool needs to know which system it belongs to, or when your own tool should see private members too.
 
+You can create tokens in the dashboard or in the bot.
+
+**In the dashboard (or the Plurapack app):**
+
+1. Select **🔑 API tokens** in the sidebar.
+2. Select **➕ New token**, give it a name, and pick **Read (public only)**, **Read (private too)**, or **Write**.
+3. Copy the token from the window that opens. It's shown once.
+4. To cancel a token, select **Revoke** next to it.
+
+**In the bot:**
+
 1. Open a **direct message** with the bot. Plurapack won't create tokens in a server or group chat.
 2. Create a token:
 
