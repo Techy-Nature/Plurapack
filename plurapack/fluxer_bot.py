@@ -34,6 +34,7 @@ from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .browser_audio import BrowserAudioStore
 from .voice_service import VoiceService
+from .voice_shortcuts import SHORTCUT_ACTIONS, voice_shortcut_reply
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .login import LoginError, LoginService
 from .proxy import EditCommandError, Incoming, ProxyService, command_prefixes
@@ -506,8 +507,12 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         if voice_service is None: await ctx.send("Custom voice storage is not configured."); return
         try: parts = shlex.split(arguments)
         except ValueError as error: await ctx.send(str(error)); return
-        action = parts.pop(0).casefold() if parts and parts[0].casefold() in {"upload", "list", "default", "rename", "delete", "settings", "generic"} else "upload"
-        if not parts: await ctx.send(f"Use `{prefix}voice upload MEMBER VOICE_NAME` with a WAV/MP3 attachment, or list/default/rename/delete."); return
+        action = parts.pop(0).casefold() if parts and parts[0].casefold() in {"upload", "list", "default", "rename", "delete", "settings", "generic", *SHORTCUT_ACTIONS} else "upload"
+        if action in SHORTCUT_ACTIONS:
+            try: await ctx.send(voice_shortcut_reply(store, voice_service, account(ctx), action, parts, prefix))
+            except (PermissionError, ValueError) as error: await ctx.send(str(error))
+            return
+        if not parts: await ctx.send(f"Use `{prefix}voice upload MEMBER VOICE_NAME` with a WAV/MP3 attachment, or list/default/rename/delete/shortcut."); return
         selector = parts.pop(0)
         try:
             member = store.member_selected(account(ctx), selector)

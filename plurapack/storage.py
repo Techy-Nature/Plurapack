@@ -236,7 +236,7 @@ class Store:
                     proxy_message_id TEXT PRIMARY KEY, source_message_id TEXT NOT NULL UNIQUE,
                     channel_id TEXT NOT NULL, system_id TEXT NOT NULL, member_id TEXT NOT NULL,
                     owner_account_id TEXT NOT NULL, created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-                    deleted_at INTEGER, FOREIGN KEY(member_id) REFERENCES members(id)
+                    deleted_at INTEGER, voice_id TEXT, FOREIGN KEY(member_id) REFERENCES members(id)
                 );
                 CREATE TABLE IF NOT EXISTS forms (
                     id TEXT PRIMARY KEY CHECK(length(id)=5),
@@ -269,6 +269,7 @@ class Store:
                     form_id TEXT REFERENCES forms(id) ON DELETE CASCADE,
                     prefix TEXT NOT NULL,
                     suffix TEXT NOT NULL DEFAULT '',
+                    voice_id TEXT,
                     CHECK((member_id IS NOT NULL) <> (form_id IS NOT NULL)),
                     UNIQUE(system_id, prefix, suffix)
                 );
@@ -399,6 +400,15 @@ class Store:
             group_columns = {row[1] for row in db.execute("PRAGMA table_info(groups)")}
             if "banner" not in group_columns:
                 db.execute("ALTER TABLE groups ADD COLUMN banner TEXT")
+            # Voice shortcuts. Deliberately not foreign keys: every read joins
+            # voices and ignores a link whose voice is gone, so a voice restored
+            # after a failed storage delete keeps its shortcuts.
+            tag_columns = {row[1] for row in db.execute("PRAGMA table_info(proxy_tags)")}
+            if "voice_id" not in tag_columns:
+                db.execute("ALTER TABLE proxy_tags ADD COLUMN voice_id TEXT")
+            proxied_columns = {row[1] for row in db.execute("PRAGMA table_info(proxied_messages)")}
+            if "voice_id" not in proxied_columns:
+                db.execute("ALTER TABLE proxied_messages ADD COLUMN voice_id TEXT")
             tokens_sql = db.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='api_tokens'"
             ).fetchone()[0]
@@ -1430,15 +1440,81 @@ class Store:
                         f'Proxy tag "{rendered}" is already assigned to another '
                         f'{owner_type} ({owner_id}).'
                     )
+            # Tags that survive the replacement keep their voice shortcut.
+            voices = {(row["prefix"], row["suffix"]): row["voice_id"] for row in db.execute(
+                f"SELECT prefix,suffix,voice_id FROM proxy_tags WHERE {column}=?", (target.id,))}
             db.execute(f"DELETE FROM proxy_tags WHERE {column}=?", (target.id,))
             db.executemany(
-                f"INSERT INTO proxy_tags(system_id,{column},prefix,suffix) VALUES (?,?,?,?)",
-                [(member.system_id, target.id, tag.prefix, tag.suffix) for tag in values],
+                f"INSERT INTO proxy_tags(system_id,{column},prefix,suffix,voice_id) VALUES (?,?,?,?,?)",
+                [(member.system_id, target.id, tag.prefix, tag.suffix,
+                  voices.get((tag.prefix, tag.suffix))) for tag in values],
             )
             primary = values[0] if values else ProxyTag("")
             db.execute(f"UPDATE {table} SET prefix=?,suffix=? WHERE id=?",
                        (primary.prefix, primary.suffix, target.id))
         return self.proxy_tags(form_id=target.id) if form else self.proxy_tags(member_id=target.id)
+
+    def tag_identity(self, account_id: str, selector: str) -> tuple[Member, Form | None]:
+        """Resolve a member or form selector to its base member and optional form."""
+        member = self.member_selected(account_id, selector)
+        if member is not None:
+            return member, None
+        selected = self.form_selected(account_id, selector)
+        if selected is None:
+            raise PermissionError("Member or form not found or not owned by this account.")
+        form, member = selected
+        return member, form
+
+    def configure_tag_voice(self, account_id: str, selector: str, prefix: str, suffix: str = "",
+                            voice_id: str | None = None) -> list[tuple[ProxyTag, Voice | None]]:
+        """Make one proxy tag speak with a specific custom voice of its member.
+
+        The tag is added first when the member or form does not have it yet, so a
+        single command creates a working shortcut. ``voice_id=None`` returns the
+        tag to the member's selected voice; the tag itself is kept.
+        """
+        member, form = self.tag_identity(account_id, selector)
+        prefix, suffix = prefix.strip(), suffix.strip()
+        if not prefix:
+            raise ValueError("A voice shortcut needs a proxy prefix.")
+        if voice_id is not None:
+            self.member_voice(account_id, member.id, voice_id)
+        column, target = ("form_id", form.id) if form else ("member_id", member.id)
+        with self.connect() as db:
+            exists = db.execute(f"SELECT 1 FROM proxy_tags WHERE {column}=? AND prefix=? AND suffix=?",
+                                (target, prefix, suffix)).fetchone()
+        if not exists:
+            if voice_id is None:
+                raise ValueError("That proxy tag is not configured.")
+            if form:
+                self.configure_form_proxy(account_id, form.id, prefix, suffix)
+            else:
+                self.configure_member_proxy(account_id, member.id, prefix, suffix)
+        with self.connect() as db:
+            db.execute(f"UPDATE proxy_tags SET voice_id=? WHERE {column}=? AND prefix=? AND suffix=?",
+                       (voice_id, target, prefix, suffix))
+        return self.tag_voices(member_id=None if form else member.id, form_id=form.id if form else None)
+
+    def tag_voices(self, member_id: str | None = None,
+                   form_id: str | None = None) -> list[tuple[ProxyTag, Voice | None]]:
+        """Every tag of one member or form, with the voice it speaks in when one is set."""
+        if (member_id is None) == (form_id is None):
+            raise ValueError("Specify exactly one member or form.")
+        column, value = ("member_id", member_id) if member_id else ("form_id", form_id)
+        owner = "t.member_id" if member_id else "(SELECT member_id FROM forms WHERE id=t.form_id)"
+        with self.connect() as db:
+            rows = db.execute(f"""SELECT t.prefix,t.suffix,v.* FROM proxy_tags t
+                LEFT JOIN voices v ON v.id=t.voice_id AND v.member_id={owner}
+                WHERE t.{column}=? ORDER BY t.id""", (value,)).fetchall()
+        return [(ProxyTag(str(row["prefix"]), str(row["suffix"])),
+                 self._voice(row) if row["id"] is not None else None) for row in rows]
+
+    @staticmethod
+    def _speaking_with(member: Member, storage_id: str | None) -> Member:
+        """The member as it should sound when a tag or proxy carries its own voice."""
+        if not storage_id:
+            return member
+        return replace(member, voice_reference=f"{storage_id}.wav", voice_source="custom")
 
     def configure_voice(self, account_id: str, member_selector: str, voice_reference: str | None,
                         voice_settings: str | dict[str, Any] = "{}", playback: str = "send",
@@ -1474,13 +1550,27 @@ class Store:
         return self.member_selected(account_id, member.id)  # type: ignore[return-value]
 
     def match_member(self, account_id: str, content: str) -> tuple[Member, str] | None:
+        match = self.match_proxy(account_id, content)
+        return (match[0], match[1]) if match else None
+
+    def match_proxy(self, account_id: str, content: str) -> tuple[Member, str, str | None] | None:
+        """Match proxy tags, returning the identity, the body, and the tag's voice ID.
+
+        When the matched tag is a voice shortcut, the returned member already
+        speaks with that voice.
+        """
         with self.connect() as db:
-            form_rows = db.execute("""SELECT f.id,t.prefix,t.suffix FROM proxy_tags t
+            form_rows = db.execute("""SELECT f.id,t.prefix,t.suffix,v.id voice_id,v.storage_id
+                FROM proxy_tags t
                 JOIN forms f ON f.id=t.form_id JOIN members m ON m.id=f.member_id
-                JOIN owners o ON o.system_id=m.system_id WHERE o.account_id=?
+                JOIN owners o ON o.system_id=m.system_id
+                LEFT JOIN voices v ON v.id=t.voice_id AND v.member_id=m.id
+                WHERE o.account_id=?
                 ORDER BY length(t.prefix)+length(t.suffix) DESC,t.id""", (account_id,)).fetchall()
-            rows = db.execute("""SELECT m.*,t.prefix tag_prefix,t.suffix tag_suffix FROM proxy_tags t
+            rows = db.execute("""SELECT m.*,t.prefix tag_prefix,t.suffix tag_suffix,
+                v.id tag_voice_id,v.storage_id tag_storage_id FROM proxy_tags t
                 JOIN members m ON m.id=t.member_id JOIN owners o ON o.system_id=m.system_id
+                LEFT JOIN voices v ON v.id=t.voice_id AND v.member_id=m.id
                 WHERE o.account_id=? ORDER BY length(t.prefix)+length(t.suffix) DESC,t.id""",
                 (account_id,)).fetchall()
         for form in form_rows:
@@ -1490,10 +1580,11 @@ class Store:
                 if body:
                     identity = self.proxy_identity(account_id, str(form["id"]))
                     if identity:
-                        return identity, body
+                        return self._speaking_with(identity, form["storage_id"]), body, form["voice_id"]
         for row in rows:
             values = dict(row)
             prefix, suffix = values.pop("tag_prefix"), values.pop("tag_suffix")
+            voice_id, storage_id = values.pop("tag_voice_id"), values.pop("tag_storage_id")
             member = Member(**values)
             if content.startswith(prefix) and (not suffix or content.endswith(suffix)):
                 end = -len(suffix) if suffix else None
@@ -1501,17 +1592,20 @@ class Store:
                 if body:
                     # Proxy tags select the stable member, but presentation is
                     # allowed to come from their configured default form.
-                    return self.proxy_identity(account_id, member.id) or member, body
+                    identity = self.proxy_identity(account_id, member.id) or member
+                    return self._speaking_with(identity, storage_id), body, voice_id
         return None
 
-    def record_proxy(self, source_id: str, proxy_id: str, channel_id: str, member: Member, owner: str) -> bool:
+    def record_proxy(self, source_id: str, proxy_id: str, channel_id: str, member: Member, owner: str,
+                     voice_id: str | None = None) -> bool:
         if self.system_for(owner) != member.system_id:
             raise PermissionError("Account does not own this member.")
         try:
             with self.connect() as db:
                 db.execute("""INSERT INTO proxied_messages
-                    (proxy_message_id,source_message_id,channel_id,system_id,member_id,owner_account_id)
-                    VALUES (?,?,?,?,?,?)""", (proxy_id, source_id, channel_id, member.system_id, member.id, owner))
+                    (proxy_message_id,source_message_id,channel_id,system_id,member_id,owner_account_id,voice_id)
+                    VALUES (?,?,?,?,?,?,?)""",
+                    (proxy_id, source_id, channel_id, member.system_id, member.id, owner, voice_id))
             return True
         except sqlite3.IntegrityError:
             return False
@@ -1565,13 +1659,20 @@ class Store:
         return str(row["proxy_message_id"]) if row else None
 
     def proxy_identity_for(self, proxy_id: str, account_id: str) -> Member | None:
-        """Return the current identity for an owned, live proxy message."""
+        """Return the current identity for an owned, live proxy message.
+
+        A proxy sent through a voice shortcut keeps that voice when it is edited.
+        """
         with self.connect() as db:
-            row = db.execute("""SELECT p.member_id FROM proxied_messages p
+            row = db.execute("""SELECT p.member_id,v.storage_id FROM proxied_messages p
                 JOIN owners o ON o.system_id=p.system_id
+                LEFT JOIN voices v ON v.id=p.voice_id AND v.member_id=p.member_id
                 WHERE p.proxy_message_id=? AND o.account_id=? AND p.deleted_at IS NULL""",
                 (proxy_id, account_id)).fetchone()
-        return self.proxy_identity(account_id, str(row["member_id"])) if row else None
+        if not row:
+            return None
+        identity = self.proxy_identity(account_id, str(row["member_id"]))
+        return self._speaking_with(identity, row["storage_id"]) if identity else None
 
     def replace_proxy(self, old_proxy_id: str, new_proxy_id: str, member: Member, account_id: str) -> bool:
         """Move durable attribution to a re-proxied message, if the caller owns both."""
@@ -1580,7 +1681,7 @@ class Store:
         try:
             with self.connect() as db:
                 cursor = db.execute("""UPDATE proxied_messages
-                    SET proxy_message_id=?, member_id=?, owner_account_id=?
+                    SET proxy_message_id=?, member_id=?, owner_account_id=?, voice_id=NULL
                     WHERE proxy_message_id=? AND system_id=? AND deleted_at IS NULL""",
                     (new_proxy_id, member.id, account_id, old_proxy_id, member.system_id))
                 return cursor.rowcount == 1
