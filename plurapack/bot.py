@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .proxy import EditCommandError, Incoming, ProxyService
+from .proxy import ALTERNATIVE_COMMAND_PREFIXES, EditCommandError, Incoming, ProxyService, command_prefixes
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .browser_audio import BrowserAudioStore
@@ -104,12 +104,12 @@ COMMAND_HELP = {
     "edit": (
         "e", "[-append|-prepend] NEW_TEXT",
         "Edit the proxied message you reply to, or your latest one in this channel. "
-        "pk;edit and tul!edit work too.",
+        "pk;edit, tul;edit, tup;edit and tul!edit work too.",
     ),
     "reproxy": (
         "rp", "MEMBER_OR_FORM",
         "Repost the proxied message you reply to, or your latest one in this channel, "
-        "as another member or form. pk;reproxy works too.",
+        "as another member or form. pk;reproxy, tul;reproxy and tup;reproxy work too.",
     ),
     "color": ("c", "MEMBER HEX", "Set a member username color."),
     "link": ("l", "", "Create a single-use account link code."),
@@ -333,7 +333,10 @@ def _help_pages(prefix: str, selector: str = "", limit: int = 1800) -> list[str]
         return [f"**{selected}** — {summary}\nUsage: `{invocation}`\nAliases: "
                 + ", ".join(f"`{prefix}{alias}`" for alias in aliases)]
 
+    alternatives = ", ".join(f"`{alt}`" for alt in ALTERNATIVE_COMMAND_PREFIXES if alt != prefix)
     heading = f"**Plurapack commands**\nUse `{prefix}help COMMAND` for details.\n"
+    if alternatives:
+        heading += f"{alternatives} work in place of `{prefix}` too.\n"
     lines = []
     for name, (shortcut, usage, summary) in COMMAND_HELP.items():
         invocation = f"{prefix}{name}{f' {usage}' if usage else ''}"
@@ -346,6 +349,12 @@ def _help_pages(prefix: str, selector: str = "", limit: int = 1800) -> list[str]
         page += line + "\n"
     pages.append(page.rstrip())
     return pages
+
+
+def _prefix_summary(prefix: str) -> str:
+    """``p; (also pk;, tul;, tup;)`` for status lines: configured prefix first."""
+    alternatives = [alt for alt in ALTERNATIVE_COMMAND_PREFIXES if alt != prefix]
+    return f"{prefix} (also {', '.join(alternatives)})" if alternatives else prefix
 
 
 def _print_cli_status(message: str) -> None:
@@ -361,7 +370,7 @@ def _register_cli_status_listeners(bot: Any, stoat: Any, prefix: str) -> None:
 
     @bot.listen(stoat.ReadyEvent)
     async def ready_listener(event: Any) -> None:
-        _print_cli_status(f"Ready to use. Command prefix: {prefix}")
+        _print_cli_status(f"Ready to use. Command prefix: {_prefix_summary(prefix)}")
 
 
 def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
@@ -764,12 +773,12 @@ def _plurapack_bot_class(commands: Any) -> type:
             if isinstance(error, commands.MissingRequiredArgument):
                 await ctx.send(
                     f"Missing required argument `{error.parameter.name}`. "
-                    f"Use `{self.command_prefix}help {ctx.command.qualified_name}` for usage."
+                    f"Use `{ctx.prefix}help {ctx.command.qualified_name}` for usage."
                 )
                 return
             if isinstance(error, commands.CommandNotFound):
                 await ctx.send(
-                    f"Command not found. Use `{self.command_prefix}help` to see available commands."
+                    f"Command not found. Use `{ctx.prefix}help` to see available commands."
                 )
                 return
             await super().on_command_error(event)
@@ -791,7 +800,7 @@ def _positive_environment_integer(name: str, default: int, maximum: int) -> int:
 def create_bot(prefix: str, database: str) -> Any:
     stoat, commands = _load_stoat()
     bot_class = _plurapack_bot_class(commands)
-    bot = bot_class(command_prefix=prefix, description="Plural communication proxy")
+    bot = bot_class(command_prefix=command_prefixes(prefix), description="Plural communication proxy")
     store = Store(database)
     voice_max_seconds = resolve_voice_max_reference_seconds()
     try:

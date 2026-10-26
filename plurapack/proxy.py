@@ -14,6 +14,22 @@ from .speech import SpeechJob, SpeechQueue
 # and ``pk;reproxy`` behave like ``p;edit`` and ``p;reproxy`` instead of being
 # proxied as new messages.
 COMPATIBLE_EDIT_PREFIXES = ("pk;", "pk!", "tul!")
+# Every command also answers to these, exactly as it does to the configured
+# prefix, so ``pk;front``, ``tul;front`` and ``tup;front`` all mean ``p;front``.
+ALTERNATIVE_COMMAND_PREFIXES = ("pk;", "tul;", "tup;")
+# pk; is shared with PluralKit, which may be in the same server, so edit and
+# reproxy keep treating it as borrowed. tul; and tup; belong to no other bot.
+_BORROWED_PREFIXES = frozenset(prefix.casefold() for prefix in COMPATIBLE_EDIT_PREFIXES)
+
+
+def command_prefixes(primary: str) -> list[str]:
+    """The configured prefix plus the alternatives, longest first.
+
+    Longest first so that a short custom prefix such as ``p`` never swallows
+    the start of ``pk;``.
+    """
+    unique = dict.fromkeys(prefix for prefix in (primary, *ALTERNATIVE_COMMAND_PREFIXES) if prefix)
+    return sorted(unique, key=len, reverse=True)
 EDIT_COMMAND_NAMES = frozenset({"edit", "e"})
 REPROXY_COMMAND_NAMES = frozenset({"reproxy", "rp"})
 _EDIT_MODES = {
@@ -75,6 +91,7 @@ class ProxyService:
     def __init__(self, store: Store, platform: Platform, command_prefix: str = "p;",
                  speech_queue: SpeechQueue | None = None):
         self.store, self.platform, self.command_prefix = store, platform, command_prefix
+        self.command_prefixes = tuple(command_prefixes(command_prefix))
         self.speech_queue = speech_queue
         self._inflight: set[str] = set()
         self._pending_edits: dict[tuple[str, str], str] = {}
@@ -125,15 +142,16 @@ class ProxyService:
     def _split_command(self, content: str, names: frozenset[str]) -> tuple[str, bool] | None:
         """Return ``(arguments, native)`` when *content* is one of *names*.
 
-        Accepts our prefix and the PluralKit/Tupperbox spellings; ``native`` is
+        Accepts our prefixes and the PluralKit/Tupperbox spellings; ``native`` is
         False for the borrowed ones.
         """
         stripped = content.lstrip()
         lowered = stripped.casefold()
-        for prefix in dict.fromkeys((self.command_prefix, *COMPATIBLE_EDIT_PREFIXES)):
+        candidates = dict.fromkeys((*self.command_prefixes, *COMPATIBLE_EDIT_PREFIXES))
+        for prefix in sorted(candidates, key=len, reverse=True):
             if prefix and lowered.startswith(prefix.casefold()):
                 remainder = stripped[len(prefix):]
-                native = prefix == self.command_prefix
+                native = prefix == self.command_prefix or prefix.casefold() not in _BORROWED_PREFIXES
                 break
         else:
             return None
@@ -289,7 +307,7 @@ class ProxyService:
         reproxy_request = self.parse_reproxy_command(message.content)
         if reproxy_request is not None:
             return await self.reproxy_with_command(message, reproxy_request)
-        if message.content.startswith(self.command_prefix):
+        if message.content.startswith(self.command_prefixes):
             return None
         edit_key = (message.author_id, message.channel_id)
         edit_target = self._pending_edits.get(edit_key)

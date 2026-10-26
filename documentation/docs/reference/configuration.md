@@ -6,7 +6,7 @@ Plurapack reads configuration from environment variables. It does not automatica
 | --- | --- | --- | --- |
 | `STOAT_BOT_TOKEN` | One platform token required | — | Private Stoat bot token. |
 | `FLUXER_BOT_TOKEN` | One platform token required | — | Private Fluxer bot token. Set both tokens to run both connections together. |
-| `PLURAPACK_PREFIX` | No | `p;` | Prefix for bot commands, not member tags. |
+| `PLURAPACK_PREFIX` | No | `p;` | Prefix for bot commands, not member tags. `pk;`, `tul;`, and `tup;` always work as well. |
 | `PLURAPACK_DATA_DIR` | No | — | Persistent data directory. The default database is created beneath it. |
 | `PLURAPACK_DATABASE` | No | `PLURAPACK_DATA_DIR/plurapack.sqlite3`, or `plurapack.sqlite3` | Exact SQLite database path; takes precedence over `PLURAPACK_DATA_DIR`. |
 | `PLURAPACK_TTS_URL` | No | disabled | Full protected Modal Chatterbox Turbo v03 HTTP(S) endpoint. |

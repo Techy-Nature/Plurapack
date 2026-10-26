@@ -23,6 +23,39 @@ def test_help_lists_every_command_with_usage_and_shortcut():
             assert usage in rendered
 
 
+def test_help_mentions_the_alternative_prefixes():
+    heading = bot._help_pages("p;")[0]
+    assert "`pk;`, `tul;`, `tup;` work in place of `p;` too." in heading
+    assert "`pk;` work in place" not in bot._help_pages("pk;")[0]
+
+
+def _stoat_message(content):
+    return SimpleNamespace(content=content, channel=None, get_author=lambda: None, author_id="owner")
+
+
+@pytest.mark.parametrize(("content", "prefix"), [
+    ("p;front Alex", "p;"), ("pk;front Alex", "pk;"), ("tul;front Alex", "tul;"), ("tup;fr Alex", "tup;"),
+])
+async def test_stoat_dispatches_every_command_prefix(content, prefix):
+    client = bot.create_bot("p;", ":memory:")
+    ctx = await client.get_context(_stoat_message(content), None)
+    assert ctx.prefix == prefix
+    assert ctx.command is client.get_command("front")
+
+
+async def test_stoat_command_errors_echo_the_prefix_that_was_typed():
+    client = bot.create_bot("p;", ":memory:")
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    ctx = SimpleNamespace(prefix="tup;", send=send)
+    commands = bot._load_stoat()[1]
+    await client.on_command_error(SimpleNamespace(error=commands.CommandNotFound("nope"), context=ctx))
+    assert sent == ["Command not found. Use `tup;help` to see available commands."]
+
+
 def test_help_details_accept_command_shortcuts_and_compatibility_aliases():
     assert bot._help_pages("!", "m") == [
         "**member** — Add a member and proxy tag.\n"
@@ -234,7 +267,7 @@ async def test_cli_reports_connected_and_ready_states(capsys):
     assert capsys.readouterr().out == "[Plurapack] Connected to Stoat.\n"
 
     await listeners[sdk.ReadyEvent](SimpleNamespace())
-    assert capsys.readouterr().out == "[Plurapack] Ready to use. Command prefix: p;\n"
+    assert capsys.readouterr().out == "[Plurapack] Ready to use. Command prefix: p; (also pk;, tul;, tup;)\n"
 
 
 def test_main_reports_that_it_is_connecting(monkeypatch, capsys):

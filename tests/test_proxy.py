@@ -1,7 +1,7 @@
 import pytest
 from pathlib import Path
 
-from plurapack.proxy import EditCommandError, EditRequest, Incoming, ProxyService, ReproxyRequest
+from plurapack.proxy import EditCommandError, EditRequest, Incoming, ProxyService, ReproxyRequest, command_prefixes
 from plurapack.storage import Store, short_hash
 
 
@@ -380,3 +380,40 @@ def test_non_reproxy_commands_and_text_are_not_reproxy_commands(store):
         assert service.parse_reproxy_command(content) is None
     assert service.parse_reproxy_command("  p; rp   Alex at Sea ") == ReproxyRequest("Alex at Sea", True)
     assert service.parse_reproxy_command("pk;reproxy Sam") == ReproxyRequest("Sam", False)
+
+
+def test_alternative_command_prefixes_are_listed_longest_first():
+    assert command_prefixes("p;") == ["tul;", "tup;", "pk;", "p;"]
+    assert command_prefixes("pk;") == ["tul;", "tup;", "pk;"]
+    # A short custom prefix must not shadow the start of "pk;".
+    assert command_prefixes("p")[-1] == "p"
+
+
+@pytest.mark.parametrize("command", ["pk;front Alex", "tul;front Alex", "tup;fr Alex", "p;front Alex"])
+async def test_every_command_prefix_is_never_autoproxied(store, command):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    store.configure_autoproxy("owner", "alex")
+    assert await service.handle(Incoming("cmd", "channel", "owner", command)) is None
+    assert platform.sent == [] and platform.deleted == []
+
+
+@pytest.mark.parametrize("command", ["tul;edit", "tup;edit", "TUP;e"])
+async def test_tul_and_tup_edit_behave_like_our_own_prefix(store, command):
+    platform, service = await _proxied(store)
+    assert await service.handle(Incoming("cmd", "channel", "owner", f"{command} fixed",
+                                         reply_to_id="proxy-1")) == "proxy-1"
+    assert platform.edited == [("channel", "proxy-1", "fixed")]
+    assert service.parse_edit_command(f"{command} x") == EditRequest("x", "replace", True)
+    # Unlike borrowed pk;, they explain mistakes instead of staying quiet.
+    with pytest.raises(EditCommandError, match="no recent proxied message"):
+        await service.handle(Incoming("again", "elsewhere", "owner", f"{command} hi"))
+
+
+@pytest.mark.parametrize("command", ["tul;reproxy", "tup;rp"])
+async def test_tul_and_tup_reproxy_behave_like_our_own_prefix(store, command):
+    platform, service = await _proxied(store)
+    sam = store.add_member("owner", "Sam", "[sam]")
+    assert service.parse_reproxy_command(f"{command} Sam") == ReproxyRequest("Sam", True)
+    await service.handle(Incoming("cmd", "channel", "owner", f"{command} Sam", reply_to_id="proxy-1"))
+    assert platform.reproxied == [("proxy-1", sam.id)]
