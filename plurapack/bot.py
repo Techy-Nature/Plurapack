@@ -135,7 +135,7 @@ COMMAND_HELP = {
     "viewmember": ("vm", "MEMBER", "Show one member card."),
     "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
     "deletesystem": ("ds", "", "Start permanent system deletion."),
-    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings ...", "Manage member voices."),
+    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings ...; server off|on|list [SERVER_ID]", "Manage member voices and servers where voice is off."),
     "voiceoff": ("of", "MEMBER", "Disable speech for a member."),
     "voiceformat": ("vf", "MEMBER on|off [MODE]", "Configure semantic speech formatting."),
 }
@@ -720,6 +720,29 @@ def _download_voice_attachment(attachment: Any, max_bytes: int = 25 * 1024 * 102
 
 class StoatDependencyError(RuntimeError):
     """Raised when the bot is launched without the Stoat SDK installed."""
+
+
+def _voice_server_reply(store: Store, account_id: str, parts: list[str],
+                        current_server_id: str | None, prefix: str) -> str:
+    """Handle `voice server off|on|list [SERVER_ID]` for both chat platforms."""
+    usage = f"Use `{prefix}voice server off|on [SERVER_ID]` or `{prefix}voice server list`."
+    action = parts[0].casefold() if parts else ""
+    if action == "list" and len(parts) == 1:
+        servers = store.voice_muted_servers(account_id)
+        if not servers:
+            return "Voice is on in every server."
+        return "Voice is off in these servers:\n" + "\n".join(
+            f"• `{server}`{' (this server)' if server == current_server_id else ''}" for server in servers)
+    if action not in {"off", "on"} or len(parts) > 2:
+        return usage
+    server_id = parts[1] if len(parts) == 2 else current_server_id
+    if not server_id:
+        return f"Use this in a server, or give its ID: `{prefix}voice server {action} SERVER_ID`."
+    changed = store.set_voice_server_muted(account_id, str(server_id), action == "off")
+    where = "this server" if server_id == current_server_id else f"server `{server_id}`"
+    if action == "off":
+        return f"Voice is {'now' if changed else 'already'} off in {where}. Proxies there stay silent for every member."
+    return f"Voice is {'now' if changed else 'already'} on in {where}."
 
 
 def _load_stoat() -> tuple[Any, Any]:
@@ -1320,6 +1343,14 @@ def create_bot(prefix: str, database: str) -> Any:
     @bot.command(aliases=[COMMAND_SHORTCUTS["voice"]])
     async def voice(ctx: commands.Context, *, arguments: str = "") -> None:
         """Manage private UUID-named voices through the shared voice service."""
+        words = arguments.split()
+        if words and words[0].casefold() == "server":
+            try:
+                reply = _voice_server_reply(store, ctx.author.id, words[1:],
+                                            getattr(ctx.message, "server_id", None), prefix)
+            except (PermissionError, ValueError) as error:
+                reply = str(error)
+            await ctx.send(reply); return
         if voice_service is None:
             await ctx.send("Custom voice storage is not configured.")
             return

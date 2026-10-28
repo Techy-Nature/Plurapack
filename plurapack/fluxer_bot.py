@@ -28,6 +28,7 @@ from .bot import (
     _read_url_attachment,
     _update_profile_image_from_message,
     _download_voice_attachment,
+    _voice_server_reply,
     _positive_environment_integer,
 )
 from .chatterbox import ChatterboxBackend
@@ -503,6 +504,12 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         await run(ctx, lambda: store.configure_speech_formatting(account(ctx), selector, enabled.casefold() == "on", strikethrough.casefold()), lambda m: f"Speech formatting for **{m.name}** is {'On' if m.speech_formatting else 'Off'}; crossed-out text is `{m.strikethrough_speech}`.")
 
     async def voice_command(ctx: Any, *, arguments: str = "") -> None:
+        words = arguments.split()
+        if words and words[0].casefold() == "server":
+            guild_id = getattr(getattr(ctx, "message", ctx), "guild_id", None)
+            await run(ctx, lambda: _voice_server_reply(store, account(ctx), words[1:],
+                                                       str(guild_id) if guild_id else None, prefix),
+                      lambda reply: reply); return
         if voice_service is None: await ctx.send("Custom voice storage is not configured."); return
         try: parts = shlex.split(arguments)
         except ValueError as error: await ctx.send(str(error)); return

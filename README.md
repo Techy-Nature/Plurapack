@@ -353,6 +353,8 @@ Keep the repository private and credentials server-only.
 Use `p;voice generic MEMBER Jordan.wav`, or attach audio to
 `p;voice upload MEMBER "My voice" send`. Upload/list/default/rename/delete and
 multiple voices per member remain supported. Renaming never changes the UUID.
+Use `p;voice server off` in a server to keep your whole system silent there
+(`p;voice server on` undoes it, `p;voice server list` shows muted servers).
 During speech Plurapack sends only text and `generic:Jordan` or `custom:<UUID>`;
 Modal retrieves the recording independently. Reference audio is not fetched or
 uploaded by Plurapack for every TTS message. Generic WAV files keep their filenames
