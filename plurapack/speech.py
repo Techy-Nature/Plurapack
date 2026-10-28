@@ -62,8 +62,13 @@ def speech_parts(text: str, member: Member) -> tuple[SpeechPart, ...]:
         index = end + len(marker)
     add("".join(buffer))
     # Avoid awkward gaps left by omitted actions without altering spoken words.
-    return tuple(SpeechPart(" ".join(part.text.split()), part.style)
-                 for part in parts if part.text.strip())
+    result = tuple(SpeechPart(" ".join(part.text.split()), part.style)
+                   for part in parts if part.text.strip())
+    # Punctuation or emoji left behind by omitted actions (``*waves*.``) is not
+    # speech; synthesizing it only produces a short, empty-sounding clip.
+    if not any(character.isalnum() for part in result for character in part.text):
+        return ()
+    return result
 
 
 @dataclass(frozen=True)
