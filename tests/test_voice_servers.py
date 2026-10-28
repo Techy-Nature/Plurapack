@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from plurapack.bot import _voice_server_reply
+from plurapack.bot import _incoming_from_stoat_message, _stoat_server_id, _voice_server_reply
 from plurapack.proxy import Incoming, ProxyService
 from plurapack.storage import Store
 from tests.test_fluxer_bot import make_fluxer_commands
@@ -93,3 +93,15 @@ async def test_fluxer_voice_server_command_works_without_voice_storage(tmp_path,
     assert "now off in this server" in replies[-1]
     await commands["vo"](ctx, arguments="server on")
     assert store.voice_muted_servers("123") == []
+
+
+def test_stoat_server_id_comes_from_the_message_channel():
+    # Stoat messages carry no server_id; the server lives on the channel.
+    in_server = SimpleNamespace(get_server=lambda: (None, "01SERVER"))
+    in_dm = SimpleNamespace(get_server=lambda: (None, ""))
+    assert _stoat_server_id(in_server) == "01SERVER"
+    assert _stoat_server_id(in_dm) is None
+    message = SimpleNamespace(id="m", channel_id="c", content="hi", replies=[],
+                              get_server=lambda: (None, "01SERVER"))
+    author = SimpleNamespace(id="owner", bot=False)
+    assert _incoming_from_stoat_message(message, author).server_id == "01SERVER"

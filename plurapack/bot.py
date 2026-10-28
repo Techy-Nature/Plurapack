@@ -775,6 +775,20 @@ async def _is_private_stoat_channel(ctx: Any, sdk: Any) -> bool:
     return bool(private_types) and isinstance(channel, private_types)
 
 
+def _stoat_server_id(message: Any) -> str | None:
+    """Return the server a Stoat message was sent in; Stoat keeps it on the channel."""
+    server_id = getattr(message, "server_id", None)
+    if server_id:
+        return str(server_id)
+    get_server = getattr(message, "get_server", None)
+    if callable(get_server):
+        try:
+            return get_server()[1] or None
+        except Exception:
+            return None
+    return None
+
+
 def _incoming_from_stoat_message(message: Any, author: Any) -> Incoming:
     """Translate a Stoat message into the platform-neutral proxy model."""
     reply_id = None
@@ -788,7 +802,7 @@ def _incoming_from_stoat_message(message: Any, author: Any) -> Incoming:
         message.content,
         bool(getattr(author, "bot", None)),
         reply_id,
-        getattr(message, "server_id", None),
+        _stoat_server_id(message),
     )
 
 
@@ -1347,7 +1361,7 @@ def create_bot(prefix: str, database: str) -> Any:
         if words and words[0].casefold() == "server":
             try:
                 reply = _voice_server_reply(store, ctx.author.id, words[1:],
-                                            getattr(ctx.message, "server_id", None), prefix)
+                                            _stoat_server_id(ctx.message), prefix)
             except (PermissionError, ValueError) as error:
                 reply = str(error)
             await ctx.send(reply); return
@@ -1643,7 +1657,7 @@ def create_bot(prefix: str, database: str) -> Any:
         if scope == "channel":
             scope_id = message.channel_id
         elif scope == "server":
-            scope_id = getattr(message, "server_id", None)
+            scope_id = _stoat_server_id(message)
             if scope_id is None:
                 await ctx.send("This command must be used in a server to set a server override.")
                 return
