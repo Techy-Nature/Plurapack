@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -367,15 +368,93 @@ def _print_cli_status(message: str) -> None:
     print(f"[Plurapack] {message}", flush=True)
 
 
-def _register_cli_status_listeners(bot: Any, stoat: Any, prefix: str) -> None:
+# stoat.py pings every 30 seconds but waits on the WebSocket with no timeout,
+# so a connection that goes quiet without closing leaves the bot running but
+# deaf.  These limits decide when the watchdog gives up on the connection.
+STOAT_READY_TIMEOUT = 90.0
+STOAT_SILENCE_TIMEOUT = 150.0
+STOAT_WATCHDOG_INTERVAL = 15.0
+
+
+class StoatConnectionWatchdog:
+    """Exit the bot when its Stoat connection stalls so the host restarts it."""
+
+    def __init__(
+        self,
+        last_pong: Callable[[], Any],
+        *,
+        ready_timeout: float = STOAT_READY_TIMEOUT,
+        silence_timeout: float = STOAT_SILENCE_TIMEOUT,
+        interval: float = STOAT_WATCHDOG_INTERVAL,
+        clock: Callable[[], float] = time.monotonic,
+        exit: Callable[[int], Any] = os._exit,
+    ) -> None:
+        self._last_pong = last_pong
+        self._ready_timeout = ready_timeout
+        self._silence_timeout = silence_timeout
+        self._interval = interval
+        self._clock = clock
+        self._exit = exit
+        self._connected_at: float | None = None
+        self._ready = False
+        self._last_activity = 0.0
+        self._seen_pong: Any = None
+        self._task: asyncio.Task[None] | None = None
+
+    def connected(self) -> None:
+        self._connected_at = self._clock()
+        self._ready = False
+        if self._task is None:
+            self._task = asyncio.get_running_loop().create_task(self.run())
+
+    def ready(self) -> None:
+        self._ready = True
+        self._last_activity = self._clock()
+
+    def stall_reason(self) -> str | None:
+        """Why the connection looks dead, or ``None`` while it is healthy."""
+        now = self._clock()
+        pong = self._last_pong()
+        if pong is not None and pong != self._seen_pong:
+            self._seen_pong = pong
+            self._last_activity = now
+        if self._connected_at is None:
+            return None
+        if not self._ready:
+            waited = now - self._connected_at
+            if waited > self._ready_timeout:
+                return f"Stoat connected {waited:.0f}s ago but never became ready"
+            return None
+        silent = now - self._last_activity
+        if silent > self._silence_timeout:
+            return f"Stoat has not answered a heartbeat for {silent:.0f}s"
+        return None
+
+    async def run(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            reason = self.stall_reason()
+            if reason:
+                _print_cli_status(f"{reason}; exiting so the bot restarts.")
+                self._exit(1)
+                return
+
+
+def _register_cli_status_listeners(
+    bot: Any, stoat: Any, prefix: str, watchdog: StoatConnectionWatchdog | None = None
+) -> None:
     """Report the distinct WebSocket-connected and fully-ready states."""
     @bot.listen(stoat.AfterConnectEvent)
     async def connected_listener(event: Any) -> None:
         _print_cli_status("Connected to Stoat.")
+        if watchdog is not None:
+            watchdog.connected()
 
     @bot.listen(stoat.ReadyEvent)
     async def ready_listener(event: Any) -> None:
         _print_cli_status(f"Ready to use. Command prefix: {_prefix_summary(prefix)}")
+        if watchdog is not None:
+            watchdog.ready()
 
 
 def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
@@ -847,7 +926,8 @@ def create_bot(prefix: str, database: str) -> Any:
         bot.speech_queue = speech_queue
     service = ProxyService(store, platform, prefix, speech_queue)
     login_service = LoginService(store)
-    _register_cli_status_listeners(bot, stoat, prefix)
+    watchdog = StoatConnectionWatchdog(lambda: getattr(bot.shard, "last_pong_at", None))
+    _register_cli_status_listeners(bot, stoat, prefix, watchdog)
     # These controls are intentionally ephemeral: restarting the bot closes old
     # pagers and invalidates outstanding destructive confirmations.
     info_pages: dict[str, tuple[str, str, list[list[Any]], int]] = {}
