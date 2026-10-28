@@ -43,6 +43,11 @@ rebuilds. Locally, the same choice is a Docker build argument:
 ...` so the image command is used. The server automatically listens on
 Railway's `PORT` and on all interfaces.
 
+If the Stoat connection goes quiet (it connects but never becomes ready, or
+stops answering heartbeats for about two and a half minutes), the bot logs why
+and exits. The included `railway.toml` sets the restart policy to **Always**,
+so Railway starts it again on its own.
+
 Railway's container filesystem is ephemeral. To retain systems, members,
 settings, login state, and other SQLite data across redeployments or container
 replacement:

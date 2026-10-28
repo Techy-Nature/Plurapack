@@ -1,0 +1,4 @@
+# Restart the container whenever it stops. The Stoat connection watchdog exits
+# the bot when the connection stalls, and this brings it straight back.
+[deploy]
+restartPolicyType = "ALWAYS"

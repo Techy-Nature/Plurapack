@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 import io
 import wave
@@ -268,6 +269,98 @@ async def test_cli_reports_connected_and_ready_states(capsys):
 
     await listeners[sdk.ReadyEvent](SimpleNamespace())
     assert capsys.readouterr().out == "[Plurapack] Ready to use. Command prefix: p; (also pk;, tul;, tup;)\n"
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+
+def make_watchdog(pong=None):
+    clock = FakeClock()
+    state = {"pong": pong}
+    watchdog = bot.StoatConnectionWatchdog(
+        lambda: state["pong"], ready_timeout=90, silence_timeout=150, clock=clock)
+    return watchdog, clock, state
+
+
+def test_watchdog_is_quiet_before_the_first_connection():
+    watchdog, clock, _ = make_watchdog()
+    clock.now = 10_000
+    assert watchdog.stall_reason() is None
+
+
+async def test_watchdog_flags_a_connection_that_never_becomes_ready():
+    watchdog, clock, _ = make_watchdog()
+    watchdog.connected()
+    clock.now = 90
+    assert watchdog.stall_reason() is None
+    clock.now = 91
+    assert "never became ready" in watchdog.stall_reason()
+    watchdog._task.cancel()
+
+
+async def test_watchdog_flags_silence_after_ready_and_resets_on_pongs():
+    watchdog, clock, state = make_watchdog()
+    watchdog.connected()
+    watchdog.ready()
+    for second in range(30, 600, 30):
+        clock.now = second
+        state["pong"] = second
+        assert watchdog.stall_reason() is None
+    clock.now += 151
+    assert "heartbeat" in watchdog.stall_reason()
+    watchdog._task.cancel()
+
+
+async def test_watchdog_reconnect_restarts_the_ready_timer():
+    watchdog, clock, _ = make_watchdog()
+    watchdog.connected()
+    watchdog.ready()
+    clock.now = 100
+    watchdog.connected()
+    clock.now = 180
+    assert watchdog.stall_reason() is None
+    clock.now = 191
+    assert "never became ready" in watchdog.stall_reason()
+    watchdog._task.cancel()
+
+
+async def test_watchdog_exits_with_failure_when_the_connection_stalls(capsys):
+    exits = []
+    clock = FakeClock()
+    watchdog = bot.StoatConnectionWatchdog(
+        lambda: None, ready_timeout=1, interval=0, clock=clock, exit=exits.append)
+    watchdog.connected()
+    clock.now = 5
+    await asyncio.wait_for(watchdog._task, 1)
+    assert exits == [1]
+    assert "exiting so the bot restarts" in capsys.readouterr().out
+
+
+async def test_cli_status_listeners_drive_the_watchdog():
+    listeners = {}
+    calls = []
+
+    class FakeBot:
+        def listen(self, event_type):
+            def register(callback):
+                listeners[event_type] = callback
+                return callback
+
+            return register
+
+    watchdog = SimpleNamespace(connected=lambda: calls.append("connected"),
+                               ready=lambda: calls.append("ready"))
+    sdk = SimpleNamespace(AfterConnectEvent=object(), ReadyEvent=object())
+    bot._register_cli_status_listeners(FakeBot(), sdk, "p;", watchdog)
+
+    await listeners[sdk.AfterConnectEvent](SimpleNamespace())
+    await listeners[sdk.ReadyEvent](SimpleNamespace())
+    assert calls == ["connected", "ready"]
 
 
 def test_main_reports_that_it_is_connecting(monkeypatch, capsys):
