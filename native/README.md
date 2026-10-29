@@ -211,6 +211,11 @@ npm run icons
 
 If `src-tauri/gen/android` exists, this also updates the Android launcher icons.
 
+The committed Android icons have two hand tweaks that `npm run icons` overwrites, so redo them afterwards:
+
+- Each `src-tauri/icons/android/mipmap-*/ic_launcher_foreground.png` has the logo shrunk to about 62% of the canvas, centred on a transparent background. Android launchers crop adaptive icons to a circle or squircle, and a full-size logo gets its edges cut off.
+- `src-tauri/icons/android/values/ic_launcher_background.xml` uses `#00000000` (transparent) instead of `#FFFFFF`, so the logo has no white backing.
+
 ## Good to know
 
 - **Use `https://`.** Android blocks plain `http://` servers in release builds. Railway addresses are already `https://`.
