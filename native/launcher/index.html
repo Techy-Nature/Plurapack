@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Plurapack</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1017;--panel:#121a24;--line:#2a3746;--text:#f2f5f7;--muted:#aeb9c5;--accent:#73d7bd;--danger:#ffacb8}
+*{box-sizing:border-box}
+body{margin:0;min-height:100dvh;display:grid;place-items:center;padding:max(1rem,env(safe-area-inset-top)) 1rem max(1rem,env(safe-area-inset-bottom));background:var(--bg);color:var(--text);font:16px system-ui,sans-serif}
+main{width:min(440px,100%);padding:2rem;border:1px solid var(--line);border-radius:1rem;background:var(--panel);box-shadow:0 1rem 3rem #0008}
+.mark{width:56px;height:56px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(135deg,#73d7bd,#8d7cf8);color:#f7f5ff;font-size:1.6rem;margin-bottom:1rem}
+h1{margin:0 0 .4rem;font-size:1.5rem}
+p{margin:0 0 1.2rem;color:var(--muted);line-height:1.45}
+label{display:grid;gap:.45rem;font-weight:700}
+input[type=url]{width:100%;min-height:48px;padding:.7rem;border:1px solid var(--line);border-radius:.6rem;background:#091019;color:var(--text);font:inherit}
+.check{display:flex;align-items:center;gap:.6rem;margin:1rem 0;font-weight:400;color:var(--muted)}
+.check input{width:20px;height:20px}
+button{width:100%;min-height:48px;border:1px solid #50b7a2;border-radius:.65rem;background:#256d60;color:var(--text);font:inherit;font-weight:700;cursor:pointer}
+button:disabled{opacity:.6;cursor:progress}
+button:focus-visible,input:focus-visible{outline:3px solid #f7cf68;outline-offset:3px}
+#status{min-height:1.4em;margin:1rem 0 0;font-size:.92rem}
+#status.error{color:var(--danger);font-weight:700}
+</style>
+</head>
+<body>
+<main>
+  <div class="mark" aria-hidden="true">✦</div>
+  <h1>Open your Plurapack dashboard</h1>
+  <p>Enter the address of your Plurapack server, the same one you open in a browser. You sign in the usual way, with a one-time code sent to the bot.</p>
+  <form id="connect" novalidate>
+    <label>Server address<input id="server" type="url" inputmode="url" autocomplete="url" placeholder="https://plurapack.example.app" required></label>
+    <label class="check"><input id="remember" type="checkbox" checked> Open this server automatically next time</label>
+    <button id="open" type="submit">Open dashboard</button>
+    <p id="status" role="status" aria-live="polite"></p>
+  </form>
+</main>
+<script>
+"use strict";
+const SERVER_KEY = "plurapack.server", AUTO_KEY = "plurapack.autoOpen";
+const form = document.querySelector("#connect"), input = document.querySelector("#server");
+const remember = document.querySelector("#remember"), button = document.querySelector("#open");
+const statusLine = document.querySelector("#status");
+
+function read(key) { try { return localStorage.getItem(key); } catch { return null; } }
+function write(key, value) { try { localStorage.setItem(key, value); } catch { /* storage unavailable */ } }
+
+function normalize(value) {
+  let text = value.trim();
+  if (!text) throw new Error("Enter your Plurapack server address.");
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) text = `https://${text}`;
+  const url = new URL(text);
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error("The address must start with https://.");
+  return url.origin;
+}
+
+function show(message, bad = false) {
+  statusLine.textContent = message;
+  statusLine.className = bad ? "error" : "";
+}
+
+// An opaque no-cors request still fails fast when the server cannot be reached,
+// which avoids leaving the window on a blank WebView error page.
+async function reachable(origin) {
+  const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    await fetch(`${origin}/api/health`, { mode: "no-cors", cache: "no-store", signal: controller.signal });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function open(origin) {
+  button.disabled = true;
+  show(`Connecting to ${origin}…`);
+  if (!(await reachable(origin))) {
+    button.disabled = false;
+    show("That server could not be reached. Check the address and your connection.", true);
+    return;
+  }
+  // The dashboard uses this to show a "Switch server" button that returns here.
+  const launcher = `${location.protocol}//${location.host}`;
+  location.assign(`${origin}/?plurapack-app=${encodeURIComponent(launcher)}`);
+}
+
+form.addEventListener("submit", (event) => {
+  event.preventDefault();
+  let origin;
+  try { origin = normalize(input.value); } catch (error) { show(error.message, true); return; }
+  input.value = origin;
+  write(SERVER_KEY, origin);
+  write(AUTO_KEY, remember.checked ? "1" : "0");
+  open(origin);
+});
+
+const saved = read(SERVER_KEY), auto = read(AUTO_KEY) !== "0";
+const setup = new URLSearchParams(location.search).has("setup");
+if (saved) input.value = saved;
+remember.checked = auto;
+if (saved && auto && !setup) open(saved);
+else input.focus();
+</script>
+</body>
+</html>

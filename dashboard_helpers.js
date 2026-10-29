@@ -18,6 +18,17 @@
     { id: "both", label: "Both", enabled: true },
   ]);
 
+  const TOKEN_SCOPES = Object.freeze([
+    { id: "read:public", label: "Read (public only)",
+      help: "Sees only what your system has made public with privacy settings." },
+    { id: "read:private", label: "Read (private too)",
+      help: "Sees private members and fields of your system. Only give it to tools you trust." },
+    { id: "write", label: "Write",
+      help: "Reads everything and can switch fronts and edit member profiles." },
+  ]);
+  // The Plurapack desktop and Android app opens the dashboard from a local launcher page.
+  const APP_LAUNCHER_ORIGINS = Object.freeze(["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"]);
+
   function nextFormName(forms) {
     const names = new Set(forms.map((form) => form.displayName));
     let number = 0;
@@ -37,6 +48,31 @@
   function selectSystem() { return initialView(); }
   function selectMember(memberId) { return { kind: "member", memberId }; }
   function selectGroup(groupId) { return { kind: "group", groupId }; }
+  function selectTokens() { return { kind: "tokens" }; }
+  function apiTokensEndpoint(systemId, tokenId) {
+    const base = `/api/systems/${encodeURIComponent(systemId)}/api-tokens`;
+    return tokenId === undefined ? base : `${base}/${encodeURIComponent(tokenId)}`;
+  }
+  function tokenScope(id) {
+    return TOKEN_SCOPES.find((scope) => scope.id === id) || { id, label: id, help: "" };
+  }
+  function formatTimestamp(seconds, fallback = "Never") {
+    if (!seconds) return fallback;
+    return new Date(seconds * 1000).toISOString().slice(0, 10);
+  }
+  // Returns the app's launcher page when the dashboard was opened from the app, otherwise null.
+  function appLauncherUrl(value) {
+    if (!value) return null;
+    let url;
+    try {
+      url = new URL(value);
+    } catch {
+      return null;
+    }
+    // `url.origin` is "null" for custom schemes such as tauri:, so compare scheme and host.
+    const origin = `${url.protocol}//${url.host}`;
+    return APP_LAUNCHER_ORIGINS.includes(origin) ? `${origin}/?setup=1` : null;
+  }
   function selectForm(view, formId) {
     if (view.kind !== "member") throw new Error("A form requires a selected member.");
     return { ...view, formId };
@@ -127,8 +163,9 @@
     return fallback;
   }
 
-  return { PROFILE_FIELDS, VOICE_MODES, nextFormName, nextMemberName, initialView, selectSystem,
-    selectMember, selectGroup, selectForm, memberEndpoint, formEndpoint, groupEndpoint,
+  return { PROFILE_FIELDS, VOICE_MODES, TOKEN_SCOPES, nextFormName, nextMemberName, initialView,
+    selectSystem, selectMember, selectGroup, selectTokens, selectForm, apiTokensEndpoint, tokenScope,
+    formatTimestamp, appLauncherUrl, memberEndpoint, formEndpoint, groupEndpoint,
     deletionRequest, enterEdit, consolidatedPatch, hasPatchFields, failedSave, filterMembers,
     membershipDraft, updateMembership, membershipPayload,
     preservedGroupRefresh,
