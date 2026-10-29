@@ -30,6 +30,10 @@ short per-operation connections allow safe concurrent access. The existing
 `owners.account_id` primary key intentionally limits each account to one linked
 system; the account response uses a `systems` list only as a stable API shape.
 
+### Desktop and Android app
+
+[`native/`](native/README.md) wraps the dashboard as a [Tauri 2](https://v2.tauri.app/) app: WebKit on macOS and Linux, WebView2 on Windows, and an Android APK. The **App builds** GitHub Actions workflow builds every platform; [`native/README.md`](native/README.md) has step-by-step instructions for downloading or building it yourself. The dashboard's **🔑 API tokens** page creates, lists, and revokes `read:public`, `read:private`, and `write` tokens.
+
 ### Railway deployment
 
 Railway automatically builds the included `Dockerfile`. It installs Plurapack
@@ -42,6 +46,11 @@ rebuilds. Locally, the same choice is a Docker build argument:
 `docker build --build-arg PLURAPACK_PLATFORMS=stoat .` Remove any existing Railway start-command override such as `uvicorn
 ...` so the image command is used. The server automatically listens on
 Railway's `PORT` and on all interfaces.
+
+If the Stoat connection goes quiet (it connects but never becomes ready, or
+stops answering heartbeats for about two and a half minutes), the bot logs why
+and exits. The included `railway.toml` sets the restart policy to **Always**,
+so Railway starts it again on its own.
 
 Railway's container filesystem is ephemeral. To retain systems, members,
 settings, login state, and other SQLite data across redeployments or container
@@ -348,6 +357,8 @@ Keep the repository private and credentials server-only.
 Use `p;voice generic MEMBER Jordan.wav`, or attach audio to
 `p;voice upload MEMBER "My voice" send`. Upload/list/default/rename/delete and
 multiple voices per member remain supported. Renaming never changes the UUID.
+Use `p;voice server off` in a server to keep your whole system silent there
+(`p;voice server on` undoes it, `p;voice server list` shows muted servers).
 During speech Plurapack sends only text and `generic:Jordan` or `custom:<UUID>`;
 Modal retrieves the recording independently. Reference audio is not fetched or
 uploaded by Plurapack for every TTS message. Generic WAV files keep their filenames

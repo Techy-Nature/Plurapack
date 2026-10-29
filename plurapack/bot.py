@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -135,7 +136,7 @@ COMMAND_HELP = {
     "viewmember": ("vm", "MEMBER", "Show one member card."),
     "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
     "deletesystem": ("ds", "", "Start permanent system deletion."),
-    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings|shortcut|shortcuts ...", "Manage member voices."),
+    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings|shortcut|shortcuts ...; server off|on|list [SERVER_ID]", "Manage member voices, voice shortcuts and servers where voice is off."),
     "voiceoff": ("of", "MEMBER", "Disable speech for a member."),
     "voiceformat": ("vf", "MEMBER on|off [MODE]", "Configure semantic speech formatting."),
 }
@@ -368,15 +369,93 @@ def _print_cli_status(message: str) -> None:
     print(f"[Plurapack] {message}", flush=True)
 
 
-def _register_cli_status_listeners(bot: Any, stoat: Any, prefix: str) -> None:
+# stoat.py pings every 30 seconds but waits on the WebSocket with no timeout,
+# so a connection that goes quiet without closing leaves the bot running but
+# deaf.  These limits decide when the watchdog gives up on the connection.
+STOAT_READY_TIMEOUT = 90.0
+STOAT_SILENCE_TIMEOUT = 150.0
+STOAT_WATCHDOG_INTERVAL = 15.0
+
+
+class StoatConnectionWatchdog:
+    """Exit the bot when its Stoat connection stalls so the host restarts it."""
+
+    def __init__(
+        self,
+        last_pong: Callable[[], Any],
+        *,
+        ready_timeout: float = STOAT_READY_TIMEOUT,
+        silence_timeout: float = STOAT_SILENCE_TIMEOUT,
+        interval: float = STOAT_WATCHDOG_INTERVAL,
+        clock: Callable[[], float] = time.monotonic,
+        exit: Callable[[int], Any] = os._exit,
+    ) -> None:
+        self._last_pong = last_pong
+        self._ready_timeout = ready_timeout
+        self._silence_timeout = silence_timeout
+        self._interval = interval
+        self._clock = clock
+        self._exit = exit
+        self._connected_at: float | None = None
+        self._ready = False
+        self._last_activity = 0.0
+        self._seen_pong: Any = None
+        self._task: asyncio.Task[None] | None = None
+
+    def connected(self) -> None:
+        self._connected_at = self._clock()
+        self._ready = False
+        if self._task is None:
+            self._task = asyncio.get_running_loop().create_task(self.run())
+
+    def ready(self) -> None:
+        self._ready = True
+        self._last_activity = self._clock()
+
+    def stall_reason(self) -> str | None:
+        """Why the connection looks dead, or ``None`` while it is healthy."""
+        now = self._clock()
+        pong = self._last_pong()
+        if pong is not None and pong != self._seen_pong:
+            self._seen_pong = pong
+            self._last_activity = now
+        if self._connected_at is None:
+            return None
+        if not self._ready:
+            waited = now - self._connected_at
+            if waited > self._ready_timeout:
+                return f"Stoat connected {waited:.0f}s ago but never became ready"
+            return None
+        silent = now - self._last_activity
+        if silent > self._silence_timeout:
+            return f"Stoat has not answered a heartbeat for {silent:.0f}s"
+        return None
+
+    async def run(self) -> None:
+        while True:
+            await asyncio.sleep(self._interval)
+            reason = self.stall_reason()
+            if reason:
+                _print_cli_status(f"{reason}; exiting so the bot restarts.")
+                self._exit(1)
+                return
+
+
+def _register_cli_status_listeners(
+    bot: Any, stoat: Any, prefix: str, watchdog: StoatConnectionWatchdog | None = None
+) -> None:
     """Report the distinct WebSocket-connected and fully-ready states."""
     @bot.listen(stoat.AfterConnectEvent)
     async def connected_listener(event: Any) -> None:
         _print_cli_status("Connected to Stoat.")
+        if watchdog is not None:
+            watchdog.connected()
 
     @bot.listen(stoat.ReadyEvent)
     async def ready_listener(event: Any) -> None:
         _print_cli_status(f"Ready to use. Command prefix: {_prefix_summary(prefix)}")
+        if watchdog is not None:
+            watchdog.ready()
 
 
 def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
@@ -644,6 +723,29 @@ class StoatDependencyError(RuntimeError):
     """Raised when the bot is launched without the Stoat SDK installed."""
 
 
+def _voice_server_reply(store: Store, account_id: str, parts: list[str],
+                        current_server_id: str | None, prefix: str) -> str:
+    """Handle `voice server off|on|list [SERVER_ID]` for both chat platforms."""
+    usage = f"Use `{prefix}voice server off|on [SERVER_ID]` or `{prefix}voice server list`."
+    action = parts[0].casefold() if parts else ""
+    if action == "list" and len(parts) == 1:
+        servers = store.voice_muted_servers(account_id)
+        if not servers:
+            return "Voice is on in every server."
+        return "Voice is off in these servers:\n" + "\n".join(
+            f"• `{server}`{' (this server)' if server == current_server_id else ''}" for server in servers)
+    if action not in {"off", "on"} or len(parts) > 2:
+        return usage
+    server_id = parts[1] if len(parts) == 2 else current_server_id
+    if not server_id:
+        return f"Use this in a server, or give its ID: `{prefix}voice server {action} SERVER_ID`."
+    changed = store.set_voice_server_muted(account_id, str(server_id), action == "off")
+    where = "this server" if server_id == current_server_id else f"server `{server_id}`"
+    if action == "off":
+        return f"Voice is {'now' if changed else 'already'} off in {where}. Proxies there stay silent for every member."
+    return f"Voice is {'now' if changed else 'already'} on in {where}."
+
+
 def _load_stoat() -> tuple[Any, Any]:
     """Load the runtime adapter only when a bot is being created."""
     if importlib.util.find_spec("stoat") is None:
@@ -674,6 +776,20 @@ async def _is_private_stoat_channel(ctx: Any, sdk: Any) -> bool:
     return bool(private_types) and isinstance(channel, private_types)
 
 
+def _stoat_server_id(message: Any) -> str | None:
+    """Return the server a Stoat message was sent in; Stoat keeps it on the channel."""
+    server_id = getattr(message, "server_id", None)
+    if server_id:
+        return str(server_id)
+    get_server = getattr(message, "get_server", None)
+    if callable(get_server):
+        try:
+            return get_server()[1] or None
+        except Exception:
+            return None
+    return None
+
+
 def _incoming_from_stoat_message(message: Any, author: Any) -> Incoming:
     """Translate a Stoat message into the platform-neutral proxy model."""
     reply_id = None
@@ -687,7 +803,7 @@ def _incoming_from_stoat_message(message: Any, author: Any) -> Incoming:
         message.content,
         bool(getattr(author, "bot", None)),
         reply_id,
-        getattr(message, "server_id", None),
+        _stoat_server_id(message),
     )
 
 
@@ -848,7 +964,8 @@ def create_bot(prefix: str, database: str) -> Any:
         bot.speech_queue = speech_queue
     service = ProxyService(store, platform, prefix, speech_queue)
     login_service = LoginService(store)
-    _register_cli_status_listeners(bot, stoat, prefix)
+    watchdog = StoatConnectionWatchdog(lambda: getattr(bot.shard, "last_pong_at", None))
+    _register_cli_status_listeners(bot, stoat, prefix, watchdog)
     # These controls are intentionally ephemeral: restarting the bot closes old
     # pagers and invalidates outstanding destructive confirmations.
     info_pages: dict[str, tuple[str, str, list[list[Any]], int]] = {}
@@ -1241,6 +1358,14 @@ def create_bot(prefix: str, database: str) -> Any:
     @bot.command(aliases=[COMMAND_SHORTCUTS["voice"]])
     async def voice(ctx: commands.Context, *, arguments: str = "") -> None:
         """Manage private UUID-named voices through the shared voice service."""
+        words = arguments.split()
+        if words and words[0].casefold() == "server":
+            try:
+                reply = _voice_server_reply(store, ctx.author.id, words[1:],
+                                            _stoat_server_id(ctx.message), prefix)
+            except (PermissionError, ValueError) as error:
+                reply = str(error)
+            await ctx.send(reply); return
         if voice_service is None:
             await ctx.send("Custom voice storage is not configured.")
             return
@@ -1539,7 +1664,7 @@ def create_bot(prefix: str, database: str) -> Any:
         if scope == "channel":
             scope_id = message.channel_id
         elif scope == "server":
-            scope_id = getattr(message, "server_id", None)
+            scope_id = _stoat_server_id(message)
             if scope_id is None:
                 await ctx.send("This command must be used in a server to set a server override.")
                 return

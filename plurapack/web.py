@@ -18,11 +18,11 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from .storage import Form, Front, Group, Member, ProxyTag, Store, System
+from .storage import ApiToken, Form, Front, Group, Member, ProxyTag, Store, System
 from .login import LOGIN_START_WINDOW, LoginError, LoginService, LoginStartLimiter
 from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
                        create_session_cookie, require_authenticated_user)
-from .web_models import (ActiveGroupUpdate, FormCreate, FormPatch, FrontUpdate,
+from .web_models import (ActiveGroupUpdate, ApiTokenCreate, FormCreate, FormPatch, FrontUpdate,
                          GroupCreate, GroupMemberUpdate, GroupPatch, MemberCreate,
                          MemberPatch, ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
 from .web_models import VoicePatch, VoiceShortcutUpdate
@@ -125,6 +125,12 @@ def system_json(store: Store, account_id: str, system: System) -> dict[str, Any]
 def front_json(front: Front | None) -> dict[str, Any]:
     return {"memberId": front.member.id if front else None,
             "formId": front.form.id if front and front.form else None}
+
+
+def api_token_json(token: ApiToken) -> dict[str, Any]:
+    """Describe a token without its secret, which is never stored."""
+    return {"id": token.id, "name": token.name, "scope": token.scope,
+            "createdAt": token.created_at, "lastUsedAt": token.last_used_at}
 
 
 def create_app(store: Store | None = None, static_root: Path | None = ROOT,
@@ -714,6 +720,32 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
             await owned_form(system_id, body.member_id, body.form_id, user, store)
             selector = body.form_id
         return front_json(await run(store.switch_front, user.id, selector))
+
+    @app.get("/api/systems/{system_id}/api-tokens")
+    async def list_api_tokens(system_id: str, user: WebUser = Depends(require_authenticated_user),
+                              store: Store = Depends(db)) -> list[dict[str, Any]]:
+        await authorized(system_id, user, store)
+        return [api_token_json(token) for token in await run(store.api_tokens, user.id)]
+
+    @app.post("/api/systems/{system_id}/api-tokens", status_code=201)
+    async def create_api_token(system_id: str, body: ApiTokenCreate,
+                               user: WebUser = Depends(require_authenticated_user),
+                               store: Store = Depends(db)) -> dict[str, Any]:
+        # The secret is returned once, here, and only its hash is kept.
+        await authorized(system_id, user, store)
+        token, secret = await run(store.create_api_token, user.id, body.scope, body.name)
+        return {**api_token_json(token), "secret": secret}
+
+    @app.delete("/api/systems/{system_id}/api-tokens/{token_id}", status_code=204)
+    async def revoke_api_token(system_id: str, token_id: str,
+                               user: WebUser = Depends(require_authenticated_user),
+                               store: Store = Depends(db)) -> Response:
+        await authorized(system_id, user, store)
+        try:
+            await asyncio.to_thread(store.revoke_api_token, user.id, token_id)
+        except ValueError as error:
+            raise HTTPException(404, str(error)) from error
+        return Response(status_code=204)
 
     if static_root:
         dashboard_headers = {"Cache-Control": "no-store"}

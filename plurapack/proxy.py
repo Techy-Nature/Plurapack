@@ -102,10 +102,16 @@ class ProxyService:
             self.speech_queue.cancel(proxy_id)
 
     def _queue_speech(self, channel_id: str, proxy_id: str, text: str, member: Member,
-                      account_id: str) -> None:
+                      account_id: str, server_id: str | None = None) -> None:
         """Make speech a best-effort derived side effect of current proxy state."""
         self._invalidate_speech(proxy_id)
         if not self.speech_queue:
+            return
+        try:
+            if self.store.voice_muted_in(member.system_id, server_id):
+                return
+        except Exception as error:
+            logging.getLogger(__name__).error("Could not check voice server mute (%s)", type(error).__name__)
             return
         try:
             accepted = self.speech_queue.submit(
@@ -262,7 +268,7 @@ class ProxyService:
         self._delete_speech(old_proxy_id)
         if text is not None:
             self._queue_speech(message.channel_id, replacement_id, text, member,
-                               message.author_id)
+                               message.author_id, message.server_id)
         await self.platform.delete_proxy(message.channel_id, old_proxy_id)
         await self.platform.delete_source(message)
         return replacement_id
@@ -290,7 +296,8 @@ class ProxyService:
         await self.platform.edit_proxy(message.channel_id, target, new_text)
         member = self.store.proxy_identity_for(target, message.author_id)
         if member:
-            self._queue_speech(message.channel_id, target, new_text, member, message.author_id)
+            self._queue_speech(message.channel_id, target, new_text, member, message.author_id,
+                               message.server_id)
         # A finished command edit replaces any half-started ✏️ reaction edit here.
         self._pending_edits.pop((message.author_id, message.channel_id), None)
         await self.platform.delete_source(message)
@@ -321,7 +328,7 @@ class ProxyService:
             member = self.store.proxy_identity_for(edit_target, message.author_id)
             if member:
                 self._queue_speech(message.channel_id, edit_target, message.content.strip(), member,
-                                   message.author_id)
+                                   message.author_id, message.server_id)
             self._pending_edits.pop(edit_key, None)
             await self.platform.delete_source(message)
             return edit_target
@@ -356,7 +363,8 @@ class ProxyService:
             if not self.store.record_proxy(message.id, proxy_id, message.channel_id, member, message.author_id,
                                           voice_id):
                 return None
-            self._queue_speech(message.channel_id, proxy_id, body, member, message.author_id)
+            self._queue_speech(message.channel_id, proxy_id, body, member, message.author_id,
+                               message.server_id)
             # The source is removed only after the replacement exists and its attribution is durable.
             await self.platform.delete_source(message)
             return proxy_id

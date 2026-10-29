@@ -262,6 +262,12 @@ class Store:
                     show_system_tag INTEGER NOT NULL CHECK(show_system_tag IN (0,1)),
                     PRIMARY KEY(system_id, scope_type, scope_id)
                 );
+                -- Servers where a system's speech is never generated.
+                CREATE TABLE IF NOT EXISTS voice_muted_servers (
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    server_id TEXT NOT NULL,
+                    PRIMARY KEY(system_id, server_id)
+                );
                 CREATE TABLE IF NOT EXISTS proxy_tags (
                     id INTEGER PRIMARY KEY,
                     system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
@@ -606,6 +612,39 @@ class Store:
         with self.connect() as db:
             db.execute("DELETE FROM system_tag_overrides WHERE system_id=? AND scope_type=? AND scope_id=?",
                        (system_id, scope_type, scope_id))
+
+    def set_voice_server_muted(self, account_id: str, server_id: str, muted: bool) -> bool:
+        """Turn the system's speech off (or back on) in one server; return whether it changed."""
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        server_id = server_id.strip()
+        if not server_id or len(server_id) > 64:
+            raise ValueError("Give a valid server ID.")
+        with self.connect() as db:
+            if muted:
+                changed = db.execute("INSERT OR IGNORE INTO voice_muted_servers VALUES (?,?)",
+                                     (system_id, server_id)).rowcount
+            else:
+                changed = db.execute("DELETE FROM voice_muted_servers WHERE system_id=? AND server_id=?",
+                                     (system_id, server_id)).rowcount
+        return bool(changed)
+
+    def voice_muted_servers(self, account_id: str) -> list[str]:
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        with self.connect() as db:
+            rows = db.execute("SELECT server_id FROM voice_muted_servers WHERE system_id=? ORDER BY server_id",
+                              (system_id,)).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def voice_muted_in(self, system_id: str, server_id: str | None) -> bool:
+        if not server_id:
+            return False
+        with self.connect() as db:
+            return db.execute("SELECT 1 FROM voice_muted_servers WHERE system_id=? AND server_id=?",
+                              (system_id, server_id)).fetchone() is not None
 
     def proxy_name(self, member: Member, server_id: str | None = None,
                    channel_id: str | None = None) -> str:

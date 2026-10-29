@@ -20,6 +20,11 @@ class ProxyTagsUpdate(APIModel):
     proxy_tags: list[ProxyTagUpdate] = Field(alias="proxyTags", max_length=100)
 
 
+class ApiTokenCreate(APIModel):
+    name: str = Field("", max_length=80)
+    scope: Literal["read:public", "read:private", "write"] = "read:public"
+
+
 class SystemPatch(APIModel):
     display_name: str | None = Field(None, alias="displayName", min_length=1, max_length=80)
     description: str | None = Field(None, max_length=1000)

@@ -27,6 +27,20 @@ Keep that repository private.
 Optional controls are `PLURAPACK_TTS_QUEUE_LIMIT` (1–1000, default 8) and
 `PLURAPACK_TTS_WORKERS` (1–4, default 1).
 
+## Turn voice off in a server
+
+Voice can be switched off for your whole system in chosen servers, while it keeps
+working everywhere else (including DMs). Proxies in a muted server are still
+posted; they just are not spoken, for every member and every playback mode.
+
+1. In the server you want silent, send `p;voice server off`.
+2. To switch it off for a server you are not in right now, give its ID:
+   `p;voice server off SERVER_ID`.
+3. See every muted server with `p;voice server list`.
+4. Turn voice back on with `p;voice server on` (or `p;voice server on SERVER_ID`).
+
+This works on both Stoat and Fluxer, and does not need custom voice storage.
+
 ## Configure a member
 
 ```text
