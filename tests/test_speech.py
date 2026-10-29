@@ -133,6 +133,34 @@ def test_semantic_speech_formatting_is_opt_in(voice_store):
     ]
 
 
+@pytest.mark.parametrize("source", [
+    "*waves*",
+    "*waves* *smiles*",
+    "*waves*.",
+    "*hugs* \U0001f49c",
+    "*nods*... *leaves*!",
+])
+def test_action_only_messages_have_no_speech(voice_store, source):
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, "normal")
+    assert speech_parts(source, member) == ()
+
+
+def test_omitted_strikethrough_with_punctuation_has_no_speech(voice_store):
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, "omit")
+    assert speech_parts("~~never mind~~ *shrugs*.", member) == ()
+
+
+async def test_action_only_message_sends_no_clip(voice_store):
+    member = voice_store.configure_voice("owner", "Alex", "alex.wav", "{}", "both")
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, "normal")
+    delivered = []
+    queue = SpeechQueue(Backend(), lambda job, audio: delivered.append("platform"),
+                        deliver_local=lambda job, audio: delivered.append("local"))
+    queue.submit(SpeechJob("c", "p", "*waves*.", member, account_id="owner"))
+    await queue.run_one()
+    assert delivered == []
+
+
 def test_store_rejects_settings_chatterbox_does_not_support(voice_store):
     with pytest.raises(ValueError, match="unsupported fields: arbitrary"):
         voice_store.configure_voice("owner", "Alex", "alex.wav", '{"arbitrary":true}', "send")
