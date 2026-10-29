@@ -59,6 +59,41 @@ limits, assigned a UUID, and stored as `custom/<UUID>.wav` in private Forgejo.
 Each member can keep multiple named custom voices; names are metadata and renaming
 does not rename the recording. The dashboard also offers custom voice management.
 
+## Voice shortcuts per proxy tag
+
+A proxy tag can speak with one particular custom voice of its member, so the same
+member can switch voices just by using a different tag:
+
+```text
+p;voice shortcut MEMBER VOICE PREFIX [SUFFIX]
+p;voice shortcut MEMBER off PREFIX [SUFFIX]
+p;voice shortcuts MEMBER
+```
+
+For example, if Jaden has custom voices called `Calm` and `Loud`:
+
+1. Upload both voices with `p;voice upload Jaden Calm` and `p;voice upload Jaden Loud`.
+2. Run `p;voice shortcut Jaden Loud jl:`.
+3. `jl: hello` now proxies as Jaden and speaks with `Loud`. Jaden's other tags keep
+   using the selected (default) voice.
+
+In the dashboard, open the member: under **Voice shortcuts** in the Voice / TTS
+panel at the top, every member and form proxy tag has a dropdown. Pick a custom
+voice, or **Selected voice** to undo it; the change saves right away.
+
+If the tag does not exist yet, the command adds it to the member first. A form ID
+works in place of the member, so a form's tags can have their own voices too; the
+voice must still belong to the form's member. `off` (or `none`/`default`) returns
+the tag to the member's selected voice without removing the tag. Quote prefixes
+or voice names that contain spaces.
+
+A shortcut changes only which voice is used. Playback (`off`, `local`, `send`,
+`both`) and voice settings still come from the member, so a member whose speech is
+Off stays silent. Editing a proxy keeps the voice it was sent with; re-proxying to
+another member uses that member's voice. Deleting a voice turns its shortcuts back
+into ordinary tags, and replacing a member's tags from the dashboard keeps the
+shortcuts of tags that are still there.
+
 For ordinary speech, Plurapack sends `text`, the namespaced `voice_id`, and any
 active supported voice settings to Modal. A stored generic selection `Jordan.wav`
 becomes `generic:Jordan`; custom selections become `custom:<storage UUID>`, even if

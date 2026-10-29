@@ -338,9 +338,10 @@ class ProxyService:
             member = self.store.proxy_identity(message.author_id, message.content.strip())
             if member:
                 return await self._reproxy(message, message.reply_to_id, member)
-        match = self.store.match_member(message.author_id, message.content)
+        voice_id: str | None = None
+        match = self.store.match_proxy(message.author_id, message.content)
         if match:
-            member, body = match
+            member, body, voice_id = match
         else:
             autoproxy = self.store.autoproxy(message.author_id)
             if autoproxy.member is None or not message.content.strip():
@@ -359,7 +360,8 @@ class ProxyService:
             proxy_id = await self.platform.send_proxy(message, member, body)
             if not proxy_id:
                 return None
-            if not self.store.record_proxy(message.id, proxy_id, message.channel_id, member, message.author_id):
+            if not self.store.record_proxy(message.id, proxy_id, message.channel_id, member, message.author_id,
+                                          voice_id):
                 return None
             self._queue_speech(message.channel_id, proxy_id, body, member, message.author_id,
                                message.server_id)

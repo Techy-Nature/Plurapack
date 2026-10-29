@@ -34,6 +34,7 @@ from .config import (StorageConfigurationError, resolve_database_path,
                      resolve_voice_max_reference_seconds)
 from .imagehost import ImageHost, ImageHostError
 from .voice_service import VoiceService
+from .voice_shortcuts import SHORTCUT_ACTIONS, voice_shortcut_reply
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 
 
@@ -135,7 +136,7 @@ COMMAND_HELP = {
     "viewmember": ("vm", "MEMBER", "Show one member card."),
     "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
     "deletesystem": ("ds", "", "Start permanent system deletion."),
-    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings ...; server off|on|list [SERVER_ID]", "Manage member voices and servers where voice is off."),
+    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings|shortcut|shortcuts ...; server off|on|list [SERVER_ID]", "Manage member voices, voice shortcuts and servers where voice is off."),
     "voiceoff": ("of", "MEMBER", "Disable speech for a member."),
     "voiceformat": ("vf", "MEMBER on|off [MODE]", "Configure semantic speech formatting."),
 }
@@ -1372,9 +1373,15 @@ def create_bot(prefix: str, database: str) -> Any:
             parts = shlex.split(arguments)
         except ValueError as error:
             await ctx.send(str(error)); return
-        action = parts.pop(0).casefold() if parts and parts[0].casefold() in {"upload", "list", "default", "rename", "delete", "settings", "generic"} else "upload"
+        action = parts.pop(0).casefold() if parts and parts[0].casefold() in {"upload", "list", "default", "rename", "delete", "settings", "generic", *SHORTCUT_ACTIONS} else "upload"
+        if action in SHORTCUT_ACTIONS:
+            try:
+                await ctx.send(voice_shortcut_reply(store, voice_service, ctx.author.id, action, parts, prefix))
+            except (PermissionError, ValueError) as error:
+                await ctx.send(str(error))
+            return
         if not parts:
-            await ctx.send(f"Use `{prefix}voice upload MEMBER VOICE_NAME` with a WAV/MP3 attachment, or list/default/rename/delete."); return
+            await ctx.send(f"Use `{prefix}voice upload MEMBER VOICE_NAME` with a WAV/MP3 attachment, or list/default/rename/delete/shortcut."); return
         selector = parts.pop(0)
         try:
             member = store.member_selected(ctx.author.id, selector)

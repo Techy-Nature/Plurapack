@@ -40,7 +40,7 @@ Examples use the default `p;` prefix. Every command also works with `pk;`, `tul;
 | `viewmember MEMBER` | `vm` | Show one embedded member card. |
 | `deletemember MEMBER` | `dm` | Permanently delete an owned member, their forms, and associated records. |
 | `deletesystem` | `ds` | Start confirmation for permanent deletion of all system data. |
-| `voice upload MEMBER VOICE_NAME [PLAYBACK]` | `vo` | Upload a named WAV/MP3 custom voice; `list`, `default`, `generic`, `rename`, `delete`, and `settings` subcommands manage it. |
+| `voice upload MEMBER VOICE_NAME [PLAYBACK]` | `vo` | Upload a named WAV/MP3 custom voice; `list`, `default`, `generic`, `rename`, `delete`, and `settings` subcommands manage it, and `shortcut MEMBER VOICE PREFIX [SUFFIX]` makes one proxy tag speak with a chosen voice. |
 | `voiceoff MEMBER` | `of` | Disable speech for a member. |
 | `voiceformat MEMBER on\|off [MODE]` | `vf` | Configure semantic speech formatting. |
 

@@ -25,7 +25,7 @@ from .web_auth import (COOKIE_NAME, SESSION_LIFETIME, WebUser, cookie_secure,
 from .web_models import (ActiveGroupUpdate, ApiTokenCreate, FormCreate, FormPatch, FrontUpdate,
                          GroupCreate, GroupMemberUpdate, GroupPatch, MemberCreate,
                          MemberPatch, ProxyTagUpdate, ProxyTagsUpdate, SystemPatch)
-from .web_models import VoicePatch
+from .web_models import VoicePatch, VoiceShortcutUpdate
 from .imagehost import ImageHost, ImageHostError
 from .voice_service import VoiceService, selected_voice_type, voice_json
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
@@ -69,7 +69,17 @@ def form_json(form: Form, store: Store | None = None) -> dict[str, Any]:
                           if store else [{"prefix": form.prefix, "suffix": form.suffix}] if form.prefix else [])}
 
 
+def voice_shortcuts_json(store: Store, member: Member, forms: list[Form]) -> list[dict[str, Any]]:
+    """Every member and form proxy tag with the custom voice it speaks in, if any."""
+    owners = [(None, None, store.tag_voices(member_id=member.id))]
+    owners += [(form.id, form.display_name, store.tag_voices(form_id=form.id)) for form in forms]
+    return [{"formId": form_id, "formName": form_name, "prefix": tag.prefix, "suffix": tag.suffix,
+             "voiceId": voice.id if voice else None}
+            for form_id, form_name, tags in owners for tag, voice in tags]
+
+
 def member_json(store: Store, member: Member, front: Front | None = None) -> dict[str, Any]:
+    forms = store.forms_for_member(member.id)
     return {"id": member.id, "systemId": member.system_id, "name": member.name,
             "alias": member.alias, "pronouns": member.pronouns, "color": member.color or "#7765A8",
             "avatar": member.avatar, "description": member.description,
@@ -78,12 +88,13 @@ def member_json(store: Store, member: Member, front: Front | None = None) -> dic
             "banner": member.banner,
             "defaultFormId": member.default_form_id,
             "fronting": bool(front and front.member.id == member.id),
-            "forms": [form_json(form, store) for form in store.forms_for_member(member.id)],
+            "forms": [form_json(form, store) for form in forms],
             "voice": {"configured": member.voice_reference is not None,
                       "selectedType": selected_voice_type(store, member),
                       "selectedReference": member.voice_reference,
                       "settings": json.loads(member.voice_settings), "playback": member.playback,
                       "customVoices": [voice_json(voice) for voice in store.member_voices(member.id)],
+                      "shortcuts": voice_shortcuts_json(store, member, forms),
                       "supportedPlayback": ["off", "local", "send", "both"],
                       "speechFormatting": bool(member.speech_formatting),
                       "strikethroughSpeech": member.strikethrough_speech}}
@@ -576,6 +587,19 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         except VoiceStorageError as error:
             raise HTTPException(502, str(error)) from error
         return Response(status_code=204)
+
+    @app.put("/api/systems/{system_id}/members/{member_id}/voice-shortcuts")
+    async def put_voice_shortcut(system_id: str, member_id: str, body: VoiceShortcutUpdate,
+                                 user: WebUser = Depends(require_authenticated_user),
+                                 store: Store = Depends(db)) -> list[dict[str, Any]]:
+        """Point one member or form proxy tag at a custom voice, or back to the selected one."""
+        member = await owned_member(system_id, member_id, user, store)
+        if body.form_id is not None:
+            await owned_form(system_id, member_id, body.form_id, user, store)
+        await run(store.configure_tag_voice, user.id, body.form_id or member_id,
+                  body.prefix, body.suffix, body.voice_id, form=body.form_id is not None)
+        forms = await run(store.forms_for_member, member_id)
+        return await run(voice_shortcuts_json, store, member, forms)
 
     @app.get("/api/systems/{system_id}/members/{member_id}/forms")
     async def list_forms(system_id: str, member_id: str,
