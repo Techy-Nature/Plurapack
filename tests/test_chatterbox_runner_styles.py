@@ -47,3 +47,15 @@ def test_explicit_speed_factor_remains_supported_separately():
     assert '"speed_factor"' in source
     assert "librosa.effects.time_stretch" in source
     assert "Built-in semantic styles deliberately do not use this path" in source
+
+
+def test_runner_routes_paralinguistic_tags_to_nano():
+    tags = _assignment("PARALINGUISTIC_TAGS")
+    assert {"[sigh]", "[chuckle]", "[laugh]"} <= set(tags)
+    source = RUNNER.read_text()
+    start = source.index("def generate_parts")
+    end = source.index("@modal.fastapi_endpoint", start)
+    parts_function = source[start:end]
+    assert "has_paralinguistic_tag(part[\"text\"])" in parts_function
+    assert "self._generate_nano" in parts_function
+    assert "not has_paralinguistic_tag(prompt)" in source

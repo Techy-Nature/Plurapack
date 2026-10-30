@@ -5,7 +5,7 @@ import pytest
 
 from plurapack.chatterbox import ChatterboxBackend, ChatterboxError
 from plurapack.proxy import Incoming, ProxyService
-from plurapack.speech import SpeechJob, SpeechQueue, speech_parts, speech_worker
+from plurapack.speech import SpeechJob, SpeechPart, SpeechQueue, speech_parts, speech_worker
 from plurapack.storage import Store
 from test_proxy import FakePlatform
 
@@ -458,3 +458,42 @@ async def test_modal_text_limit_applies_after_omissions_and_never_logs_text(voic
         await queue.run_one()
     assert len(delivered) == 1 and queue.queue.empty()
     assert "private " not in caplog.text and "wk-private" not in caplog.text
+
+
+@pytest.mark.parametrize("formatting", [False, True])
+def test_supported_voice_tags_are_normalized_for_the_model(voice_store, formatting):
+    member = voice_store.configure_speech_formatting("owner", "Alex", formatting, "normal")
+    parts = speech_parts("Oh no [Sighs] fine [CHUCKLE] [clears  throat]", member)
+    assert " ".join(part.text for part in parts) == "Oh no [sigh] fine [chuckle] [clear throat]"
+
+
+@pytest.mark.parametrize("formatting", [False, True])
+def test_unsupported_voice_directions_are_not_spoken(voice_store, formatting):
+    member = voice_store.configure_speech_formatting("owner", "Alex", formatting, "normal")
+    text = " ".join(part.text for part in speech_parts("[whispers] hi [very excited] there", member))
+    assert "whispers" not in text and "excited" not in text
+    assert text.split() == ["hi", "there"]
+
+
+@pytest.mark.parametrize("formatting", [False, True])
+def test_direction_only_message_has_no_speech(voice_store, formatting):
+    member = voice_store.configure_speech_formatting("owner", "Alex", formatting, "normal")
+    assert speech_parts("[whispers].", member) == ()
+
+
+def test_tag_only_message_is_still_performed(voice_store):
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, "normal")
+    assert speech_parts("[sigh]", member) == (SpeechPart("[sigh]"),)
+
+
+def test_non_tag_brackets_are_left_alone(voice_store):
+    member = voice_store.member_named("owner", "Alex")
+    source = "Read section [2.1] and [see: notes!]"
+    assert [part.text for part in speech_parts(source, member)] == [source]
+
+
+def test_voice_tags_inside_actions_follow_action_omission(voice_store):
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, "normal")
+    assert [(p.text, p.style) for p in speech_parts("hi *[sigh] waves* **[laughs] wow**", member)] == [
+        ("hi", "normal"), ("[laugh] wow", "emphasis"),
+    ]
