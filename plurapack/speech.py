@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -18,6 +19,41 @@ class SpeechPart:
     style: str = "normal"
 
 
+# Chatterbox Nano/Turbo perform these paralinguistic tags natively instead of
+# reading them aloud. Common verb/plural spellings map to the trained form.
+VOICE_TAGS = {
+    "laugh": "laugh", "laughs": "laugh", "laughing": "laugh",
+    "chuckle": "chuckle", "chuckles": "chuckle", "chuckling": "chuckle",
+    "sigh": "sigh", "sighs": "sigh", "sighing": "sigh",
+    "gasp": "gasp", "gasps": "gasp", "gasping": "gasp",
+    "cough": "cough", "coughs": "cough", "coughing": "cough",
+    "groan": "groan", "groans": "groan", "groaning": "groan",
+    "sniff": "sniff", "sniffs": "sniff", "sniffing": "sniff",
+    "shush": "shush", "shushes": "shush", "shh": "shush",
+    "clear throat": "clear throat", "clears throat": "clear throat",
+    "clearing throat": "clear throat",
+}
+_BRACKET_PATTERN = re.compile(r"\[([^\[\]\n]{1,40})\]")
+# Short word-only brackets (``[whispers]``, ``[excited]``) are treated as voice
+# directions the model cannot perform, so they are dropped rather than spoken.
+_TAG_LIKE_PATTERN = re.compile(r"^[a-z]+(?:[ '-][a-z]+){0,2}$")
+
+
+def voice_tags(text: str) -> str:
+    """Normalize supported ``[tags]`` and drop unsupported tag-like brackets."""
+    def replace(match: re.Match) -> str:
+        name = " ".join(match.group(1).lower().split())
+        if name in VOICE_TAGS:
+            return f"[{VOICE_TAGS[name]}]"
+        return " " if _TAG_LIKE_PATTERN.fullmatch(name) else match.group(0)
+
+    return _BRACKET_PATTERN.sub(replace, text)
+
+
+def _speakable(parts: tuple[SpeechPart, ...]) -> bool:
+    return any(character.isalnum() for part in parts for character in part.text)
+
+
 def speech_parts(text: str, member: Member) -> tuple[SpeechPart, ...]:
     """Interpret the small Markdown subset used for optional expressive speech.
 
@@ -25,9 +61,15 @@ def speech_parts(text: str, member: Member) -> tuple[SpeechPart, ...]:
     are emphasized. Strikethrough follows the member's explicit preference.
     Delimiters are never spoken. This intentionally is not a full Markdown
     renderer, which keeps unmatched punctuation from silently eating speech.
+    Voice tags such as ``[sigh]`` are handled whether or not formatting is on.
     """
+    tagged = voice_tags(text)
     if not member.speech_formatting:
-        return (SpeechPart(text),)
+        plain = (SpeechPart(tagged),)
+        # Only a message emptied by dropped directions is skipped here; plain
+        # speech otherwise keeps its long-standing send-as-written behavior.
+        return plain if tagged == text or _speakable(plain) else ()
+    text = tagged
     parts: list[SpeechPart] = []
     buffer: list[str] = []
 
@@ -66,9 +108,7 @@ def speech_parts(text: str, member: Member) -> tuple[SpeechPart, ...]:
                    for part in parts if part.text.strip())
     # Punctuation or emoji left behind by omitted actions (``*waves*.``) is not
     # speech; synthesizing it only produces a short, empty-sounding clip.
-    if not any(character.isalnum() for part in result for character in part.text):
-        return ()
-    return result
+    return result if _speakable(result) else ()
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,10 @@
 v05 uses Chatterbox Nano for the normal low-cost path and Original Chatterbox
 for semantic formatting or member settings that require CFG/exaggeration.
 Both paths return one WAV and use the same private Forgejo voice references.
+
+Paralinguistic tags such as ``[sigh]`` and ``[chuckle]`` are native to Nano
+only; Original reads them aloud. Any text or formatted part containing one is
+therefore generated with Nano so the tag is performed rather than spoken.
 """
 from __future__ import annotations
 
@@ -30,6 +34,13 @@ SUPPORTED_STYLES = frozenset({"normal", "emphasis", "mumble", "whisper"})
 SUPPORTED_SETTINGS = frozenset({
     "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor"
 })
+
+# Tags Chatterbox Nano/Turbo were trained to perform. Plurapack normalizes
+# spellings and drops unsupported directions before a request reaches Modal.
+PARALINGUISTIC_TAGS = (
+    "[laugh]", "[chuckle]", "[sigh]", "[gasp]", "[cough]",
+    "[groan]", "[sniff]", "[shush]", "[clear throat]",
+)
 
 # Keep styled generation away from the very low CFG/exaggeration combinations
 # that made short spans metallic/robotic in practice. Tone/clarity changes are
@@ -134,6 +145,11 @@ def validate_parts(value: object) -> list[dict[str, str]]:
     if total > MAX_TEXT_CHARACTERS:
         raise ValueError("Speech text exceeds the 500-character limit.")
     return parts
+
+
+def has_paralinguistic_tag(text: str) -> bool:
+    lowered = text.lower()
+    return any(tag in lowered for tag in PARALINGUISTIC_TAGS)
 
 
 def apply_seed(seed: int) -> None:
@@ -317,7 +333,9 @@ class Chatterbox:
         voice_path = self.get_voice(voice_id)
         try:
             # Explicit CFG/exaggeration settings require Original; otherwise Nano.
-            if "exaggeration" in settings or "cfg_weight" in settings:
+            # Tags win over those settings: Original would read them aloud.
+            needs_original = "exaggeration" in settings or "cfg_weight" in settings
+            if needs_original and not has_paralinguistic_tag(prompt):
                 wav = self._generate_original(prompt, voice_path, settings)
                 sample_rate = self._load_original_model().sr
             else:
@@ -336,15 +354,20 @@ class Chatterbox:
         base_settings = validate_settings(settings)
         voice_path = self.get_voice(voice_id)
         try:
-            model = self._load_original_model()
             rendered = []
             for part in parts:
                 style = part["style"]
-                part_settings = {**base_settings, **STYLE_GENERATION_PRESETS[style]}
-                generated = self._generate_original(part["text"], voice_path, part_settings)
+                if has_paralinguistic_tag(part["text"]):
+                    # Nano ignores CFG/exaggeration presets; the non-temporal
+                    # style effect below still gives whisper/mumble their sound.
+                    generated = self._generate_nano(part["text"], voice_path, base_settings)
+                else:
+                    part_settings = {**base_settings, **STYLE_GENERATION_PRESETS[style]}
+                    generated = self._generate_original(part["text"], voice_path, part_settings)
                 rendered.append(apply_style_effect(generated, style).detach().cpu())
             combined = torch.cat(rendered, dim=-1)
-            return self._wav_bytes(combined, model.sr)
+            # Nano and Original share the S3Gen sample rate, so one rate fits both.
+            return self._wav_bytes(combined, self.nano_model.sr)
         except Exception:
             raise SpeechGenerationError("Speech generation failed.") from None
 

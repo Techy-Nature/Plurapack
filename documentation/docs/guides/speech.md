@@ -234,6 +234,36 @@ Edits and re-proxy operations invalidate stale queued/browser audio and enqueue
 speech using the replacement text and selected member voice. Generation and
 platform/browser delivery remain best effort and do not block text proxying.
 
+## Voice tags
+
+Put a tag in square brackets anywhere in a proxied message to have the voice
+perform it instead of reading it aloud, similar to ElevenLabs audio tags:
+
+```text
+[a]Oh, that's hilarious [chuckle] anyway, where were we?
+[a][sigh] Fine, I'll do the dishes.
+```
+
+Supported tags are `[laugh]`, `[chuckle]`, `[sigh]`, `[gasp]`, `[cough]`,
+`[groan]`, `[sniff]`, `[shush]`, and `[clear throat]`. Capitals and common verb
+forms also work, so `[Sighs]`, `[laughing]`, and `[clears throat]` are accepted.
+These are Chatterbox Nano's native paralinguistic tags, so no extra service or
+sound files are involved, and the chat message itself keeps the tag as typed.
+
+Short word-only brackets that are not supported, such as `[whispers]` or
+`[very excited]`, are dropped from speech so they are never read aloud. Other
+brackets such as `[2.1]` or `[see: notes!]` are spoken normally. Tags work
+whether or not semantic formatting is on. Tags inside a `*single-asterisk
+action*` are omitted along with the action, and a tag inside `**emphasis**` or
+`~~crossed-out text~~` is performed with that span's style.
+
+Only Nano can perform tags. A message or formatted span that contains a tag is
+therefore generated with Nano even when member CFG/exaggeration settings or
+formatting would otherwise use Original Chatterbox; those two settings do not
+apply to that span. Redeploy `deployment/chatterbox_runner_v05.py` to Modal to
+enable this routing. Older v05 deployments still perform tags for plain speech
+without CFG/exaggeration settings, but read them aloud on the Original path.
+
 ## Existing records
 
 Existing generic and UUID custom selections require no schema change. Old
