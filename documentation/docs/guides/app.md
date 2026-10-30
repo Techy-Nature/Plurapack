@@ -37,6 +37,21 @@ If a release has been published, the same files are attached to it under **Relea
 
 To use a different server later, select **🔁 Switch server** at the bottom of the dashboard sidebar.
 
+## Voice in your notification tray (Android)
+
+On Android the app can keep playing proxied voice messages from a media notification, even when you switch apps or close the app window.
+
+1. Set the members whose voice you want to hear to **🖥️ Browser** or **🔊 Both** in their **Voice / TTS** settings.
+2. In the dashboard sidebar, select **Start notification player**.
+3. If Android asks to allow notifications, select **Allow**. This puts the controls in your tray.
+4. Use the notification's buttons:
+    - **Pause / Resume** holds new speech until you resume. The server keeps each clip for about two minutes, so older ones are dropped.
+    - **Skip** stops the clip that is playing and moves to the next one.
+    - **Stop** turns the player off and removes the notification.
+5. Tap the notification itself to go back to the app.
+
+Pausing lets the phone sleep again, which saves battery. Music and podcasts get quieter while a clip speaks. On desktop the button stays **Enable voice playback** and plays in the window as before.
+
 ## API tokens
 
 Select **🔑 API tokens** in the sidebar to create, list, and revoke tokens. See [Public API for dashboards](public-api.md) for what each permission level can do.

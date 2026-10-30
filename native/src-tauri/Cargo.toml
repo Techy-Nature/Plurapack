@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+tauri-plugin-voice-player = { path = "plugins/voice-player" }
 
 [profile.release]
 codegen-units = 1
