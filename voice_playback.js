@@ -315,5 +315,65 @@
       }
     }
   }
+
+  // In the Android app, the notification player (native/src-tauri/plugins/voice-player)
+  // plays clips natively and keeps going in the background, so the dashboard's
+  // button starts and stops it instead of the <audio> element.
+  class NativePlayer {
+    static async attach(options) {
+      if (typeof options.invoke !== "function") return null;
+      try {
+        const state = await options.invoke("plugin:voice-player|status");
+        return state?.available ? new NativePlayer(options, state) : null;
+      } catch { return null; }
+    }
+
+    constructor({ invoke, button, status, hint, document, window,
+                  timers = globalThis, log = () => {} }, state) {
+      Object.assign(this, { invoke, button, status, document, timers, log });
+      this.busy = false;
+      if (hint) hint.textContent = "Plays from your notification tray, even with the app closed.";
+      button.addEventListener("click", () => this.toggle());
+      document.addEventListener("visibilitychange", () => this.refresh());
+      window.addEventListener("focus", () => this.refresh());
+      // Pause, skip and stop also happen from the notification, so keep in step.
+      timers.setInterval(() => this.refresh(), 2000);
+      this.show(state);
+    }
+
+    show(state) {
+      this.state = state;
+      this.button.textContent = state.running ? "Stop notification player" : "Start notification player";
+      this.button.setAttribute("aria-pressed", String(Boolean(state.running)));
+      this.status.textContent = state.status || (state.running ? "Voice player is on." : "Voice player is off.");
+    }
+
+    async toggle() {
+      if (this.busy) return;
+      this.busy = true;
+      this.button.disabled = true;
+      const command = this.state.running ? "stop" : "start";
+      try {
+        this.show(await this.invoke(`plugin:voice-player|${command}`));
+        this.log("info", command === "start" ? "Notification player started" : "Notification player stopped");
+      } catch (error) {
+        this.status.textContent = typeof error === "string" ? error : "The notification player is unavailable.";
+        this.log("warn", "Notification player unavailable");
+      } finally {
+        this.busy = false;
+        this.button.disabled = false;
+      }
+    }
+
+    async refresh() {
+      if (this.busy || this.document.visibilityState === "hidden") return;
+      try {
+        const state = await this.invoke("plugin:voice-player|status");
+        if (!this.busy) this.show(state);
+      } catch { /* The next refresh tries again. */ }
+    }
+  }
+
+  VoicePlayback.Native = NativePlayer;
   return VoicePlayback;
 });

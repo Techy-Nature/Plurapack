@@ -402,3 +402,69 @@ test('leaving the page releases URLs and returning from bfcache requires another
   assert.equal(f.controller.disposed, true);
   assert.equal(f.created.length, f.revoked.length);
 });
+
+function nativeFixture(answers) {
+  const calls = [], intervals = [];
+  const button = new Element(), status = new Element(), hint = new Element();
+  const document = new Element(), window = new Element();
+  document.visibilityState = 'visible';
+  const invoke = async command => {
+    calls.push(command);
+    const answer = answers[command.split('|')[1]];
+    if (answer instanceof Error || typeof answer === 'string') throw answer;
+    return answer;
+  };
+  const timers = { setInterval: fn => intervals.push(fn) };
+  return { calls, intervals, button, status, hint, document, window, invoke, timers };
+}
+
+test('without the Android app the dashboard keeps its browser playback', async () => {
+  assert.equal(await VoicePlayback.Native.attach({ invoke: null }), null);
+  const f = nativeFixture({ status: { available: false, running: false, paused: false, status: '' } });
+  assert.equal(await VoicePlayback.Native.attach(f), null);
+  const broken = nativeFixture({ status: new Error('no such plugin') });
+  assert.equal(await VoicePlayback.Native.attach(broken), null);
+});
+
+test('in the Android app the button starts and stops the notification player', async () => {
+  const off = { available: true, running: false, paused: false, status: 'Voice player is off.' };
+  const on = { available: true, running: true, paused: false, status: 'Waiting for new speech…' };
+  const f = nativeFixture({ status: off, start: on, stop: off });
+  const native = await VoicePlayback.Native.attach(f);
+  assert.ok(native);
+  assert.equal(f.button.textContent, 'Start notification player');
+  assert.match(f.hint.textContent, /notification tray/);
+  f.button.emit('click'); await flush();
+  assert.equal(f.calls.at(-1), 'plugin:voice-player|start');
+  assert.equal(f.button.textContent, 'Stop notification player');
+  assert.equal(f.button.attributes['aria-pressed'], 'true');
+  assert.equal(f.status.textContent, 'Waiting for new speech…');
+  f.button.emit('click'); await flush();
+  assert.equal(f.calls.at(-1), 'plugin:voice-player|stop');
+  assert.equal(f.button.textContent, 'Start notification player');
+});
+
+test('the notification player stays in step with its notification controls', async () => {
+  const answers = { status: { available: true, running: true, paused: false, status: 'Playing speech…' } };
+  const f = nativeFixture(answers);
+  await VoicePlayback.Native.attach(f);
+  answers.status = { available: true, running: true, paused: true, status: 'Paused. New speech waits until you resume.' };
+  f.intervals[0](); await flush();
+  assert.equal(f.status.textContent, 'Paused. New speech waits until you resume.');
+  answers.status = { available: true, running: false, paused: false, status: 'Voice player is off.' };
+  f.document.visibilityState = 'hidden';
+  const before = f.calls.length; f.intervals[0](); await flush();
+  assert.equal(f.calls.length, before);
+  f.document.visibilityState = 'visible'; f.window.emit('focus'); await flush();
+  assert.equal(f.button.textContent, 'Start notification player');
+});
+
+test('a refused start shows the reason and leaves the button usable', async () => {
+  const f = nativeFixture({ status: { available: true, running: false, paused: false, status: 'Voice player is off.' },
+    start: 'Open your Plurapack dashboard before starting the player.' });
+  await VoicePlayback.Native.attach(f);
+  f.button.emit('click'); await flush();
+  assert.equal(f.status.textContent, 'Open your Plurapack dashboard before starting the player.');
+  assert.equal(f.button.disabled, false);
+  assert.equal(f.button.textContent, 'Start notification player');
+});

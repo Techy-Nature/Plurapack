@@ -15,7 +15,15 @@ The app bundles one small page, [`launcher/index.html`](launcher/index.html). It
 
 The launcher adds `?plurapack-app=…` to the first dashboard address. The dashboard uses it to show a **🔁 Switch server** button that goes back to the launcher. Only the app's own launcher addresses (`tauri://localhost` and `tauri.localhost`) are accepted.
 
-The dashboard pages get no access to Tauri commands, files, or the device. The app is a window, nothing more.
+The dashboard pages get no access to files or the device. The only native feature they can reach is the Android notification voice player below, through [`capabilities/voice-player.json`](src-tauri/capabilities/voice-player.json).
+
+### Notification voice player (Android)
+
+On Android, the dashboard's voice button becomes **Start notification player**. It starts a media notification that plays proxied voice clips (the members set to **🖥️ Browser** or **🔊 Both**) and keeps playing while the app is in the background or closed. The notification has **Pause/Resume**, **Skip**, and **Stop**, and it also shows on the lock screen.
+
+It lives in [`src-tauri/plugins/voice-player`](src-tauri/plugins/voice-player): a small Tauri plugin with a Kotlin foreground service. The service polls the same `/api/voice/events` and `/api/voice/audio/{id}` endpoints as the browser player, using the app window's sign-in cookie. It reads the server address from the window itself, so a page can only start playback of its own server's clips. Because it is a plugin, `tauri android init` picks it up on its own and the generated Android project still does not need committing.
+
+On desktop the button keeps the normal in-page playback.
 
 ```
 native/
@@ -27,6 +35,8 @@ native/
     ├── Cargo.toml          Rust package for the native shell
     ├── src/lib.rs          Starts the window (shared by desktop and Android)
     ├── src/main.rs         Desktop entry point
+    ├── capabilities/       What the dashboard may call (only the voice player)
+    ├── plugins/voice-player/  Android notification voice player (Rust + Kotlin)
     └── icons/              Generated icons (desktop and Android)
 ```
 
@@ -219,6 +229,7 @@ The committed Android icons have two hand tweaks that `npm run icons` overwrites
 ## Good to know
 
 - **Use `https://`.** Android blocks plain `http://` servers in release builds. Railway addresses are already `https://`.
-- **Signing out** works as normal. Uninstalling the app also clears its sign-in.
+- **The notification player keeps the phone awake enough to poll** for new speech every two seconds while it is playing or waiting. Pause or Stop it from the notification to save battery.
+- **Signing out** works as normal. It also stops the notification player. Uninstalling the app also clears its sign-in.
 - **Downloads and links that open new tabs**, such as **Export system** and the member viewer link, depend on each platform's WebView. If one does nothing in the app, use the dashboard in a browser for that task.
 - **iOS** is possible with the same project (`npx tauri ios init`) but needs a Mac, Xcode, and an Apple developer account to install outside the simulator.

@@ -1,0 +1,10 @@
+{
+  "$schema": "../gen/schemas/remote-schema.json",
+  "identifier": "voice-player",
+  "description": "Lets the dashboard, which is loaded from your own Plurapack server, start and stop the Android notification voice player. The player only ever fetches clips from the page's own server.",
+  "windows": ["main"],
+  "remote": {
+    "urls": ["https://*", "https://*:*", "http://*", "http://*:*"]
+  },
+  "permissions": ["voice-player:default"]
+}
