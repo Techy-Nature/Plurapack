@@ -519,6 +519,10 @@ class Store:
         if system_id:
             with self.connect() as db:
                 db.execute("DELETE FROM current_fronts WHERE system_id=?", (system_id,))
+                # A front-following autoproxy follows an empty front too, so it
+                # stops proxying until someone switches in again.
+                db.execute("""UPDATE autoproxy_settings SET member_id=NULL
+                    WHERE system_id=? AND autofront=1""", (system_id,))
 
     def create_system(self, account_id: str, name: str, description: str = "") -> str:
         description = description.strip()
@@ -1251,7 +1255,11 @@ class Store:
         return Front(member, form) if member else None
 
     def configure_autoproxy(self, account_id: str, selector: str | None) -> Autoproxy:
-        """Select an autoproxy member, or disable autoproxy without changing the front."""
+        """Pin autoproxy to one member, or turn it off, without changing the front.
+
+        Either choice stops front following, so ``autoproxy off`` always means off
+        and ``autoproxy MEMBER`` stays on that member through later front switches.
+        """
         system_id = self.system_for(account_id)
         if not system_id:
             raise PermissionError("Create a system first.")
@@ -1259,13 +1267,13 @@ class Store:
         if selector is not None and member is None:
             raise PermissionError("Member not found or not owned by this account.")
         with self.connect() as db:
-            db.execute("""INSERT INTO autoproxy_settings(system_id,member_id) VALUES (?,?)
-                ON CONFLICT(system_id) DO UPDATE SET member_id=excluded.member_id""",
+            db.execute("""INSERT INTO autoproxy_settings(system_id,member_id,autofront) VALUES (?,?,0)
+                ON CONFLICT(system_id) DO UPDATE SET member_id=excluded.member_id, autofront=0""",
                 (system_id, member.id if member else None))
         return self.autoproxy(account_id)
 
     def configure_autofront(self, account_id: str, enabled: bool) -> Autoproxy:
-        """Optionally make autoproxy follow the first (currently selected) fronter."""
+        """Make autoproxy follow whoever is fronting now and after each switch."""
         system_id = self.system_for(account_id)
         if not system_id:
             raise PermissionError("Create a system first.")

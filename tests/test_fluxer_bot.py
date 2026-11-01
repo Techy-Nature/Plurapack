@@ -167,6 +167,36 @@ async def test_fluxer_profile_form_front_and_link_commands_share_storage(tmp_pat
     assert store.system_for("456") == store.system_for("123")
 
 
+async def test_fluxer_autoproxy_on_follows_whoever_is_fronting(tmp_path, monkeypatch):
+    database = tmp_path / "follow-front.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    replies = []
+
+    async def send(message, **kwargs): replies.append(message)
+    owner = SimpleNamespace(author=SimpleNamespace(id=123), send=send)
+    store.create_system("123", "Crew")
+    river = store.add_member("123", "River", "[r]", "")
+    sky = store.add_member("123", "Sky", "[s]", "")
+
+    await commands["ap"](owner, "on")
+    assert store.autoproxy("123").autofront is True
+    assert "next front switch" in replies[-1]
+
+    await commands["front"](owner, river.id)
+    assert store.autoproxy("123").member.id == river.id
+    await commands["front"](owner, sky.id)
+    assert store.autoproxy("123").member.id == sky.id
+
+    await commands["autofront"](owner, "off")
+    assert "stays on **Sky**" in replies[-1]
+    await commands["af"](owner, "on")
+    assert "**Sky**" in replies[-1] and "follow whoever is fronting" in replies[-1]
+
+    await commands["autoproxy"](owner, "off")
+    assert replies[-1] == "Autoproxy is Off."
+
+
 async def test_fluxer_info_can_show_a_group_and_its_members(tmp_path, monkeypatch):
     database = tmp_path / "group-info.sqlite3"
     commands = make_fluxer_commands(monkeypatch, database)

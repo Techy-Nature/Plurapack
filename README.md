@@ -273,7 +273,7 @@ p;form abc12 "Alex at Sea" https://example/avatar.png Blue fins and a long tail.
 p;formproxy 4f8ac sea: :sea     # sea: proxy with this form even off-front :sea
 p;front 4f8ac                   # a form ID selects its linked member and form together
 p;autoproxy Alex                # proxy Alex's untagged messages (Off by default)
-p;autofront on                  # make autoproxy follow the current/first fronter
+p;autoproxy on                  # follow whoever is fronting (same as p;autofront on)
 p;member Sam S: :S              # proxy with: S: hello :S
 p;color abc12 7b68ee            # color that member's username (also accepts #7b68ee)
 p;import pluralkit {"name":"...","members":[...]}  # paste a PluralKit JSON export

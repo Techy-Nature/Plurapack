@@ -77,15 +77,17 @@ re-proxy an existing message.
 
 ## Make autoproxy follow the front
 
-Autoproxy and autofront are both Off by default. Without autofront, changing
-the current front leaves the independently selected autoproxy member unchanged.
+Autoproxy and autofront are both Off by default. When autoproxy is pinned to
+one member with `p;autoproxy MEMBER`, changing the current front leaves it
+unchanged.
 
-After selecting a front, run `p;autofront on` (or `p;af on`) to make
-autoproxy use that member and follow later front switches. This follows the
-member identity, rather than the selected form's presentation.
+Run `p;autoproxy on` (or `p;ap on`, `p;autofront on`, `p;af on`) to make
+autoproxy use whoever is fronting and follow every later front switch. If
+nobody is fronting yet, it starts with the next switch. When the front is a
+form, untagged proxies use that form's display name and picture.
 
-`p;autofront off` stops following front changes but keeps the autoproxy
-selection. To disable both features, run `p;autofront off` followed by
-`p;autoproxy off`. These settings are shared across linked system accounts.
+`p;autofront off` stops following front changes but keeps proxying as the
+member who was fronting. `p;autoproxy off` turns everything off. These settings
+are shared across linked system accounts.
 
 See [Autoproxy and autofront](proxying.md#autoproxy) for examples and tag precedence.

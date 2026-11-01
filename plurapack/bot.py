@@ -102,7 +102,7 @@ COMMAND_HELP = {
     "systemtag": ("st", "[TAG]", "Set or clear the system name tag."),
     "systemtagshow": ("ts", "SCOPE on|off|default", "Control system tag visibility."),
     "front": ("fr", "MEMBER_OR_FORM", "Switch the current member and form."),
-    "autoproxy": ("ap", "MEMBER_OR_OFF", "Configure untagged-message proxying."),
+    "autoproxy": ("ap", "MEMBER|on|off", "Configure untagged-message proxying; on follows the front."),
     "autofront": ("af", "on|off", "Make autoproxy follow front switches."),
     "edit": (
         "e", "[-append|-prepend] NEW_TEXT",
@@ -721,6 +721,41 @@ def _download_voice_attachment(attachment: Any, max_bytes: int = 25 * 1024 * 102
 
 class StoatDependencyError(RuntimeError):
     """Raised when the bot is launched without the Stoat SDK installed."""
+
+
+AUTOPROXY_FOLLOW_FRONT = {"on", "front"}
+
+
+def _autoproxy_selector(selector: str) -> str | None:
+    """Map ``off`` to ``None``; other values are member selectors or follow keywords."""
+    return None if selector.casefold() == "off" else selector
+
+
+def _autoproxy_reply(configured: Any) -> str:
+    """Describe autoproxy, including when it is following the front."""
+    if configured.autofront:
+        if configured.member:
+            return (f"Autoproxy is On and following the front. It is proxying as "
+                    f"**{configured.member.name}** (`{configured.member.id}`) and will switch "
+                    "when the front changes.")
+        return ("Autoproxy is On and following the front. Nobody is fronting yet, so it "
+                "will start with the next front switch.")
+    if configured.member:
+        return f"Autoproxy is On for **{configured.member.name}** (`{configured.member.id}`)."
+    return "Autoproxy is Off."
+
+
+def _autofront_reply(configured: Any) -> str:
+    """Describe autofront after it is switched on or off."""
+    if not configured.autofront:
+        detail = (f" Autoproxy stays on **{configured.member.name}**." if configured.member
+                  else "")
+        return f"Autofront is Off.{detail}"
+    if configured.member:
+        return (f"Autofront is On. Autoproxy is now **{configured.member.name}** and will "
+                "follow whoever is fronting.")
+    return ("Autofront is On. Nobody is fronting yet, so autoproxy will follow the next "
+            "front switch.")
 
 
 def _voice_server_reply(store: Store, account_id: str, parts: list[str],
@@ -1592,22 +1627,20 @@ def create_bot(prefix: str, database: str) -> Any:
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["autoproxy"]])
     async def autoproxy(ctx: commands.Context, selector: str) -> None:
-        """Set an independent untagged-message proxy member, or turn it off."""
+        """Set an untagged-message proxy member, follow the front with ``on``, or turn it off."""
         try:
-            configured = store.configure_autoproxy(
-                ctx.author.id, None if selector.casefold() == "off" else selector
-            )
+            if selector.casefold() in AUTOPROXY_FOLLOW_FRONT:
+                configured = store.configure_autofront(ctx.author.id, True)
+            else:
+                configured = store.configure_autoproxy(ctx.author.id, _autoproxy_selector(selector))
         except PermissionError as error:
             await ctx.send(str(error))
             return
-        if configured.member:
-            await ctx.send(f"Autoproxy is On for **{configured.member.name}** (`{configured.member.id}`).")
-        else:
-            await ctx.send("Autoproxy is Off.")
+        await ctx.send(_autoproxy_reply(configured))
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["autofront"]])
     async def autofront(ctx: commands.Context, enabled: str) -> None:
-        """Opt in to updating autoproxy from the first/current fronter."""
+        """Make autoproxy follow whoever is fronting (``on``), or stop following (``off``)."""
         if enabled.casefold() not in {"on", "off"}:
             await ctx.send("Autofront must be on or off.")
             return
@@ -1616,8 +1649,7 @@ def create_bot(prefix: str, database: str) -> Any:
         except PermissionError as error:
             await ctx.send(str(error))
             return
-        detail = f" Autoproxy is now **{configured.member.name}**." if configured.member else ""
-        await ctx.send(f"Autofront is {'On' if configured.autofront else 'Off'}.{detail}")
+        await ctx.send(_autofront_reply(configured))
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["edit"]])
     async def edit(ctx: commands.Context, *, text: str = "") -> None:

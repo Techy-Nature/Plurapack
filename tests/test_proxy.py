@@ -150,6 +150,61 @@ def test_autofront_is_opt_in_and_tracks_front_without_coupling_by_default(store)
     assert store.autoproxy("owner").member.id == alex.id
 
 
+def test_autofront_follows_every_front_switch_and_an_empty_front(store):
+    alex = store.member_named("owner", "Alex")
+    sam = store.add_member("owner", "Sam", "[sam]")
+
+    state = store.configure_autofront("owner", True)
+    assert state.autofront is True and state.member is None
+
+    store.switch_front("owner", sam.id)
+    assert store.autoproxy("owner").member.id == sam.id
+    store.switch_front("owner", alex.id)
+    assert store.autoproxy("owner").member.id == alex.id
+
+    store.clear_front("owner")
+    assert store.autoproxy("owner").member is None
+    assert store.autoproxy("owner").autofront is True
+    store.switch_front("owner", sam.id)
+    assert store.autoproxy("owner").member.id == sam.id
+
+    pinned = store.configure_autoproxy("owner", alex.id)
+    assert pinned.autofront is False
+    store.switch_front("owner", sam.id)
+    assert store.autoproxy("owner").member.id == alex.id
+
+    store.configure_autofront("owner", True)
+    off = store.configure_autoproxy("owner", None)
+    assert off.member is None and off.autofront is False
+    store.switch_front("owner", alex.id)
+    assert store.autoproxy("owner").member is None
+
+
+def test_clearing_front_keeps_a_fixed_autoproxy_member(store):
+    alex = store.member_named("owner", "Alex")
+    store.configure_autoproxy("owner", alex.id)
+    store.switch_front("owner", alex.id)
+    store.clear_front("owner")
+    assert store.autoproxy("owner").member.id == alex.id
+
+
+async def test_autoproxy_proxies_as_each_new_fronter_when_following(store):
+    platform = FakePlatform()
+    service = ProxyService(store, platform)
+    alex = store.member_named("owner", "Alex")
+    sam = store.add_member("owner", "Sam", "[sam]")
+    store.configure_autofront("owner", True)
+
+    store.switch_front("owner", alex.id)
+    await service.handle(Incoming("one", "channel", "owner", "first"))
+    store.switch_front("owner", sam.id)
+    await service.handle(Incoming("two", "channel", "owner", "second"))
+    store.clear_front("owner")
+    assert await service.handle(Incoming("three", "channel", "owner", "third")) is None
+
+    assert platform.sent == [(alex.id, "first"), (sam.id, "second")]
+
+
 async def test_failed_replacement_preserves_original(store):
     platform = FakePlatform(fail=True)
     with pytest.raises(RuntimeError):
