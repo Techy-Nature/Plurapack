@@ -135,41 +135,35 @@ Replace `MEMBER` with a member ID, full name, alias, or proxy prefix.
 The shortcut is `p;ap MEMBER`. Explicit proxy tags still select the tagged
 member for that message. Commands and bot messages are not automatically proxied.
 
-With autofront Off, changing the current front does not change the autoproxy
-member. You can choose each independently.
+Choosing a member this way pins autoproxy to that member. Changing the current
+front does not change it, and it turns off front following if it was On.
 
-## Autofront
+## Follow whoever is fronting
 
-Autofront makes autoproxy follow the first/current fronter. Select a front,
-then enable it:
+To make autoproxy follow the front, turn it on without naming a member:
 
 ```text
-p;front MEMBER
-p;autofront on
+p;autoproxy on
 ```
 
-The shortcut is `p;af on`. The current fronter becomes the autoproxy member,
-and later front switches update it. If no front is selected yet, enabling
-autofront keeps any existing autoproxy selection until a front is chosen.
+`p;ap on`, `p;autoproxy front`, `p;autofront on` and `p;af on` all do the same
+thing. Autoproxy starts as whoever is fronting right now, and every later
+`p;front` switch (or a switch from the dashboard or API) changes who it
+proxies as. If nobody is fronting yet, it starts with the next front switch.
+If the front is cleared, untagged messages stay unproxied until someone
+switches in again.
 
-Autofront follows the member identity and presentation. A form ID passed to
+Front following uses the member identity and presentation. A form ID passed to
 `p;front` selects its linked member for autoproxy and applies the form's display
 name and picture to new untagged proxies. To apply a form's presentation to an
 existing proxy, reply to that proxy with the form ID.
 
 ## Turn automatic proxying off
 
-`p;autofront off` disconnects fronting from autoproxy without disabling or
-changing the selected autoproxy member.
+`p;autoproxy off` turns autoproxy off completely, including front following.
 
-`p;autoproxy off` clears the autoproxy selection without disabling autofront.
-If autofront remains On, a later front switch can enable autoproxy again.
+`p;autofront off` stops following the front but keeps proxying as whoever was
+fronting when you turned it off. Use `p;autoproxy off` afterwards if you want
+autoproxy fully off.
 
-To stop both automatic proxying and front following:
-
-```text
-p;autofront off
-p;autoproxy off
-```
-
-Explicit proxy tags continue to work when both features are Off.
+Explicit proxy tags continue to work when autoproxy is Off.

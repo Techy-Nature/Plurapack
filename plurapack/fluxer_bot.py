@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .bot import (
+    AUTOPROXY_FOLLOW_FRONT,
+    _autofront_reply,
+    _autoproxy_reply,
+    _autoproxy_selector,
     COMMAND_ALIASES,
     COMMAND_HELP,
     COMMAND_SHORTCUTS,
@@ -372,12 +376,14 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         await run(ctx, lambda: store.switch_front(account(ctx), selector), lambda f: (f"Front switched to **{f.member.name}** as **{f.form.display_name}** (form `{f.form.id}`, member `{f.member.id}`)." if f.form else f"Front switched to **{f.member.name}** (`{f.member.id}`)."))
 
     async def autoproxy_command(ctx: Any, selector: str) -> None:
-        await run(ctx, lambda: store.configure_autoproxy(account(ctx), None if selector.casefold() == "off" else selector), lambda a: f"Autoproxy is On for **{a.member.name}** (`{a.member.id}`)." if a.member else "Autoproxy is Off.")
+        if selector.casefold() in AUTOPROXY_FOLLOW_FRONT:
+            await run(ctx, lambda: store.configure_autofront(account(ctx), True), _autoproxy_reply); return
+        await run(ctx, lambda: store.configure_autoproxy(account(ctx), _autoproxy_selector(selector)), _autoproxy_reply)
 
     async def autofront_command(ctx: Any, enabled: str) -> None:
         if enabled.casefold() not in {"on", "off"}:
             await ctx.send("Autofront must be on or off."); return
-        await run(ctx, lambda: store.configure_autofront(account(ctx), enabled.casefold() == "on"), lambda a: f"Autofront is {'On' if a.autofront else 'Off'}." + (f" Autoproxy is now **{a.member.name}**." if a.member else ""))
+        await run(ctx, lambda: store.configure_autofront(account(ctx), enabled.casefold() == "on"), _autofront_reply)
 
     async def systemtag_command(ctx: Any, *, tag: str = "") -> None:
         await run(ctx, lambda: store.configure_system_tag(account(ctx), tag or None), lambda s: f"System tag is now **{s.system_tag}**." if s.system_tag else "System tag is cleared.")

@@ -21,8 +21,8 @@ Examples use the default `p;` prefix. Every command also works with `pk;`, `tul;
 | `systemtag [TAG]` | `st` | Set the tag shown after member and form names, or clear it. |
 | `systemtagshow SCOPE on\|off\|default` | `ts` | Set system visibility or a server/channel override. |
 | `front MEMBER_OR_FORM` | `fr`, `switch`, `sw` | Switch the current member and optional form. |
-| `autoproxy MEMBER_OR_OFF` | `ap` | Proxy untagged messages as a member; Off by default. |
-| `autofront on\|off` | `af` | Opt in to making autoproxy follow the first/current fronter. |
+| `autoproxy MEMBER\|on\|off` | `ap` | Proxy untagged messages as a member, or as whoever is fronting with `on`; Off by default. |
+| `autofront on\|off` | `af` | Make autoproxy follow whoever is fronting, or stop following. |
 | `color MEMBER HEX` | `c` | Set a six-digit username color. |
 | `edit [-append\|-prepend] NEW_TEXT` | `e` | Edit the proxied message you reply to, or your latest one in this channel. `pk;edit`, `tul;edit`, `tup;edit`, and `tul!edit` also work. See [Edit a proxy](../guides/proxying.md#edit-a-proxy). |
 | `reproxy MEMBER_OR_FORM` | `rp` | Repost the proxied message you reply to, or your latest one in this channel, as another member or form. `pk;reproxy`, `tul;reproxy`, `tup;reproxy`, and their `rp` shortcuts also work. See [Change who sent an existing message](../guides/proxying.md#change-who-sent-an-existing-message). |
@@ -49,16 +49,15 @@ Examples use the default `p;` prefix. Every command also works with `pk;`, `tul;
 Both features are Off by default. These settings belong to the system and are
 shared by its linked accounts.
 
-- `p;autoproxy MEMBER` (shortcut `p;ap MEMBER`) selects the member for
-  untagged, non-command messages. Explicit proxy tags take priority.
-- `p;autofront on` (shortcut `p;af on`) makes autoproxy follow the
-  first/current fronter and subsequent front switches.
-- `p;autofront off` stops following front changes but keeps the selected
-  autoproxy member.
-- `p;autoproxy off` disables automatic proxying without turning autofront
-  off; a later front switch can select an autoproxy member again.
+- `p;autoproxy MEMBER` (shortcut `p;ap MEMBER`) pins autoproxy to one member
+  for untagged, non-command messages. Explicit proxy tags take priority.
+- `p;autoproxy on` (also `p;ap on`, `p;autoproxy front`, `p;autofront on`,
+  `p;af on`) makes autoproxy follow whoever is fronting now and after every
+  front switch. A cleared front pauses it until the next switch.
+- `p;autofront off` stops following the front but keeps proxying as the
+  member who was fronting.
+- `p;autoproxy off` turns autoproxy off completely, including front following.
 
-To disable both, run `p;autofront off`, then `p;autoproxy off`.
 See [Proxy messages](../guides/proxying.md#autoproxy) for a walkthrough.
 
 ## Selector rules
