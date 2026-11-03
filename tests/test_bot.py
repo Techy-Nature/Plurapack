@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from types import SimpleNamespace
 import io
 import wave
@@ -283,7 +284,10 @@ def make_watchdog(pong=None):
     clock = FakeClock()
     state = {"pong": pong}
     watchdog = bot.StoatConnectionWatchdog(
-        lambda: state["pong"], ready_timeout=90, silence_timeout=150, clock=clock)
+        lambda: state["pong"], connect_timeout=180, ready_timeout=90, silence_timeout=150,
+        clock=clock)
+    # Keep the background thread from starting during unit checks.
+    watchdog.start = lambda: None
     return watchdog, clock, state
 
 
@@ -293,17 +297,35 @@ def test_watchdog_is_quiet_before_the_first_connection():
     assert watchdog.stall_reason() is None
 
 
-async def test_watchdog_flags_a_connection_that_never_becomes_ready():
+def test_watchdog_flags_a_first_connection_that_never_opens():
+    watchdog, clock, _ = make_watchdog()
+    watchdog.connecting()
+    clock.now = 180
+    assert watchdog.stall_reason() is None
+    clock.now = 181
+    assert "has not connected" in watchdog.stall_reason()
+
+
+def test_watchdog_connect_timer_stops_once_connected():
+    watchdog, clock, _ = make_watchdog()
+    watchdog.connecting()
+    clock.now = 60
+    watchdog.connected()
+    watchdog.ready()
+    clock.now = 200
+    assert watchdog.stall_reason() is None
+
+
+def test_watchdog_flags_a_connection_that_never_becomes_ready():
     watchdog, clock, _ = make_watchdog()
     watchdog.connected()
     clock.now = 90
     assert watchdog.stall_reason() is None
     clock.now = 91
     assert "never became ready" in watchdog.stall_reason()
-    watchdog._task.cancel()
 
 
-async def test_watchdog_flags_silence_after_ready_and_resets_on_pongs():
+def test_watchdog_flags_silence_after_ready_and_resets_on_pongs():
     watchdog, clock, state = make_watchdog()
     watchdog.connected()
     watchdog.ready()
@@ -313,10 +335,9 @@ async def test_watchdog_flags_silence_after_ready_and_resets_on_pongs():
         assert watchdog.stall_reason() is None
     clock.now += 151
     assert "heartbeat" in watchdog.stall_reason()
-    watchdog._task.cancel()
 
 
-async def test_watchdog_reconnect_restarts_the_ready_timer():
+def test_watchdog_reconnect_restarts_the_ready_timer():
     watchdog, clock, _ = make_watchdog()
     watchdog.connected()
     watchdog.ready()
@@ -326,19 +347,32 @@ async def test_watchdog_reconnect_restarts_the_ready_timer():
     assert watchdog.stall_reason() is None
     clock.now = 191
     assert "never became ready" in watchdog.stall_reason()
-    watchdog._task.cancel()
 
 
-async def test_watchdog_exits_with_failure_when_the_connection_stalls(capsys):
+def test_watchdog_exits_with_failure_when_the_connection_never_opens(capsys):
+    exited = threading.Event()
     exits = []
     clock = FakeClock()
+
+    def record_exit(code):
+        exits.append(code)
+        exited.set()
+
     watchdog = bot.StoatConnectionWatchdog(
-        lambda: None, ready_timeout=1, interval=0, clock=clock, exit=exits.append)
-    watchdog.connected()
+        lambda: None, connect_timeout=1, interval=0, clock=clock, exit=record_exit)
+    watchdog.connecting()
     clock.now = 5
-    await asyncio.wait_for(watchdog._task, 1)
+    assert exited.wait(2)
     assert exits == [1]
     assert "exiting so the bot restarts" in capsys.readouterr().out
+
+
+def test_watchdog_starts_only_one_thread():
+    watchdog = bot.StoatConnectionWatchdog(lambda: None, sleep=lambda seconds: threading.Event().wait())
+    watchdog.connecting()
+    first = watchdog._thread
+    watchdog.connected()
+    assert watchdog._thread is first and first.daemon
 
 
 async def test_cli_status_listeners_drive_the_watchdog():
@@ -371,6 +405,21 @@ def test_main_reports_that_it_is_connecting(monkeypatch, capsys):
     bot.main()
 
     assert capsys.readouterr().out == "[Plurapack] Connecting to Stoat...\n"
+
+
+def test_main_arms_the_watchdog_before_connecting(monkeypatch, capsys):
+    events = []
+    watchdog = bot.StoatConnectionWatchdog(lambda: None)
+    watchdog.connecting = lambda: events.append("watching")
+    running = SimpleNamespace(run=lambda token: events.append("running"),
+                              connection_watchdog=watchdog)
+    monkeypatch.setenv("STOAT_BOT_TOKEN", "test-token")
+    monkeypatch.delenv("FLUXER_BOT_TOKEN", raising=False)
+    monkeypatch.setattr(bot, "create_bot", lambda prefix, database: running)
+
+    bot.main()
+
+    assert events == ["watching", "running"]
 
 
 def test_main_can_run_fluxer_without_stoat(monkeypatch, capsys):
