@@ -12,6 +12,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import unicodedata
 import urllib.parse
@@ -371,42 +372,69 @@ def _print_cli_status(message: str) -> None:
 
 # stoat.py pings every 30 seconds but waits on the WebSocket with no timeout,
 # so a connection that goes quiet without closing leaves the bot running but
-# deaf.  These limits decide when the watchdog gives up on the connection.
+# deaf.  The very first connection can hang the same way before it ever
+# reports in.  These limits decide when the watchdog gives up on the connection.
+STOAT_CONNECT_TIMEOUT = 180.0
 STOAT_READY_TIMEOUT = 90.0
 STOAT_SILENCE_TIMEOUT = 150.0
 STOAT_WATCHDOG_INTERVAL = 15.0
 
 
 class StoatConnectionWatchdog:
-    """Exit the bot when its Stoat connection stalls so the host restarts it."""
+    """Exit the bot when its Stoat connection stalls so the host restarts it.
+
+    The checks run on a daemon thread rather than the bot's event loop, so the
+    watchdog is already watching while the first connection is still being
+    opened and keeps watching even if that loop itself gets stuck.
+    """
 
     def __init__(
         self,
         last_pong: Callable[[], Any],
         *,
+        connect_timeout: float = STOAT_CONNECT_TIMEOUT,
         ready_timeout: float = STOAT_READY_TIMEOUT,
         silence_timeout: float = STOAT_SILENCE_TIMEOUT,
         interval: float = STOAT_WATCHDOG_INTERVAL,
         clock: Callable[[], float] = time.monotonic,
         exit: Callable[[int], Any] = os._exit,
+        sleep: Callable[[float], Any] = time.sleep,
     ) -> None:
         self._last_pong = last_pong
+        self._connect_timeout = connect_timeout
         self._ready_timeout = ready_timeout
         self._silence_timeout = silence_timeout
         self._interval = interval
         self._clock = clock
         self._exit = exit
+        self._sleep = sleep
+        self._connecting_since: float | None = None
         self._connected_at: float | None = None
         self._ready = False
         self._last_activity = 0.0
         self._seen_pong: Any = None
-        self._task: asyncio.Task[None] | None = None
+        self._thread: threading.Thread | None = None
+        self._lock = threading.Lock()
+
+    def start(self) -> None:
+        """Begin checking in the background; calling it again does nothing."""
+        with self._lock:
+            if self._thread is not None:
+                return
+            self._thread = threading.Thread(
+                target=self.run, name="plurapack-stoat-watchdog", daemon=True)
+            self._thread.start()
+
+    def connecting(self) -> None:
+        """The bot is opening its first connection; time how long that takes."""
+        if self._connecting_since is None:
+            self._connecting_since = self._clock()
+        self.start()
 
     def connected(self) -> None:
         self._connected_at = self._clock()
         self._ready = False
-        if self._task is None:
-            self._task = asyncio.get_running_loop().create_task(self.run())
+        self.start()
 
     def ready(self) -> None:
         self._ready = True
@@ -420,6 +448,11 @@ class StoatConnectionWatchdog:
             self._seen_pong = pong
             self._last_activity = now
         if self._connected_at is None:
+            if self._connecting_since is None:
+                return None
+            waited = now - self._connecting_since
+            if waited > self._connect_timeout:
+                return f"Stoat has not connected after {waited:.0f}s"
             return None
         if not self._ready:
             waited = now - self._connected_at
@@ -431,9 +464,9 @@ class StoatConnectionWatchdog:
             return f"Stoat has not answered a heartbeat for {silent:.0f}s"
         return None
 
-    async def run(self) -> None:
+    def run(self) -> None:
         while True:
-            await asyncio.sleep(self._interval)
+            self._sleep(self._interval)
             reason = self.stall_reason()
             if reason:
                 _print_cli_status(f"{reason}; exiting so the bot restarts.")
@@ -1001,6 +1034,7 @@ def create_bot(prefix: str, database: str) -> Any:
     login_service = LoginService(store)
     watchdog = StoatConnectionWatchdog(lambda: getattr(bot.shard, "last_pong_at", None))
     _register_cli_status_listeners(bot, stoat, prefix, watchdog)
+    bot.connection_watchdog = watchdog
     # These controls are intentionally ephemeral: restarting the bot closes old
     # pagers and invalidates outstanding destructive confirmations.
     info_pages: dict[str, tuple[str, str, list[list[Any]], int]] = {}
@@ -1808,6 +1842,9 @@ def main() -> None:
 
     def run(platform: str, client: Any, token: str) -> None:
         _print_cli_status(f"Connecting to {platform}...")
+        watchdog = getattr(client, "connection_watchdog", None)
+        if isinstance(watchdog, StoatConnectionWatchdog):
+            watchdog.connecting()
         client.run(token)
 
     if len(runners) == 1:
