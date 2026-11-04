@@ -377,9 +377,9 @@ async def test_fluxer_queue_workers_route_shared_audio_and_close(tmp_path, monke
     await client.setup_hook()
     assert client.setup_called and len(client._speech_tasks) == 2
     try:
-        client.speech_queue.submit(SpeechJob("c", "p", "hello", member, account_id="owner"))
+        client.speech_queue.submit(SpeechJob("c", "p", "hello there everyone", member, account_id="owner"))
         await asyncio.wait_for(client.speech_queue.queue.join(), 1)
-        assert calls == [{"text": "hello", "voice_id": "generic:Jordan"}]
+        assert calls == [{"text": "hello there everyone", "voice_id": "generic:Jordan"}]
         assert sent == browser == [audio]
         assert sent[0] is browser[0]
     finally:

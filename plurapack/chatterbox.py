@@ -17,6 +17,11 @@ SUPPORTED_STYLES = frozenset({"normal", "emphasis", "mumble", "whisper"})
 MODAL_SETTING_FIELDS = frozenset({
     "temperature", "exaggeration", "cfg_weight", "seed", "speed_factor"
 })
+# Chatterbox Nano (Turbo) has no CFG and often renders one- or two-word lines
+# (like "test") as clicks and noise. Sending Original's default controls makes
+# the Modal runner use the Original model for those short lines instead.
+SHORT_SPEECH_MAX_WORDS = 2
+SHORT_SPEECH_SETTINGS = {"exaggeration": 0.5, "cfg_weight": 0.5}
 
 
 class ChatterboxError(RuntimeError):
@@ -79,6 +84,15 @@ class ChatterboxBackend:
         return {key: settings[key] for key in MODAL_SETTING_FIELDS if key in settings}
 
     @staticmethod
+    def _short_speech_settings(text: str, settings: dict) -> dict:
+        """Route very short plain lines to Original, which handles them cleanly."""
+        if ("[" in text or "exaggeration" in settings or "cfg_weight" in settings
+                or len(text.split()) > SHORT_SPEECH_MAX_WORDS):
+            # Voice tags must stay on Nano, and explicit member controls win.
+            return settings
+        return {**settings, **SHORT_SPEECH_SETTINGS}
+
+    @staticmethod
     def _validate_text(text: str) -> str:
         if not isinstance(text, str) or not text.strip():
             raise ChatterboxError("Speech text must be non-empty.")
@@ -89,7 +103,7 @@ class ChatterboxBackend:
     async def synthesize(self, text: str, member: Member) -> bytes:
         text = self._validate_text(text)
         voice_id = await self._voice_id(member)
-        settings = self._settings(member)
+        settings = self._short_speech_settings(text, self._settings(member))
         payload = {"text": text, "voice_id": voice_id}
         if settings:
             payload["settings"] = settings
