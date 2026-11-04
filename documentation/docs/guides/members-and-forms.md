@@ -62,6 +62,34 @@ lists all configured tags. Use `p;memberproxy-clear MEMBER` or
 `p;formproxy-clear FORM_ID` to clear the complete list. Tags must be unique
 within the system.
 
+## Give a form a nickname
+
+A nickname is a short name you can type instead of the form's ID or full
+display name:
+
+```text
+p;formnickname FORM_ID sea
+p;front sea
+```
+
+Like member aliases, a nickname is 1–24 characters without spaces or colons,
+and the form's full display name still shows on proxies. Clear it by omitting
+the nickname: `p;formnickname FORM_ID`. You can also set it from the dashboard's
+**Nickname** field on the selected form.
+
+Nicknames must be unique within your system, ignoring capitalization. A form
+nickname can't match:
+
+- any member's name or alias,
+- another form's nickname, or
+- another form's display name.
+
+Member names and aliases are checked the same way, so a member can't be named
+or aliased after an existing form nickname. Other systems can reuse the same
+nicknames. When a Plurapack backup is imported and a form's nickname is already
+taken, the form is still imported without its nickname and the import reports a
+warning.
+
 ## Switch the current front
 
 ```text

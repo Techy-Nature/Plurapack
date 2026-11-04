@@ -143,7 +143,7 @@ async def test_info_reports_ambiguous_local_form_names(tmp_path):
     bot = create_bot("p;", str(database))
     await bot.get_command("info").callback(ctx, selector="Happy")
 
-    assert replies == ["More than one form has that name; use the form ID instead."]
+    assert replies == ["More than one form has that name; use the form ID or a form nickname instead."]
 
 
 def test_member_id_generation_retries_ids_already_used_by_forms(tmp_path, monkeypatch):

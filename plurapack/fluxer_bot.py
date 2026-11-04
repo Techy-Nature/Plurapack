@@ -21,6 +21,7 @@ from .bot import (
     COMMAND_ALIASES,
     COMMAND_HELP,
     COMMAND_SHORTCUTS,
+    form_nickname_reply,
     _group_member_detail,
     _help_pages,
     _prefix_summary,
@@ -347,6 +348,10 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         await run(ctx, lambda: store.create_form(account(ctx), selector, display_name, picture or None, soma),
                   lambda f: f"Created form **{f.display_name}** (`{f.id}`) for member `{f.member_id}`. Use `{prefix}formproxy {f.id} PREFIX [SUFFIX]` to give it a proxy tag, or `{prefix}front {f.id}` to switch both member and form.")
 
+    async def formnickname_command(ctx: Any, selector: str, nickname: str = "") -> None:
+        await run(ctx, lambda: store.configure_form_nickname(account(ctx), selector, nickname or None),
+                  lambda f: form_nickname_reply(f, prefix))
+
     async def formproxy_command(ctx: Any, selector: str, form_prefix: str = "", suffix: str = "") -> None:
         if not form_prefix:
             selected = store.form_selected(account(ctx), selector)
@@ -419,7 +424,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     def member_card(member: Any) -> str:
         forms = store.forms_for_member(member.id)
         tags = store.proxy_tags(member_id=member.id)
-        form_lines = ", ".join(f"{f.display_name} (`{f.id}`, pronouns: {f.pronouns if f.pronouns is not None else member.pronouns or 'not set'}, proxy: `{f.prefix}text{f.suffix}`)" for f in forms) or "None"
+        form_lines = ", ".join(f"{f.display_name} (`{f.id}`{f', nickname: `{f.nickname}`' if f.nickname else ''}, pronouns: {f.pronouns if f.pronouns is not None else member.pronouns or 'not set'}, proxy: `{f.prefix}text{f.suffix}`)" for f in forms) or "None"
         return f"**{member.name}**\n{member.description or 'No member description provided.'}\nID: `{member.id}` | Color: `{member.color or 'default'}` | Pronouns: {member.pronouns or 'Not set'}\nAvatar: {member.avatar or 'None'} | Banner: {member.banner or 'None'}\nProxies: " + (", ".join(f"`{t.prefix}text{t.suffix}`" for t in tags) or "None") + f"\nForms: {form_lines}"
 
     def group_card(group: Group) -> str:
@@ -610,7 +615,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     callbacks = {
         "memberproxy": memberproxy_command, "memberproxy-clear": memberproxy_clear_command,
         "alias": alias_command, "form": form_command, "formproxy": formproxy_command,
-        "formproxy-clear": formproxy_clear_command, "defaultform": defaultform_command,
+        "formnickname": formnickname_command, "formproxy-clear": formproxy_clear_command, "defaultform": defaultform_command,
         "pronouns": pronouns_command, "formpronouns": formpronouns_command,
         "systemtag": systemtag_command, "systemtagshow": systemtagshow_command,
         "front": front_command, "autoproxy": autoproxy_command, "autofront": autofront_command,

@@ -15,6 +15,7 @@ Examples use the default `p;` prefix. Every command also works with `pk;`, `tul;
 | `form MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]` | `f` | Create an alternate presentation. |
 | `formproxy FORM [PREFIX] [SUFFIX]` | `ft` | Add a form-specific proxy tag, or list tags by omitting the prefix. |
 | `formproxy-clear FORM` | `fc` | Clear all proxy tags from a form. |
+| `formnickname FORM [NICKNAME]` | `fn` | Set or clear a form nickname. It must be unique in your system, ignoring capitalization. |
 | `defaultform MEMBER [FORM_OR_OFF]` | `df` | Set a member's default form, or clear it with `off`. |
 | `pronouns MEMBER [PRONOUNS]` | `p` | Set member pronouns, or clear them by omitting the value. |
 | `formpronouns FORM [PRONOUNS]` | `fp` | Override form pronouns, or restore inheritance by omitting the value. |
@@ -62,7 +63,7 @@ See [Proxy messages](../guides/proxying.md#autoproxy) for a walkthrough.
 
 ## Selector rules
 
-Where a command accepts `MEMBER`, use a stable member ID, full display name, alias, or proxy prefix. Where it accepts `MEMBER_OR_FORM`, a form ID is also valid.
+Where a command accepts `MEMBER`, use a stable member ID, full display name, alias, or proxy prefix. Where it accepts `MEMBER_OR_FORM` or `FORM`, a form ID, nickname, or exact display name is also valid.
 
 ## Groups
 

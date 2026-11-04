@@ -372,6 +372,7 @@ async def test_form_patch_accepts_dashboard_payload_with_null_picture(api):
         "prefix": "",
         "suffix": "",
         "banner": None,
+        "nickname": None,
         "proxyTags": [],
     }
 

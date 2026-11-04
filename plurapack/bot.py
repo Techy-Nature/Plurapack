@@ -97,6 +97,8 @@ COMMAND_HELP = {
     "form": ("f", "MEMBER DISPLAY_NAME [PICTURE_URL] [SOMA]", "Create an alternate presentation."),
     "formproxy": ("ft", "FORM [PREFIX] [SUFFIX]", "Add or list form proxy tags."),
     "formproxy-clear": ("fc", "FORM", "Clear every proxy tag from a form."),
+    "formnickname": ("fn", "FORM [NICKNAME]",
+                     "Set or clear a form nickname. It must be unique in your system."),
     "defaultform": ("df", "MEMBER [FORM_OR_OFF]", "Set or clear a default form."),
     "pronouns": ("p", "MEMBER [PRONOUNS]", "Set or clear member pronouns."),
     "formpronouns": ("fp", "FORM [PRONOUNS]", "Set or inherit form pronouns."),
@@ -503,7 +505,9 @@ def _member_embed(sdk: Any, store: Store, member: Member) -> Any:
         form_pronouns = form.pronouns if form.pronouns is not None else member.pronouns
         pronoun_note = f" — {form_pronouns}" if form_pronouns else ""
         proxy_note = f" — proxy `{form.prefix}text{form.suffix}`" if form.prefix else ""
-        form_lines.append(f"{preview}**{form.display_name}** (`{form.id}`){pronoun_note}{proxy_note}{marker}")
+        nickname_note = f" — nickname `{form.nickname}`" if form.nickname else ""
+        form_lines.append(f"{preview}**{form.display_name}** (`{form.id}`){nickname_note}"
+                          f"{pronoun_note}{proxy_note}{marker}")
     description = member.description or (default.soma if default else "")
     description = description or "No member description provided."
     description += (
@@ -539,6 +543,15 @@ def _profile_banner(value: System | Group | Member | tuple[Any, Member]) -> str 
     return value.banner
 
 
+def form_nickname_reply(form: Any, prefix: str) -> str:
+    """Confirm a form nickname change on either chat platform."""
+    if not form.nickname:
+        return f"Nickname for form **{form.display_name}** is cleared."
+    return (f"Nickname for form **{form.display_name}** is `{form.nickname}`. "
+            f"Use it anywhere a form is accepted, like `{prefix}front {form.nickname}`; "
+            "the full form name still shows on proxies.")
+
+
 def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, Member]) -> Any:
     """Build the compact, common profile requested by the ``info`` command."""
     if isinstance(value, System):
@@ -565,6 +578,8 @@ def _profile_embed(sdk: Any, store: Store, value: System | Member | tuple[Any, M
     body = (description or "No description provided.") + (
         f"\n\n**ID:** `{identifier}`\n**Pronouns:** {pronouns or 'Not set'}\n**Proxies:** {proxies}"
     )
+    if isinstance(value, tuple) and value[0].nickname:
+        body += f"\n**Nickname:** `{value[0].nickname}`"
     return sdk.SendableEmbed(title=name, description=body, icon_url=avatar)
 
 
@@ -1585,6 +1600,16 @@ def create_bot(prefix: str, database: str) -> Any:
             f"Use `{prefix}formproxy {created.id} PREFIX [SUFFIX]` to give it a proxy tag, or "
             f"`{prefix}front {created.id}` to switch both member and form."
         )
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["formnickname"]])
+    async def formnickname(ctx: commands.Context, selector: str, nickname: str = "") -> None:
+        """Set a form nickname, or omit it to clear the nickname."""
+        try:
+            configured = store.configure_form_nickname(ctx.author.id, selector, nickname or None)
+        except (PermissionError, ValueError) as error:
+            await ctx.send(str(error))
+            return
+        await ctx.send(form_nickname_reply(configured, prefix))
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["formproxy"]])
     async def formproxy(ctx: commands.Context, selector: str, form_prefix: str = "",

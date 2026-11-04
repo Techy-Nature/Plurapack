@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Iterable
 from urllib.parse import urlparse
 
-from .storage import Member, Store, new_group_id, new_profile_id, short_hash
+from .storage import SELECTOR_NAME, Member, Store, new_group_id, new_profile_id, short_hash
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
 MAX_MEMBERS, MAX_GROUPS = 2000, 500
@@ -33,6 +33,7 @@ class TransferForm:
     pronouns: str | None = None
     proxy_tags: list[dict[str, str]] = field(default_factory=list)
     banner: str | None = None
+    nickname: str | None = None
 
 
 @dataclass
@@ -112,6 +113,13 @@ def _text(v: Any, label: str, maximum: int, *, nullable: bool = False) -> str | 
     return v
 
 
+def _nickname(v: Any) -> str | None:
+    value = _text(v, "Form nickname", 24, nullable=True) or None
+    if value and not SELECTOR_NAME.fullmatch(value):
+        raise TransferError("Form nickname must be 1–24 characters without spaces or colons.")
+    return value
+
+
 def _url(v: Any, label: str) -> str | None:
     value = _text(v, label, 2048, nullable=True)
     if not value:
@@ -187,7 +195,8 @@ def _parse_native(root: dict[str, Any]) -> ImportedSystem:
              _url(f.get("avatar_url"), "Form avatar"), _text(f.get("soma", ""), "Form soma", 1000) or "",
              _text(f.get("pronouns"), "Form pronouns", 100, nullable=True),
              [_tag(t, "Form proxy tag") for t in _array(f.get("proxy_tags", []), "form proxy_tags")],
-             _url(f.get("banner_url"), "Form banner")) for f in map(lambda x:_obj(x,"form"), raw.get("forms", []))]
+             _url(f.get("banner_url"), "Form banner"), _nickname(f.get("nickname")))
+             for f in map(lambda x:_obj(x,"form"), raw.get("forms", []))]
         m.default_form = raw.get("default_form")
         settings = _obj(raw.get("settings", {}), "member settings")
         m.speech_formatting = bool(settings.get("speech_formatting", False))
@@ -257,7 +266,7 @@ def _snapshot(store: Store, account_id: str) -> ImportedSystem:
     for member in store.members_for_system(sid):
         forms=[]
         for f in store.forms_for_member(member.id):
-            forms.append(TransferForm("form-"+f.id,f.display_name,f.avatar,f.soma,f.pronouns,[asdict(t) for t in store.proxy_tags(form_id=f.id)],f.banner))
+            forms.append(TransferForm("form-"+f.id,f.display_name,f.avatar,f.soma,f.pronouns,[asdict(t) for t in store.proxy_tags(form_id=f.id)],f.banner,f.nickname))
         members.append(ImportedMember(member.name,member.prefix,member.suffix,member.avatar,member.color,member.pronouns,
             "member-"+member.id,member.alias,member.description,member.banner,[asdict(t) for t in store.proxy_tags(member_id=member.id)],forms,memberships.get(member.id,[]),
             "form-"+member.default_form_id if member.default_form_id else None,bool(member.speech_formatting),member.strikethrough_speech))
@@ -372,6 +381,15 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
                 gid=new_group_id(db); alias=g.alias or f"group{i+1}"; db.execute("INSERT INTO groups(id,system_id,name,alias,avatar,banner) VALUES (?,?,?,?,?,?)",(gid,sid,g.name,alias,g.avatar,g.banner)); group_map[g.export_id]=gid; groups_count+=1
         member_map={}
         actions={}
+        nickname_warnings=[]
+        def free_nickname(form: TransferForm, form_id: str) -> str | None:
+            """Keep an imported nickname only when nobody else in the system uses it."""
+            conflict=Store._selector_name_conflict(db, sid, form.nickname, form_id=form_id)
+            if conflict:
+                nickname_warnings.append(f'Form "{form.display_name}" was imported without its nickname '
+                                         f'"{form.nickname}" because it is already used as {conflict}.')
+                return None
+            return form.nickname
         for m in data.members:
             row=existing.get(m.name.casefold())
             if row and strategy=="skip-existing":
@@ -416,7 +434,7 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
                 db.execute("DELETE FROM forms WHERE member_id=?",(mid,))
             if action in {"create", "overwrite"}:
                 for f in m.forms:
-                    fid=new_profile_id(db); db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner) VALUES (?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner)); form_map[f.export_id]=fid
+                    fid=new_profile_id(db); db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner,nickname) VALUES (?,?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner,free_nickname(f,fid))); form_map[f.export_id]=fid
                     for t in f.proxy_tags: db.execute("INSERT INTO proxy_tags(system_id,form_id,prefix,suffix) VALUES (?,?,?,?)",(sid,fid,t["prefix"],t["suffix"])); tags_count+=1
             elif action == "merge":
                 existing_forms={r["display_name"].casefold():r for r in db.execute(
@@ -429,6 +447,8 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
                             "avatar":f.avatar,"soma":f.soma,"pronouns":f.pronouns,"banner":f.banner}.items()}
                         db.execute("UPDATE forms SET avatar=?,soma=?,pronouns=?,banner=? WHERE id=?",
                                    (values["avatar"],values["soma"],values["pronouns"],values["banner"],fid))
+                        if not form_row["nickname"] and f.nickname:
+                            db.execute("UPDATE forms SET nickname=? WHERE id=?",(free_nickname(f,fid),fid))
                         current_tags={(tag["prefix"],tag["suffix"]) for tag in db.execute(
                             "SELECT prefix,suffix FROM proxy_tags WHERE form_id=?",(fid,))}
                         for t in f.proxy_tags:
@@ -438,7 +458,7 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
                                            (sid,fid,*pair)); current_tags.add(pair); tags_count+=1
                     else:
                         fid=new_profile_id(db)
-                        db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner) VALUES (?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner))
+                        db.execute("INSERT INTO forms(id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner,nickname) VALUES (?,?,?,?,?,?,?,?,?,?)",(fid,mid,f.display_name,f.avatar,f.soma,f.pronouns,f.proxy_tags[0]["prefix"] if f.proxy_tags else "",f.proxy_tags[0]["suffix"] if f.proxy_tags else "",f.banner,free_nickname(f,fid)))
                         for t in f.proxy_tags:
                             db.execute("INSERT INTO proxy_tags(system_id,form_id,prefix,suffix) VALUES (?,?,?,?)",
                                        (sid,fid,t["prefix"],t["suffix"])); tags_count+=1
@@ -446,4 +466,5 @@ def import_system(store: Store, account_id: str, document: str | bytes, format_n
             if m.default_form in form_map and (action != "merge" or not db.execute(
                     "SELECT default_form_id FROM members WHERE id=?",(mid,)).fetchone()[0]):
                 db.execute("UPDATE members SET default_form_id=? WHERE id=?",(form_map[m.default_form],mid))
-    return TransferReport(str(fmt),imported,groups_count,tags_count,skipped,len(data.warnings),data.warnings)
+    warnings=tuple(data.warnings)+tuple(nickname_warnings)
+    return TransferReport(str(fmt),imported,groups_count,tags_count,skipped,len(warnings),warnings)

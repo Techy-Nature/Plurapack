@@ -65,6 +65,7 @@ def form_json(form: Form, store: Store | None = None) -> dict[str, Any]:
     return {"id": form.id, "memberId": form.member_id, "displayName": form.display_name,
             "picture": form.avatar, "soma": form.soma, "pronouns": form.pronouns,
             "prefix": form.prefix, "suffix": form.suffix, "banner": form.banner,
+            "nickname": form.nickname,
             "proxyTags": ([tag.__dict__ for tag in store.proxy_tags(form_id=form.id)]
                           if store else [{"prefix": form.prefix, "suffix": form.suffix}] if form.prefix else [])}
 
@@ -615,7 +616,8 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
         await owned_member(system_id, member_id, user, store)
         form = await run(store.create_form, user.id, member_id, body.display_name,
                          str(body.picture) if body.picture else None, body.soma, body.pronouns,
-                         body.prefix, body.suffix, str(body.banner) if body.banner else None)
+                         body.prefix, body.suffix, str(body.banner) if body.banner else None,
+                         body.nickname)
         return form_json(form, store)
 
     @app.get("/api/systems/{system_id}/members/{member_id}/forms/{form_id}")

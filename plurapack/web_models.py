@@ -102,6 +102,8 @@ class FormCreate(APIModel):
     prefix: str = Field("", max_length=32)
     suffix: str = Field("", max_length=32)
     banner: HttpUrl | None = None
+    # A short selector, unique within the system (checked by the store).
+    nickname: str | None = Field(None, max_length=24, pattern=r"^[^\s:]+$")
 
 
 class FormPatch(APIModel):
@@ -112,6 +114,12 @@ class FormPatch(APIModel):
     prefix: str | None = Field(None, max_length=32)
     suffix: str | None = Field(None, max_length=32)
     banner: HttpUrl | None = None
+    nickname: str | None = Field(None, max_length=24, pattern=r"^[^\s:]+$")
+
+    @field_validator("nickname", mode="before")
+    @classmethod
+    def blank_nickname_clears_it(cls, value: Any) -> Any:
+        return None if isinstance(value, str) and not value.strip() else value
 
     @field_validator("soma", "prefix", "suffix", mode="before")
     @classmethod

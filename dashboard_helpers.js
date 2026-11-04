@@ -8,7 +8,7 @@
   const PROFILE_FIELDS = Object.freeze({
     system: ["logo", "displayName", "description", "tag", "showSystemTag", "banner"],
     member: ["avatar", "name", "color", "pronouns", "description", "alias", "prefix", "suffix", "banner"],
-    form: ["picture", "displayName", "pronouns", "soma", "prefix", "suffix", "banner"],
+    form: ["picture", "displayName", "nickname", "pronouns", "soma", "prefix", "suffix", "banner"],
     group: ["avatar", "name", "alias", "banner"],
   });
   const VOICE_MODES = Object.freeze([
