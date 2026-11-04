@@ -93,12 +93,12 @@ async def test_custom_named_jordan_uses_uuid_without_reading_or_sending_referenc
     monkeypatch.setattr(storage, "get_voice", lambda *_: pytest.fail("TTS must not load private WAVs"))
     monkeypatch.setattr(storage, "exists", lambda *_: pytest.fail("TTS must not contact Forgejo"))
     backend = ChatterboxBackend("https://modal.example/invoke", voice_service=service, api_key="wk-test.ws-test")
-    for text in ("one", "two"):
+    for text in ("This is line one.", "This is line two."):
         assert await backend.synthesize(text, member) == wav_bytes()
     assert [call[1] for call in http_boundary.calls] == ["/invoke", "/invoke"]
     assert [call[2] for call in http_boundary.calls] == [
-        {"text": "one", "voice_id": f"custom:{voice.storage_id}"},
-        {"text": "two", "voice_id": f"custom:{voice.storage_id}"},
+        {"text": "This is line one.", "voice_id": f"custom:{voice.storage_id}"},
+        {"text": "This is line two.", "voice_id": f"custom:{voice.storage_id}"},
     ]
     assert "Jordan" not in json.dumps(http_boundary.calls)
     assert "Sensitive" not in json.dumps(http_boundary.calls)
@@ -287,3 +287,27 @@ async def test_deleted_custom_voice_is_not_sent(voices, http_boundary):
     with pytest.raises(ChatterboxError, match="metadata is unavailable"):
         await ChatterboxBackend("https://modal.example", voice_service=service).synthesize("hello", selected)
     assert not http_boundary.calls
+
+
+async def test_short_plain_lines_use_original_model_controls(voices, http_boundary):
+    _, member, _, service = voices
+    member = dataclasses.replace(service.select_generic_voice("owner", member.id, "Jordan.wav"),
+                                 voice_settings={"temperature": 0.7})
+    backend = ChatterboxBackend("https://modal.example/invoke", voice_service=service)
+    for text in ("test", "hi there", "this is longer", "test [sigh]"):
+        await backend.synthesize(text, member)
+    assert [call[2].get("settings") for call in http_boundary.calls] == [
+        {"temperature": 0.7, "exaggeration": 0.5, "cfg_weight": 0.5},
+        {"temperature": 0.7, "exaggeration": 0.5, "cfg_weight": 0.5},
+        {"temperature": 0.7},
+        {"temperature": 0.7},
+    ]
+
+
+async def test_short_line_keeps_member_original_controls(voices, http_boundary):
+    _, member, _, service = voices
+    member = dataclasses.replace(service.select_generic_voice("owner", member.id, "Jordan.wav"),
+                                 voice_settings={"cfg_weight": 0.2})
+    backend = ChatterboxBackend("https://modal.example/invoke", voice_service=service)
+    await backend.synthesize("test", member)
+    assert http_boundary.calls[0][2]["settings"] == {"cfg_weight": 0.2}
