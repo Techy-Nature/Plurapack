@@ -84,6 +84,7 @@ def public_form_json(store: Store, form: Form, hidden: frozenset[str] | set[str]
             "pronouns": None if "pronouns" in hidden else form.pronouns,
             "soma": None if "description" in hidden else form.soma}
     if full:
+        data["nickname"] = form.nickname
         data["proxyTags"] = [tag.__dict__ for tag in store.proxy_tags(form_id=form.id)]
     return data
 

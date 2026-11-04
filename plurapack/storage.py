@@ -89,6 +89,11 @@ class Form:
     prefix: str
     suffix: str
     banner: str | None
+    nickname: str | None = None
+
+
+# Nicknames and aliases are short selectors typed in commands.
+SELECTOR_NAME = re.compile(r"[^\s:]{1,24}")
 
 
 @dataclass(frozen=True)
@@ -243,6 +248,7 @@ class Store:
                     member_id TEXT NOT NULL REFERENCES members(id) ON DELETE CASCADE,
                     display_name TEXT NOT NULL, avatar TEXT, soma TEXT NOT NULL DEFAULT '', pronouns TEXT,
                     prefix TEXT NOT NULL DEFAULT '', suffix TEXT NOT NULL DEFAULT '', banner TEXT,
+                    nickname TEXT,
                     UNIQUE(member_id, display_name)
                 );
                 CREATE TABLE IF NOT EXISTS current_fronts (
@@ -359,6 +365,8 @@ class Store:
                 db.execute("ALTER TABLE forms ADD COLUMN suffix TEXT NOT NULL DEFAULT ''")
             if "banner" not in form_columns:
                 db.execute("ALTER TABLE forms ADD COLUMN banner TEXT")
+            if "nickname" not in form_columns:
+                db.execute("ALTER TABLE forms ADD COLUMN nickname TEXT")
             system_columns = {row[1] for row in db.execute("PRAGMA table_info(systems)")}
             if "description" not in system_columns:
                 db.execute("ALTER TABLE systems ADD COLUMN description TEXT NOT NULL DEFAULT ''")
@@ -481,6 +489,10 @@ class Store:
             self._validate_proxy_tag(changes.get("prefix", member.prefix), changes.get("suffix", member.suffix))
         try:
             with self.connect() as db:
+                if changes.get("name"):
+                    self._check_member_selector(db, member.system_id, changes["name"], "member name")
+                if changes.get("alias"):
+                    self._check_member_selector(db, member.system_id, changes["alias"], "alias")
                 db.execute(f"UPDATE members SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
                            (*changes.values(), member.id))
         except sqlite3.IntegrityError as error:
@@ -491,12 +503,16 @@ class Store:
         selected = self.form_selected(account_id, form_id)
         if selected is None:
             raise PermissionError("Form not found or not owned by this account.")
-        allowed = {"display_name", "avatar", "soma", "pronouns", "prefix", "suffix", "banner"}
+        allowed = {"display_name", "avatar", "soma", "pronouns", "prefix", "suffix", "banner", "nickname"}
         if not changes or not set(changes) <= allowed:
             raise ValueError("No supported form fields were supplied.")
-        form, _ = selected
+        form, member = selected
+        if "nickname" in changes:
+            changes["nickname"] = self._normalize_selector_name(changes["nickname"], "Form nickname")
         try:
             with self.connect() as db:
+                if "nickname" in changes:
+                    self._check_form_nickname(db, member.system_id, changes["nickname"], form.id)
                 db.execute(f"UPDATE forms SET {','.join(f'{key}=?' for key in changes)} WHERE id=?",
                            (*changes.values(), form.id))
         except sqlite3.IntegrityError as error:
@@ -749,6 +765,8 @@ class Store:
         if len(description) > 1000:
             raise ValueError("Member description must be no more than 1000 characters.")
         with self.connect() as db:
+            self._check_member_selector(db, system_id, name, "member name")
+            self._check_member_selector(db, system_id, alias, "alias")
             while True:
                 member_id = new_profile_id(db)
                 try:
@@ -820,13 +838,24 @@ class Store:
                 (account_id, selector, selector, selector, selector)).fetchone()
             return Member(**dict(row)) if row else None
 
+    @staticmethod
+    def _form_and_member(values: dict[str, Any]) -> tuple[Form, Member]:
+        """Split a joined ``forms``/``members`` row into its two records."""
+        form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
+                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
+                    values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"),
+                    values.pop("form_nickname"))
+        values.pop("member_id")
+        return form, Member(**values)
+
     def public_form_selected(self, selector: str) -> tuple[Form, Member] | None:
         """Resolve a form publicly by stable ID or an unambiguous display name."""
         selector = selector.strip()
         with self.connect() as db:
             rows = db.execute("""SELECT f.id form_id, f.member_id, f.display_name,
                 f.avatar form_avatar, f.soma, f.pronouns form_pronouns,
-                f.prefix form_prefix, f.suffix form_suffix, f.banner form_banner, m.*
+                f.prefix form_prefix, f.suffix form_suffix, f.banner form_banner,
+                f.nickname form_nickname, m.*
                 FROM forms f JOIN members m ON m.id=f.member_id
                 WHERE f.id=? OR f.display_name=?
                 ORDER BY CASE WHEN f.id=? THEN 0 ELSE 1 END""",
@@ -836,11 +865,7 @@ class Store:
         if len(rows) > 1 and rows[0]["form_id"] != selector:
             raise ValueError("More than one form has that name; use the form ID instead.")
         values = dict(rows[0])
-        form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
-                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
-                    values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"))
-        values.pop("member_id")
-        return form, Member(**values)
+        return self._form_and_member(values)
 
     def public_form_by_id(self, form_id: str) -> tuple[Form, Member] | None:
         """Resolve a public form using only its globally stable ID."""
@@ -848,17 +873,14 @@ class Store:
         with self.connect() as db:
             row = db.execute("""SELECT f.id form_id, f.member_id, f.display_name,
                 f.avatar form_avatar, f.soma, f.pronouns form_pronouns,
-                f.prefix form_prefix, f.suffix form_suffix, f.banner form_banner, m.*
+                f.prefix form_prefix, f.suffix form_suffix, f.banner form_banner,
+                f.nickname form_nickname, m.*
                 FROM forms f JOIN members m ON m.id=f.member_id WHERE f.id=?""",
                 (selector,)).fetchone()
         if row is None:
             return None
         values = dict(row)
-        form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
-                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
-                    values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"))
-        values.pop("member_id")
-        return form, Member(**values)
+        return self._form_and_member(values)
 
     def public_info_selected(
         self, account_id: str, selector: str
@@ -1110,6 +1132,7 @@ class Store:
             raise ValueError("Alias must be 1–24 characters without spaces or colons.")
         try:
             with self.connect() as db:
+                self._check_member_selector(db, member.system_id, normalized, "alias")
                 db.execute("UPDATE members SET alias=? WHERE id=?", (normalized, member.id))
         except sqlite3.IntegrityError as error:
             raise ValueError("That alias is already used by another member.") from error
@@ -1117,7 +1140,8 @@ class Store:
 
     def create_form(self, account_id: str, member_selector: str, display_name: str,
                     avatar: str | None = None, soma: str = "", pronouns: str | None = None,
-                    prefix: str = "", suffix: str = "", banner: str | None = None) -> Form:
+                    prefix: str = "", suffix: str = "", banner: str | None = None,
+                    nickname: str | None = None) -> Form:
         """Create a form whose ID permanently resolves back to its member."""
         member = self.member_selected(account_id, member_selector)
         if member is None:
@@ -1132,8 +1156,10 @@ class Store:
         if len(soma) > 1000:
             raise ValueError("Form soma must be no more than 1000 characters.")
         self._validate_proxy_tag(prefix, suffix)
+        nickname = self._normalize_selector_name(nickname, "Form nickname")
         try:
             with self.connect() as db:
+                self._check_form_nickname(db, member.system_id, nickname)
                 if prefix:
                     collision = db.execute("""SELECT 1 FROM forms f JOIN members m ON m.id=f.member_id
                         WHERE m.system_id=? AND f.prefix=? AND f.suffix=?""",
@@ -1147,9 +1173,10 @@ class Store:
                     form_id = new_profile_id(db)
                     try:
                         db.execute("""INSERT INTO forms
-                            (id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner)
-                            VALUES (?,?,?,?,?,?,?,?,?)""",
-                            (form_id, member.id, display_name, avatar, soma, pronouns, prefix, suffix, banner))
+                            (id,member_id,display_name,avatar,soma,pronouns,prefix,suffix,banner,nickname)
+                            VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                            (form_id, member.id, display_name, avatar, soma, pronouns, prefix, suffix,
+                             banner, nickname))
                         if prefix:
                             db.execute("""INSERT INTO proxy_tags(system_id,form_id,prefix,suffix)
                                 VALUES (?,?,?,?)""", (member.system_id, form_id, prefix, suffix))
@@ -1162,27 +1189,101 @@ class Store:
         return self.form_selected(account_id, form_id)[0]  # type: ignore[index]
 
     def form_selected(self, account_id: str, selector: str) -> tuple[Form, Member] | None:
-        """Resolve an owned form by stable ID or its exact display name."""
+        """Resolve an owned form by stable ID, nickname, or exact display name.
+
+        IDs win over nicknames, and nicknames win over display names.  A
+        nickname is unique within its system, so only a display name shared by
+        several forms is ambiguous.
+        """
+        selector = selector.strip()
         with self.connect() as db:
             rows = db.execute("""SELECT f.id form_id, f.member_id, f.display_name, f.avatar form_avatar,
                 f.soma, f.pronouns form_pronouns, f.prefix form_prefix, f.suffix form_suffix,
-                f.banner form_banner,
+                f.banner form_banner, f.nickname form_nickname,
+                CASE WHEN f.id=? THEN 0 WHEN f.nickname=? COLLATE NOCASE THEN 1 ELSE 2 END match_rank,
                 m.* FROM forms f JOIN members m ON m.id=f.member_id
                 JOIN owners o ON o.system_id=m.system_id
-                WHERE o.account_id=? AND (f.id=? OR f.display_name=?)
-                ORDER BY CASE WHEN f.id=? THEN 0 ELSE 1 END""",
-                (account_id, selector.strip(), selector.strip(), selector.strip())).fetchall()
+                WHERE o.account_id=? AND (f.id=? OR f.nickname=? COLLATE NOCASE OR f.display_name=?)
+                ORDER BY match_rank""",
+                (selector, selector, account_id, selector, selector, selector)).fetchall()
         if not rows:
             return None
-        if len(rows) > 1 and rows[0]["form_id"] != selector.strip():
-            raise ValueError("More than one form has that name; use the form ID instead.")
-        row = rows[0]
-        values = dict(row)
-        form = Form(values.pop("form_id"), values["member_id"], values.pop("display_name"),
-                    values.pop("form_avatar"), values.pop("soma"), values.pop("form_pronouns"),
-                    values.pop("form_prefix"), values.pop("form_suffix"), values.pop("form_banner"))
-        values.pop("member_id")
-        return form, Member(**values)
+        if len(rows) > 1 and rows[0]["match_rank"] == 2:
+            raise ValueError("More than one form has that name; use the form ID or a form nickname instead.")
+        values = dict(rows[0])
+        values.pop("match_rank")
+        return self._form_and_member(values)
+
+    @staticmethod
+    def _normalize_selector_name(value: str | None, label: str) -> str | None:
+        """Strip a nickname or alias, or return None when it is being cleared."""
+        normalized = value.strip() if value else None
+        if normalized and not SELECTOR_NAME.fullmatch(normalized):
+            raise ValueError(f"{label} must be 1–24 characters without spaces or colons.")
+        return normalized or None
+
+    @staticmethod
+    def _selector_name_conflict(db: sqlite3.Connection, system_id: str, value: str | None, *,
+                                form_id: str | None = None) -> str | None:
+        """Describe what already uses ``value`` in a system, ignoring case.
+
+        Member names, member aliases, and form nicknames share one namespace
+        per system so a selector always finds exactly one profile.  Other
+        forms' display names are checked too, since a nickname would shadow
+        them.  The form being changed (``form_id``) is skipped so it can keep,
+        or re-save, its own value.
+        """
+        if not value:
+            return None
+        wanted = value.casefold()
+        for row in db.execute("SELECT name, alias FROM members WHERE system_id=?", (system_id,)):
+            if row["name"].casefold() == wanted:
+                return f'the member name "{row["name"]}"'
+            if row["alias"] and row["alias"].casefold() == wanted:
+                return f'the alias of member "{row["name"]}"'
+        for row in db.execute("""SELECT f.id, f.display_name, f.nickname FROM forms f
+                JOIN members m ON m.id=f.member_id WHERE m.system_id=?""", (system_id,)):
+            if row["id"] == form_id:
+                continue
+            if row["nickname"] and row["nickname"].casefold() == wanted:
+                return f'the nickname of form "{row["display_name"]}"'
+            if row["display_name"].casefold() == wanted:
+                return f'the form name "{row["display_name"]}"'
+        return None
+
+    def _check_form_nickname(self, db: sqlite3.Connection, system_id: str, nickname: str | None,
+                             form_id: str | None = None) -> None:
+        conflict = self._selector_name_conflict(db, system_id, nickname, form_id=form_id)
+        if conflict:
+            raise ValueError(f'The nickname "{nickname}" is already used as {conflict} in this system. '
+                             "Form nicknames must be unique within the system, ignoring capitalization.")
+
+    @staticmethod
+    def _check_member_selector(db: sqlite3.Connection, system_id: str, value: str | None,
+                               label: str) -> None:
+        """Keep member names and aliases from colliding with any form nickname."""
+        if not value:
+            return
+        wanted = value.strip().casefold()
+        for form in db.execute("""SELECT f.display_name, f.nickname FROM forms f
+                JOIN members m ON m.id=f.member_id WHERE m.system_id=? AND f.nickname IS NOT NULL""",
+                (system_id,)):
+            if form["nickname"].casefold() == wanted:
+                raise ValueError(f"That {label} is already the nickname of form "
+                                 f'"{form["display_name"]}" in this system.')
+
+    def configure_form_nickname(self, account_id: str, form_selector: str,
+                                nickname: str | None) -> Form:
+        """Set or clear a form's short selector, unique within its system."""
+        selected = self.form_selected(account_id, form_selector)
+        if selected is None:
+            raise PermissionError("Form not found or not owned by this account.")
+        form, member = selected
+        normalized = self._normalize_selector_name(nickname, "Form nickname")
+        with self.connect() as db:
+            self._check_form_nickname(db, member.system_id, normalized, form.id)
+            db.execute("UPDATE forms SET nickname=? WHERE id=?", (normalized, form.id))
+        return self.form_selected(account_id, form.id)[0]  # type: ignore[index]
 
     def proxy_identity(self, account_id: str, selector: str) -> Member | None:
         """Resolve a selector to the presentation that should appear on a proxy.

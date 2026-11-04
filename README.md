@@ -271,6 +271,7 @@ p;memberproxy-clear Alex        # clear all of Alex's tags
 p;alias abc12 Al                # short selector; proxies still display the full name
 p;form abc12 "Alex at Sea" https://example/avatar.png Blue fins and a long tail.
 p;formproxy 4f8ac sea: :sea     # sea: proxy with this form even off-front :sea
+p;formnickname 4f8ac sea        # unique short selector for the form, e.g. p;front sea
 p;front 4f8ac                   # a form ID selects its linked member and form together
 p;autoproxy Alex                # proxy Alex's untagged messages (Off by default)
 p;autoproxy on                  # follow whoever is fronting (same as p;autofront on)
@@ -299,7 +300,7 @@ Reply "Alex", "abc12", or "[alex]" to a proxy to change its member
 Every command also has a one- or two-letter shortcut: `s` (setup), `m` (member),
 `i` (import), `x` (export), `l` (link), `c` (color), `v` (verify), `vo` (voice),
 `of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `mt` (memberproxy),
-`mc` (memberproxy-clear), `ft` (formproxy), `fc` (formproxy-clear), `fr` (front),
+`mc` (memberproxy-clear), `ft` (formproxy), `fc` (formproxy-clear), `fn` (formnickname), `fr` (front),
 `ap` (autoproxy), `af` (autofront), `e` (edit), `rp` (reproxy), `vi` (viewinfo), `vg` (viewgroup), `ml`
 (viewmembers), `vm` (viewmember), `dm` (deletemember), and `ds` (deletesystem).
 
@@ -313,7 +314,9 @@ erases the system and all associated data.
 Aliases are short selectors only: the member's full name remains the name shown
 on ordinary proxy messages and member cards. Forms are alternate presentations
 with their own stable five-character IDs, display names, optional picture URLs,
-and soma descriptions. A form ID is permanently connected to its member ID.
+and soma descriptions. A form can also have a nickname, a short selector that must
+be unique within the system (no member name, member alias, other form nickname,
+or other form name may match it, ignoring capitalization). A form ID is permanently connected to its member ID.
 Passing it to `p;front` switches the current member and form atomically; using it
 as a reply selector re-proxies with that form's display name and picture.
 
