@@ -1683,7 +1683,12 @@ class Store:
         if member is None:
             raise PermissionError("Member not found or not owned by this account.")
         if playback != "off" and not voice_reference:
-            raise ValueError("Voice playback requires a voice reference.")
+            # Nothing is selected but the member has exactly one uploaded voice:
+            # that voice is the only sensible choice, so use it rather than asking.
+            only = self.member_voices(member.id)
+            if len(only) != 1:
+                raise ValueError("Voice playback requires a voice reference.")
+            voice_reference, source_type = f"{only[0].storage_id}.wav", "custom"
         if source_type is not None and source_type not in {"generic", "custom", "legacy_clone"}:
             raise ValueError("Voice source type is invalid.")
         selected_source = source_type or member.voice_source

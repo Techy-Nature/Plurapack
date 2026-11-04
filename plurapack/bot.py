@@ -1486,16 +1486,16 @@ def create_bot(prefix: str, database: str) -> Any:
                 await ctx.send(f"Generic voice `{configured.voice_reference}` is now selected.")
                 return
             if action in {"default", "delete"}:
-                if len(parts) != 1: raise ValueError(f"Use `{prefix}voice {action} MEMBER VOICE`.")
-                selected = voice_service.select_member_voice(str(ctx.author.id), member.id, parts[0])
+                if len(parts) > 1: raise ValueError(f"Use `{prefix}voice {action} MEMBER [VOICE]`.")
+                selected = voice_service.select_member_voice(str(ctx.author.id), member.id, parts[0] if parts else None)
                 result = (voice_service.set_default_member_voice(str(ctx.author.id), member.id, selected.id)
                           if action == "default" else voice_service.delete_member_voice(str(ctx.author.id), member.id, selected.id))
                 await ctx.send(f"Voice **{result.name}** {'is now default' if action == 'default' else 'was deleted'}.")
                 return
             if action == "rename":
-                if len(parts) != 2: raise ValueError(f"Use `{prefix}voice rename MEMBER VOICE NEW_NAME` (quote names containing spaces).")
-                selected = voice_service.select_member_voice(str(ctx.author.id), member.id, parts[0])
-                renamed = voice_service.rename_member_voice(str(ctx.author.id), member.id, selected.id, parts[1])
+                if len(parts) not in {1, 2}: raise ValueError(f"Use `{prefix}voice rename MEMBER [VOICE] NEW_NAME` (quote names containing spaces).")
+                selected = voice_service.select_member_voice(str(ctx.author.id), member.id, parts[0] if len(parts) == 2 else None)
+                renamed = voice_service.rename_member_voice(str(ctx.author.id), member.id, selected.id, parts[-1])
                 await ctx.send(f"Voice renamed to **{renamed.name}**."); return
             if not parts: raise ValueError(f"Use `{prefix}voice upload MEMBER VOICE_NAME` (quote names containing spaces).")
             voice_name = parts.pop(0)
