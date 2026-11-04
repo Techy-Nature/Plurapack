@@ -75,8 +75,14 @@ class VoiceService:
         self._member(account_id, member_id)
         return self.store.member_voices(member_id)
 
-    def select_member_voice(self, account_id: str, member_id: str, selector: str) -> Voice:
+    def select_member_voice(self, account_id: str, member_id: str, selector: str | None = None) -> Voice:
+        """Find a voice by exact name or UUID; with no selector, the member's only voice."""
         voices = self.list_member_voices(account_id, member_id)
+        if selector is None:
+            if len(voices) == 1:
+                return voices[0]
+            raise ValueError("No custom voices uploaded." if not voices
+                             else "This member has several voices; name the one you mean.")
         matches = [voice for voice in voices
                    if voice.id == selector or voice.name.casefold() == selector.casefold()]
         if len(matches) != 1:

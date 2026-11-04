@@ -20,9 +20,27 @@ def _listing(name: str, tags: list[tuple[ProxyTag, Voice | None]]) -> str:
     return "\n".join(lines)
 
 
+def _named_voice(store: Store, member_id: str, parts: list[str]) -> str | None:
+    """The VOICE word of ``MEMBER [VOICE] PREFIX [SUFFIX]``, or None when it was left out.
+
+    VOICE may be omitted only when the member has exactly one voice; then
+    ``MEMBER PREFIX SUFFIX`` is read as a tag, unless the middle word names that voice.
+    """
+    if len(parts) == 4:
+        return parts[1]
+    if len(parts) == 2:
+        return None
+    word = parts[1]
+    voices = store.member_voices(member_id)
+    if (word.casefold() in _CLEAR_WORDS or len(voices) != 1
+            or any(word == v.id or word.casefold() == v.name.casefold() for v in voices)):
+        return word
+    return None
+
+
 def shortcut_usage(prefix: str) -> str:
     return (f"Use `{prefix}voice shortcut MEMBER VOICE PREFIX [SUFFIX]` to make a proxy tag speak "
-            f"with one of that member's custom voices, `{prefix}voice shortcut MEMBER off PREFIX [SUFFIX]` "
+            f"with one of that member's custom voices (leave VOICE out when they only have one), `{prefix}voice shortcut MEMBER off PREFIX [SUFFIX]` "
             f"to undo it, or `{prefix}voice shortcuts MEMBER` to list them. Forms work as well as members.")
 
 
@@ -38,11 +56,13 @@ def voice_shortcut_reply(store: Store, voice_service: object, account_id: str, a
         if len(parts) != 1:
             raise ValueError(f"Use `{prefix}voice shortcuts MEMBER`.")
         return _listing(name, store.tag_voices(member_id=member_id, form_id=form_id))
-    if len(parts) not in {3, 4}:
+    if len(parts) not in {2, 3, 4} or (len(parts) == 2 and parts[1].casefold() in _CLEAR_WORDS):
         return shortcut_usage(prefix)
-    selector, voice_name, tag_prefix = parts[:3]
-    tag_suffix = parts[3] if len(parts) == 4 else ""
-    if voice_name.casefold() in _CLEAR_WORDS:
+    selector, voice_name, tag = parts[0], _named_voice(store, member.id, parts), parts[1:]
+    if voice_name is not None:
+        tag = parts[2:]
+    tag_prefix, tag_suffix = tag[0], (tag[1] if len(tag) == 2 else "")
+    if voice_name is not None and voice_name.casefold() in _CLEAR_WORDS:
         store.configure_tag_voice(account_id, selector, tag_prefix, tag_suffix, None)
         return (f"{_tag_text(ProxyTag(tag_prefix, tag_suffix))} now speaks with **{name}**'s "
                 f"selected voice again.")
