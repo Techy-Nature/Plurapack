@@ -58,6 +58,91 @@ class VoiceRepositoryError(RuntimeError):
     """Sanitized private-voice repository failure."""
 
 
+# Both Chatterbox models babble (sound like another language) on lines of
+# about three words or fewer: there is too little text to settle on the voice.
+# Short lines are spoken with a fixed carrier sentence after a long pause, and
+# the audio is cut back at that pause. If no clear pause is found, the plain
+# line is generated instead so the carrier is never sent.
+SHORT_TEXT_MAX_WORDS = 4
+SHORT_TEXT_CARRIER = "And that is everything I wanted to say for now."
+PAD_FRAME_SECONDS = 0.02
+PAD_MIN_GAP_SECONDS = 0.14
+PAD_MIN_WORD_SECONDS = 0.12
+PAD_MIN_CARRIER_SECONDS = 0.8
+PAD_TAIL_SECONDS = 0.06
+PAD_SILENCE_RATIO = 0.06
+
+
+def spoken_word_count(text: str) -> int:
+    return len(re.findall(r"[A-Za-z0-9']+", text))
+
+
+def needs_padding(text: str) -> bool:
+    return not has_paralinguistic_tag(text) and 0 < spoken_word_count(text) <= SHORT_TEXT_MAX_WORDS
+
+
+def padded_text(text: str) -> str:
+    line = text.strip()
+    if line[-1] not in ".!?…":
+        line += "."
+    return f"{line} ... {SHORT_TEXT_CARRIER}"
+
+
+def find_padding_cut(energies: list[float], words: int) -> int | None:
+    """Return the frame where the carrier's pause starts, or None.
+
+    ``energies`` are per-frame RMS values. The cut is the longest silent gap
+    that starts after the line could have been spoken and leaves enough audio
+    after it for the carrier sentence.
+    """
+    if not energies:
+        return None
+    threshold = max(max(energies) * PAD_SILENCE_RATIO, 1e-4)
+    voiced = [energy > threshold for energy in energies]
+    if True not in voiced:
+        return None
+    onset = voiced.index(True)
+    earliest = onset + round(max(1, words) * PAD_MIN_WORD_SECONDS / PAD_FRAME_SECONDS)
+    min_gap = round(PAD_MIN_GAP_SECONDS / PAD_FRAME_SECONDS)
+    min_after = round(PAD_MIN_CARRIER_SECONDS / PAD_FRAME_SECONDS)
+    best: tuple[int, int] | None = None
+    index = earliest
+    while index < len(voiced):
+        if voiced[index]:
+            index += 1
+            continue
+        start = index
+        while index < len(voiced) and not voiced[index]:
+            index += 1
+        length = index - start
+        voiced_after = sum(voiced[index:])
+        if length >= min_gap and voiced_after >= min_after and (best is None or length > best[1]):
+            best = (start, length)
+    return best[0] if best else None
+
+
+def trim_padding(wav, sample_rate: int, words: int):
+    """Cut a padded render back to the original line, or return None."""
+    import torch
+
+    samples = wav.detach().cpu().reshape(-1)
+    frame = max(1, int(sample_rate * PAD_FRAME_SECONDS))
+    count = samples.shape[0] // frame
+    if count == 0:
+        return None
+    frames = samples[: count * frame].reshape(count, frame)
+    energies = frames.pow(2).mean(dim=1).sqrt().tolist()
+    cut = find_padding_cut(energies, words)
+    if cut is None:
+        return None
+    end = min(samples.shape[0], cut * frame + int(sample_rate * PAD_TAIL_SECONDS))
+    trimmed = samples[:end].clone()
+    fade = min(end, int(sample_rate * 0.02))
+    if fade:
+        trimmed[end - fade:] *= torch.linspace(1.0, 0.0, fade)
+    return trimmed.unsqueeze(0)
+
+
 class SpeechGenerationError(RuntimeError):
     """Sanitized model-generation failure."""
 
@@ -305,6 +390,18 @@ class Chatterbox:
         buffer.seek(0)
         return buffer.read()
 
+    def _render(self, generate, prompt: str, voice_path: Path, settings: dict):
+        """Generate one line, padding very short lines so they don't babble."""
+        if needs_padding(prompt):
+            words = spoken_word_count(prompt)
+            # Speed is applied after trimming so the pause search sees normal timing.
+            unstretched = {key: value for key, value in settings.items() if key != "speed_factor"}
+            padded = generate(padded_text(prompt), voice_path, unstretched)
+            trimmed = trim_padding(padded, self.nano_model.sr, words)
+            if trimmed is not None:
+                return apply_speed_factor(trimmed, float(settings.get("speed_factor", 1.0)))
+        return generate(prompt, voice_path, settings)
+
     def _generate_nano(self, prompt: str, voice_path: Path, settings: dict):
         apply_seed(int(settings.get("seed", 0)))
         wav = self.nano_model.generate(
@@ -336,10 +433,10 @@ class Chatterbox:
             # Tags win over those settings: Original would read them aloud.
             needs_original = "exaggeration" in settings or "cfg_weight" in settings
             if needs_original and not has_paralinguistic_tag(prompt):
-                wav = self._generate_original(prompt, voice_path, settings)
+                wav = self._render(self._generate_original, prompt, voice_path, settings)
                 sample_rate = self._load_original_model().sr
             else:
-                wav = self._generate_nano(prompt, voice_path, settings)
+                wav = self._render(self._generate_nano, prompt, voice_path, settings)
                 sample_rate = self.nano_model.sr
             return self._wav_bytes(wav, sample_rate)
         except Exception:
@@ -360,10 +457,10 @@ class Chatterbox:
                 if has_paralinguistic_tag(part["text"]):
                     # Nano ignores CFG/exaggeration presets; the non-temporal
                     # style effect below still gives whisper/mumble their sound.
-                    generated = self._generate_nano(part["text"], voice_path, base_settings)
+                    generated = self._render(self._generate_nano, part["text"], voice_path, base_settings)
                 else:
                     part_settings = {**base_settings, **STYLE_GENERATION_PRESETS[style]}
-                    generated = self._generate_original(part["text"], voice_path, part_settings)
+                    generated = self._render(self._generate_original, part["text"], voice_path, part_settings)
                 rendered.append(apply_style_effect(generated, style).detach().cpu())
             combined = torch.cat(rendered, dim=-1)
             # Nano and Original share the S3Gen sample rate, so one rate fits both.
