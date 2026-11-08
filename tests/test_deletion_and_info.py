@@ -313,6 +313,18 @@ def test_view_is_registered_as_an_alias_of_info_not_viewinfo(tmp_path):
     assert bot.get_command("vg") is bot.get_command("viewgroup")
 
 
+def test_viewsystem_and_vs_are_aliases_of_viewinfo(tmp_path):
+    from plurapack.bot import _help_pages
+
+    bot = create_bot("p;", str(tmp_path / "viewsystem.sqlite3"))
+    assert bot.get_command("viewsystem") is bot.get_command("viewinfo")
+    assert bot.get_command("vs") is bot.get_command("viewinfo")
+    assert bot.get_command("v") is bot.get_command("verify")
+    help_text = _help_pages("p;", "vs")[0]
+    assert help_text.startswith("**viewinfo**")
+    assert "`p;viewsystem`" in help_text and "`p;vs`" in help_text
+
+
 @pytest.mark.parametrize("selector_kind", ["name", "alias", "id"])
 async def test_viewgroup_shows_member_id_color_and_description(tmp_path, selector_kind):
     database = tmp_path / f"viewgroup-{selector_kind}.sqlite3"

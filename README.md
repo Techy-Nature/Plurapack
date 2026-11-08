@@ -283,6 +283,7 @@ p;export plurapack              # attached backup; also: pluralkit or tupperbox
 p;link                          # run on the existing owner account
 p;verify abc123...              # run on the other account
 p;viewinfo                     # system card, then member cards with arrow reactions
+p;vs                           # same as p;viewinfo / p;viewsystem: your own system
 p;viewmember abc12             # one member card by stable ID or exact name
 p;viewgroup pals               # one group; every member's ID, color, and description
 p;view abc12                   # same as p;info (any system, group, member, or form)

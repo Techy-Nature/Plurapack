@@ -126,7 +126,9 @@ COMMAND_HELP = {
               "Manage API tokens for outside dashboards and viewers. Create them in a DM."),
     "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
     "export": ("x", "[FORMAT] [--forms-loss|--forms-members]", "Export portable system metadata."),
-    "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]", "Show system or member information."),
+    "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]",
+                 "Show system or member information. With nothing after it, shows your own system. "
+                 "Also p;viewsystem or p;vs."),
     "info": ("in", "SYSTEM_GROUP_MEMBER_OR_FORM",
              "Show a system, its groups, one group, a member, or a form profile."),
     "group": (
@@ -148,7 +150,13 @@ COMMAND_SHORTCUTS = {name: details[0] for name, details in COMMAND_HELP.items()}
 
 # Compatibility names people commonly try based on the nouns used by other
 # plural proxy bots and by Plurapack's own UI.
-COMMAND_ALIASES = {"front": ["fronter", "switch", "sw"], "info": ["view"], "voice": ["vc"]}
+COMMAND_ALIASES = {
+    "front": ["fronter", "switch", "sw"],
+    "info": ["view"],
+    "voice": ["vc"],
+    # With no argument, viewinfo shows the caller's own system.
+    "viewinfo": ["viewsystem", "vs"],
+}
 
 PREVIOUS_EMOJI = "⬅️"
 NEXT_EMOJI = "➡️"
@@ -1270,7 +1278,7 @@ def create_bot(prefix: str, database: str) -> Any:
         if banner:
             await ctx.send(banner)
 
-    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"]])
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"], *COMMAND_ALIASES["viewinfo"]])
     async def viewinfo(ctx: commands.Context, *, selector: str = "") -> None:
         try:
             system = selected_system(ctx.author.id, selector or None)

@@ -35,7 +35,7 @@ Examples use the default `p;` prefix. Every command also works with `pk;`, `tul;
 | `export [FORMAT]` | `x` | Export portable metadata. |
 | `info SYSTEM_GROUP_MEMBER_OR_FORM` | `in`, `view` | Show a system and its groups, a single group, a member, or a form profile. |
 | `group create\|select\|add\|alias\|avatar\|banner ...` | `g` | Create, select, and edit the active group. |
-| `viewinfo [SYSTEM_OR_MEMBER]` | `vi` | Show a system card, then its member cards, or one member card. |
+| `viewinfo [SYSTEM_OR_MEMBER]` | `vi`, `viewsystem`, `vs` | Show a system card, then its member cards, or one member card. With no argument, shows your own system. |
 | `viewgroup GROUP` | `vg` | Show one group with every member's ID, color, and description. |
 | `viewmembers [SYSTEM]` | `ml` | Show only a system's paginated member cards. |
 | `viewmember MEMBER` | `vm` | Show one embedded member card. |
@@ -97,7 +97,8 @@ p;banner -g work https://example.test/group-banner.png
 `info` and `viewgroup` show a group's banner under its cards.
 
 `view` is accepted as a compatibility alias for `info`, and `fronter`,
-`switch`, and `sw` are accepted as aliases for `front`. Missing command arguments are
+`switch`, and `sw` are accepted as aliases for `front`. `viewsystem` and `vs` are
+accepted as aliases for `viewinfo`. Missing command arguments are
 reported in chat with the missing argument and a pointer to the command's help
 instead of only producing an operator-side traceback.
 
@@ -120,7 +121,7 @@ full description, shown in the member's own color. Large groups continue on
 extra pages that you turn with the arrow reactions; on Fluxer the same details
 arrive as a few consecutive messages.
 
-`viewinfo` without an argument uses the system connected to your account. A
+`viewinfo` (also `viewsystem` or `vs`) without an argument uses the system connected to your account. A
 system ID or exact system name shows that system; a member ID or exact member
 name shows that member. System results begin with the name, logo, description,
 stable ID, and member count. Use the left and right arrow reactions to move
