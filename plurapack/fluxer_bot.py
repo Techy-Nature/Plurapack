@@ -291,6 +291,18 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         await run(ctx, lambda: store.create_link(account(ctx)),
                   lambda token: f"Single-use code: `{token}` (expires in 15 minutes). Send it privately to the other owner.")
 
+    def current_group_chat_id(ctx: Any) -> str | None:
+        message = getattr(ctx, "message", ctx)
+        channel = getattr(ctx, "channel", None) or getattr(message, "channel", None)
+        group_dm = getattr(getattr(fluxer, "ChannelType", None), "GROUP_DM", 3)
+        channel_id = getattr(message, "channel_id", None)
+        return str(channel_id) if channel_id and getattr(channel, "type", None) == group_dm else None
+
+    async def group_chat_voice(ctx: Any, words: list[str]) -> None:
+        await run(ctx, lambda: _voice_group_chat_reply(store, account(ctx), words,
+                                                       current_group_chat_id(ctx), prefix),
+                  lambda reply: reply)
+
     async def verify_command(ctx: Any, token: str) -> None:
         await run(ctx, lambda: store.redeem_link(account(ctx), token),
                   lambda system_id: f"Account connected to system `{system_id}`.")
@@ -525,13 +537,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
                                                        str(guild_id) if guild_id else None, prefix),
                       lambda reply: reply); return
         if words and words[0].casefold() in GROUP_CHAT_WORDS:
-            message = getattr(ctx, "message", ctx)
-            channel = getattr(ctx, "channel", None) or getattr(message, "channel", None)
-            group_dm = getattr(getattr(fluxer, "ChannelType", None), "GROUP_DM", 3)
-            here = (str(message.channel_id) if getattr(channel, "type", None) == group_dm
-                    and getattr(message, "channel_id", None) else None)
-            await run(ctx, lambda: _voice_group_chat_reply(store, account(ctx), words[1:], here, prefix),
-                      lambda reply: reply); return
+            await group_chat_voice(ctx, words); return
         if voice_service is None: await ctx.send("Custom voice storage is not configured."); return
         try: parts = shlex.split(arguments)
         except ValueError as error: await ctx.send(str(error)); return

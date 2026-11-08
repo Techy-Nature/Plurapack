@@ -149,19 +149,25 @@ async def test_proxies_in_muted_group_chats_are_not_spoken(store):
 
 
 def test_voice_group_chat_reply(store):
-    assert _voice_group_chat_reply(store, "owner", ["list"], None, "p;") == "Voice is on in every group chat."
-    assert "now off in every group chat" in _voice_group_chat_reply(store, "owner", ["off"], None, "p;")
-    assert "already off in every group chat" in _voice_group_chat_reply(store, "owner", ["off", "all"], None, "p;")
-    assert _voice_group_chat_reply(store, "owner", ["list"], None, "p;") == "Voice is off in every group chat."
-    assert "turn it back on everywhere first" in _voice_group_chat_reply(store, "owner", ["on", "here"], "gc", "p;")
-    assert "now on in every group chat" in _voice_group_chat_reply(store, "owner", ["on"], None, "p;")
-    assert "now off in this group chat" in _voice_group_chat_reply(store, "owner", ["off", "here"], "gc", "p;")
-    assert "group chat `gc2`" in _voice_group_chat_reply(store, "owner", ["off", "gc2"], "gc", "p;")
-    listed = _voice_group_chat_reply(store, "owner", ["list"], "gc", "p;")
+    def reply(text, here=None):
+        return _voice_group_chat_reply(store, "owner", text.split(), here, "p;")
+
+    assert reply("gcs list") == "Voice is on in every group chat."
+    assert "now off in every group chat" in reply("gcs off")
+    assert "already off in every group chat" in reply("groupchats off")
+    assert reply("gc list") == "Voice is off in every group chat."
+    assert "`p;voice gcs on`" in reply("gc on", "gc")
+    assert "now on in every group chat" in reply("groupchats on")
+    assert "now off in this group chat" in reply("gc off", "gc")
+    assert "group chat `gc2`" in reply("groupchat gc2 off", "gc")
+    listed = reply("gcs list", "gc")
     assert "`gc` (this group chat)" in listed and "`gc2`" in listed
-    assert "inside a group chat" in _voice_group_chat_reply(store, "owner", ["off", "here"], None, "p;")
-    assert "now on in group chat `gc2`" in _voice_group_chat_reply(store, "owner", ["on", "gc2"], None, "p;")
-    assert "Use `p;voice groupchat" in _voice_group_chat_reply(store, "owner", ["maybe"], None, "p;")
+    assert "inside a group chat, or give its ID" in reply("gc off")
+    assert "now on in group chat `gc2`" in reply("gc gc2 on")
+    assert "now on in this group chat" in reply("GC on", "gc")
+    assert store.voice_muted_group_chats("owner") == []
+    for bad in ("gcs maybe", "gcs chat off", "gc a b off", "gc", "gcs", "gc off on"):
+        assert reply(bad).startswith("Use `p;voice gcs off|on`"), bad
 
 
 async def test_fluxer_voice_groupchat_command_works_without_voice_storage(tmp_path, monkeypatch):
@@ -173,12 +179,24 @@ async def test_fluxer_voice_groupchat_command_works_without_voice_storage(tmp_pa
 
     async def send(message, **kwargs): replies.append(message)
     ctx = SimpleNamespace(author=SimpleNamespace(id=123), send=send,
-                          message=SimpleNamespace(guild_id=None, channel_id=55))
-    await commands["voice"](ctx, arguments="groupchat off")
+                          message=SimpleNamespace(guild_id=None, channel_id=55),
+                          channel=SimpleNamespace(type=3))
+    await commands["voice"](ctx, arguments="groupchats off")
     assert store.voice_muted_group_chats("123") == ["*"]
     assert "now off in every group chat" in replies[-1]
-    await commands["vo"](ctx, arguments="gc on")
+    await commands["vc"](ctx, arguments="gcs on")
     assert store.voice_muted_group_chats("123") == []
+    await commands["vc"](ctx, arguments="gc off")
+    assert store.voice_muted_group_chats("123") == ["55"]
+    assert "now off in this group chat" in replies[-1]
+    await commands["vo"](ctx, arguments="groupchat 77 off")
+    assert store.voice_muted_group_chats("123") == ["55", "77"]
+
+
+def test_vc_is_a_documented_short_form_of_voice():
+    from plurapack.bot import _help_pages
+    assert "`p;vc`" in _help_pages("p;", "voice")[0]
+    assert _help_pages("p;", "vc")[0] == _help_pages("p;", "voice")[0]
 
 
 def test_stoat_incoming_marks_group_chats():

@@ -47,14 +47,14 @@ Group chats (group DMs) can be kept silent too. Proxies there are still posted;
 they just are not spoken, for every member and every playback mode. Servers and
 one-to-one DMs are not affected.
 
-1. Send `p;voice groupchat off` anywhere to switch voice off in every group chat.
-2. To silence only one group chat, send `p;voice groupchat off here` inside it,
-   or `p;voice groupchat off CHAT_ID` from anywhere else.
-3. See where voice is off with `p;voice groupchat list`.
-4. Turn voice back on in every group chat with `p;voice groupchat on`. Use
-   `p;voice groupchat on here` (or a chat ID) to undo a single group chat.
+1. Send `p;voice gcs off` (or `p;voice groupchats off`) anywhere to switch voice
+   off in every group chat. `p;voice gcs on` turns it back on everywhere.
+2. To silence only one group chat, send `p;voice gc off` (or
+   `p;voice groupchat off`) inside it, or `p;voice gc CHAT_ID off` from anywhere
+   else. `p;voice gc on` (or `p;voice gc CHAT_ID on`) undoes it.
+3. See where voice is off with `p;voice gcs list`.
 
-`p;voice gc` is a short form of `p;voice groupchat`.
+`p;vc` is a short form of `p;voice`, so `p;vc gcs off` and `p;vc gc off` work too.
 
 ## Configure a member
 
