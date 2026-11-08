@@ -283,7 +283,7 @@ p;export plurapack              # attached backup; also: pluralkit or tupperbox
 p;link                          # run on the existing owner account
 p;verify abc123...              # run on the other account
 p;viewinfo                     # system card, then member cards with arrow reactions
-p;vs                           # same as p;viewinfo / p;viewsystem: your own system
+p;viewsystem                   # p;vs: like p;viewinfo, but only ever shows a system
 p;viewmember abc12             # one member card by stable ID or exact name
 p;viewgroup pals               # one group; every member's ID, color, and description
 p;view abc12                   # same as p;info (any system, group, member, or form)
@@ -302,7 +302,7 @@ Every command also has a one- or two-letter shortcut: `s` (setup), `m` (member),
 `i` (import), `x` (export), `l` (link), `c` (color), `v` (verify), `vo` (voice),
 `of` (voiceoff), `vf` (voiceformat), `a` (alias), `f` (form), `mt` (memberproxy),
 `mc` (memberproxy-clear), `ft` (formproxy), `fc` (formproxy-clear), `fn` (formnickname), `fr` (front),
-`ap` (autoproxy), `af` (autofront), `e` (edit), `rp` (reproxy), `vi` (viewinfo), `vg` (viewgroup), `ml`
+`ap` (autoproxy), `af` (autofront), `e` (edit), `rp` (reproxy), `vi` (viewinfo), `vs` (viewsystem), `vg` (viewgroup), `ml`
 (viewmembers), `vm` (viewmember), `dm` (deletemember), and `ds` (deletesystem).
 
 View pagers use Unicode left/right arrows by default and accept configured Stoat

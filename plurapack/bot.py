@@ -127,8 +127,10 @@ COMMAND_HELP = {
     "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
     "export": ("x", "[FORMAT] [--forms-loss|--forms-members]", "Export portable system metadata."),
     "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]",
-                 "Show system or member information. With nothing after it, shows your own system. "
-                 "Also p;viewsystem or p;vs."),
+                 "Show system or member information. With nothing after it, shows your own system."),
+    "viewsystem": ("vs", "[SYSTEM]",
+                   "Show a system card, then its member cards. Only matches systems; "
+                   "with nothing after it, shows your own system."),
     "info": ("in", "SYSTEM_GROUP_MEMBER_OR_FORM",
              "Show a system, its groups, one group, a member, or a form profile."),
     "group": (
@@ -154,8 +156,6 @@ COMMAND_ALIASES = {
     "front": ["fronter", "switch", "sw"],
     "info": ["view"],
     "voice": ["vc"],
-    # With no argument, viewinfo shows the caller's own system.
-    "viewinfo": ["viewsystem", "vs"],
 }
 
 PREVIOUS_EMOJI = "⬅️"
@@ -367,6 +367,13 @@ def _help_pages(prefix: str, selector: str = "", limit: int = 1800) -> list[str]
         page += line + "\n"
     pages.append(page.rstrip())
     return pages
+
+
+def _system_not_found(selector: str) -> str:
+    """Reply for viewsystem when nothing matched, with or without a selector."""
+    if selector.strip():
+        return "System not found. Use an exact system name or stable system ID."
+    return "Your account isn't connected to a system yet. Use `p;setup` to create one, or name a system."
 
 
 def _prefix_summary(prefix: str) -> str:
@@ -1278,17 +1285,21 @@ def create_bot(prefix: str, database: str) -> Any:
         if banner:
             await ctx.send(banner)
 
-    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"], *COMMAND_ALIASES["viewinfo"]])
+    async def send_system(ctx: commands.Context, system: System) -> None:
+        """Post a system card with its member cards as later pages, then its banner."""
+        members = store.members_for_system(system.id)
+        pages = [[_system_embed(stoat, system, len(members))]]
+        pages.extend(_pack_embed_pages(
+            [_member_embed(stoat, store, member) for member in members], max_embeds=2))
+        await send_pages(ctx, pages)  # one message; members are later pages
+        await send_banner(ctx, system)
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewinfo"]])
     async def viewinfo(ctx: commands.Context, *, selector: str = "") -> None:
         try:
             system = selected_system(ctx.author.id, selector or None)
             if system:
-                members = store.members_for_system(system.id)
-                pages = [[_system_embed(stoat, system, len(members))]]
-                pages.extend(_pack_embed_pages(
-                    [_member_embed(stoat, store, member) for member in members], max_embeds=2))
-                await send_pages(ctx, pages)  # one message; members are later pages
-                await send_banner(ctx, system)
+                await send_system(ctx, system)
                 return
             member_value = store.public_member_selected(selector)
         except ValueError as error:
@@ -1299,6 +1310,19 @@ def create_bot(prefix: str, database: str) -> Any:
             return
         await send_pages(ctx, [[_member_embed(stoat, store, member_value)]])
         await send_banner(ctx, member_value)
+
+    @bot.command(aliases=[COMMAND_SHORTCUTS["viewsystem"]])
+    async def viewsystem(ctx: commands.Context, *, system_selector: str = "") -> None:
+        """Like viewinfo, but never falls back to a member."""
+        try:
+            system = selected_system(ctx.author.id, system_selector or None)
+        except ValueError as error:
+            await ctx.send(str(error))
+            return
+        if system is None:
+            await ctx.send(_system_not_found(system_selector))
+            return
+        await send_system(ctx, system)
 
     @bot.command(aliases=[COMMAND_SHORTCUTS["viewmembers"]])
     async def viewmembers(ctx: commands.Context, *, system_selector: str = "") -> None:
