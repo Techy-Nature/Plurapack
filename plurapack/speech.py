@@ -50,6 +50,18 @@ def voice_tags(text: str) -> str:
     return _BRACKET_PATTERN.sub(replace, text)
 
 
+# Chatterbox tends to skip thinking sounds like "hmmm," entirely, especially
+# at the start of a line. A capitalized "Hmm" with a trailing pause is spelled
+# the way the model has most likely seen it, so it is respelled to that form.
+HUM_SPOKEN = "Hmm..."
+_HUM_PATTERN = re.compile(r"(?<![\w'-])(?:h+m+|m{3,})(?![\w'-])[,.!?…]*", re.IGNORECASE)
+
+
+def hum_sounds(text: str) -> str:
+    """Respell hm/hmm/hmmm/mmm so the voice model says them aloud."""
+    return _HUM_PATTERN.sub(HUM_SPOKEN, text)
+
+
 def _speakable(parts: tuple[SpeechPart, ...]) -> bool:
     return any(character.isalnum() for part in parts for character in part.text)
 
@@ -63,7 +75,7 @@ def speech_parts(text: str, member: Member) -> tuple[SpeechPart, ...]:
     renderer, which keeps unmatched punctuation from silently eating speech.
     Voice tags such as ``[sigh]`` are handled whether or not formatting is on.
     """
-    tagged = voice_tags(text)
+    tagged = voice_tags(hum_sounds(text))
     if not member.speech_formatting:
         plain = (SpeechPart(tagged),)
         # Only a message emptied by dropped directions is skipped here; plain
