@@ -497,3 +497,19 @@ def test_voice_tags_inside_actions_follow_action_omission(voice_store):
     assert [(p.text, p.style) for p in speech_parts("hi *[sigh] waves* **[laughs] wow**", member)] == [
         ("hi", "normal"), ("[laugh] wow", "emphasis"),
     ]
+
+
+@pytest.mark.parametrize("formatting", [False, True])
+def test_thinking_sounds_are_respelled_so_they_are_spoken(voice_store, formatting):
+    member = voice_store.configure_speech_formatting("owner", "Alex", formatting, "normal")
+    parts = speech_parts("hmmm, I will add voice options to groups", member)
+    assert " ".join(part.text for part in parts) == "Hmm... I will add voice options to groups"
+    for source in ("hm.", "HMMMM!", "mmm", "Hmm..."):
+        assert speech_parts(source, member) == (SpeechPart("Hmm..."),)
+    assert speech_parts("ok hmm ok", member) == (SpeechPart("ok Hmm... ok"),)
+
+
+def test_words_containing_hm_or_mm_are_left_alone(voice_store):
+    member = voice_store.member_named("owner", "Alex")
+    source = "Ahmed's hmmmer summit mm hmm-like"
+    assert speech_parts(source, member) == (SpeechPart(source),)
