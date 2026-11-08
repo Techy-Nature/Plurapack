@@ -725,3 +725,31 @@ async def test_dashboard_creates_lists_and_revokes_api_tokens(api):
         assert (await client.get(f"/api/systems/{other_id}/api-tokens")).status_code == 403
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         assert (await client.get(base)).status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_voice_mutes_for_servers_and_group_chats(api):
+    store, system_id, other_id, transport = api
+    async with httpx.AsyncClient(transport=transport, base_url="http://test", cookies=cookie()) as client:
+        base = f"/api/systems/{system_id}/voice-mutes"
+        system = (await client.get(f"/api/systems/{system_id}")).json()
+        assert system["voiceMutes"] == {"servers": [], "groupChats": [], "allGroupChats": False}
+
+        assert (await client.put(f"{base}/servers/01SERVER")).json()["servers"] == ["01SERVER"]
+        assert (await client.put(f"{base}/group-chats/01CHAT")).json()["groupChats"] == ["01CHAT"]
+        muted = (await client.put(f"{base}/group-chats/all")).json()
+        assert muted == {"servers": ["01SERVER"], "groupChats": ["01CHAT"], "allGroupChats": True}
+        assert store.voice_muted_in(system_id, "01SERVER")
+        assert store.voice_muted_in(system_id, None, "anything")
+
+        assert (await client.delete(f"{base}/servers/01SERVER")).json()["servers"] == []
+        # Turning every group chat back on also clears single chats, like `p;vc gcs on`.
+        assert (await client.delete(f"{base}/group-chats/all")).json() == {
+            "servers": [], "groupChats": [], "allGroupChats": False}
+        assert (await client.get(f"/api/systems/{system_id}")).json()["voiceMutes"]["allGroupChats"] is False
+
+        assert (await client.put(f"{base}/elsewhere/01SERVER")).status_code == 404
+        assert (await client.put(f"{base}/servers/{'x' * 65}")).status_code == 422
+        assert (await client.put(f"/api/systems/{other_id}/voice-mutes/servers/01SERVER")).status_code == 403
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        assert (await client.put(f"/api/systems/{system_id}/voice-mutes/servers/01SERVER")).status_code == 401

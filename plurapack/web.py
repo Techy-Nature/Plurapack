@@ -120,7 +120,16 @@ def system_json(store: Store, account_id: str, system: System) -> dict[str, Any]
             "activeGroupId": active_group.id if active_group else None,
             "front": front_json(front),
             "autoproxy": {"memberId": autoproxy.member.id if autoproxy.member else None,
-                          "autofront": autoproxy.autofront}}
+                          "autofront": autoproxy.autofront},
+            "voiceMutes": voice_mutes_json(store, account_id)}
+
+
+def voice_mutes_json(store: Store, account_id: str) -> dict[str, Any]:
+    """Where the system's speech is off: servers, single group chats, or every group chat."""
+    chats = store.voice_muted_group_chats(account_id)
+    return {"servers": store.voice_muted_servers(account_id),
+            "groupChats": [chat for chat in chats if chat != "*"],
+            "allGroupChats": "*" in chats}
 
 
 def front_json(front: Front | None) -> dict[str, Any]:
@@ -722,6 +731,33 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
             await owned_form(system_id, body.member_id, body.form_id, user, store)
             selector = body.form_id
         return front_json(await run(store.switch_front, user.id, selector))
+
+    async def set_voice_mute(system_id: str, kind: str, target_id: str, muted: bool,
+                             user: WebUser, store: Store) -> dict[str, Any]:
+        await authorized(system_id, user, store)
+        if kind == "servers":
+            await run(store.set_voice_server_muted, user.id, target_id, muted)
+        elif kind == "group-chats":
+            # "all" is the switch for every group chat at once.
+            await run(store.set_voice_group_chat_muted, user.id,
+                      "*" if target_id == "all" else target_id, muted)
+        else:
+            raise HTTPException(404, "Resource not found")
+        return await run(voice_mutes_json, store, user.id)
+
+    @app.put("/api/systems/{system_id}/voice-mutes/{kind}/{target_id}")
+    async def mute_voice(system_id: str, kind: str, target_id: str,
+                         user: WebUser = Depends(require_authenticated_user),
+                         store: Store = Depends(db)) -> dict[str, Any]:
+        """Turn the system's voice off in one server or group chat (or every group chat)."""
+        return await set_voice_mute(system_id, kind, target_id, True, user, store)
+
+    @app.delete("/api/systems/{system_id}/voice-mutes/{kind}/{target_id}")
+    async def unmute_voice(system_id: str, kind: str, target_id: str,
+                           user: WebUser = Depends(require_authenticated_user),
+                           store: Store = Depends(db)) -> dict[str, Any]:
+        """Turn the system's voice back on in one server or group chat (or every group chat)."""
+        return await set_voice_mute(system_id, kind, target_id, False, user, store)
 
     @app.get("/api/systems/{system_id}/api-tokens")
     async def list_api_tokens(system_id: str, user: WebUser = Depends(require_authenticated_user),

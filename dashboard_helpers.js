@@ -49,6 +49,22 @@
   function selectMember(memberId) { return { kind: "member", memberId }; }
   function selectGroup(groupId) { return { kind: "group", groupId }; }
   function selectTokens() { return { kind: "tokens" }; }
+  // Voice can be switched off per server, per group chat, or in every group chat ("all").
+  const VOICE_MUTE_KINDS = { servers: "server", "group-chats": "group chat" };
+
+  function voiceMuteEndpoint(systemId, kind, targetId) {
+    if (!(kind in VOICE_MUTE_KINDS)) throw new Error(`Unknown voice mute kind: ${kind}`);
+    return `/api/systems/${encodeURIComponent(systemId)}/voice-mutes/${kind}/${encodeURIComponent(targetId)}`;
+  }
+
+  function voiceMuteIdError(kind, value) {
+    const id = String(value || "").trim(), label = VOICE_MUTE_KINDS[kind] || "server";
+    if (!id) return `Enter a ${label} ID.`;
+    if (id.length > 64 || /\s/.test(id)) return `That ${label} ID doesn't look right. Copy the ID without spaces.`;
+    if (kind === "group-chats" && id.toLowerCase() === "all") return "Use the switch to turn voice off in every group chat.";
+    return "";
+  }
+
   function apiTokensEndpoint(systemId, tokenId) {
     const base = `/api/systems/${encodeURIComponent(systemId)}/api-tokens`;
     return tokenId === undefined ? base : `${base}/${encodeURIComponent(tokenId)}`;
@@ -165,6 +181,7 @@
 
   return { PROFILE_FIELDS, VOICE_MODES, TOKEN_SCOPES, nextFormName, nextMemberName, initialView,
     selectSystem, selectMember, selectGroup, selectTokens, selectForm, apiTokensEndpoint, tokenScope,
+    VOICE_MUTE_KINDS, voiceMuteEndpoint, voiceMuteIdError,
     formatTimestamp, appLauncherUrl, memberEndpoint, formEndpoint, groupEndpoint,
     deletionRequest, enterEdit, consolidatedPatch, hasPatchFields, failedSave, filterMembers,
     membershipDraft, updateMembership, membershipPayload,
