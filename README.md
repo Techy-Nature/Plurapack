@@ -362,6 +362,9 @@ Use `p;voice generic MEMBER Jordan.wav`, or attach audio to
 multiple voices per member remain supported. Renaming never changes the UUID.
 Use `p;voice server off` in a server to keep your whole system silent there
 (`p;voice server on` undoes it, `p;voice server list` shows muted servers).
+Use `p;voice groupchat off` to keep your system silent in every group chat
+(`p;voice groupchat on` undoes it). Add `here` inside a group chat, or a chat ID,
+to change only that one; `p;voice groupchat list` shows where voice is off.
 During speech Plurapack sends only text and `generic:Jordan` or `custom:<UUID>`;
 Modal retrieves the recording independently. Reference audio is not fetched or
 uploaded by Plurapack for every TTS message. Generic WAV files keep their filenames

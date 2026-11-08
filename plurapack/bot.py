@@ -139,7 +139,7 @@ COMMAND_HELP = {
     "viewmember": ("vm", "MEMBER", "Show one member card."),
     "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
     "deletesystem": ("ds", "", "Start permanent system deletion."),
-    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings|shortcut|shortcuts ...; server off|on|list [SERVER_ID]", "Manage member voices, voice shortcuts and servers where voice is off."),
+    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings|shortcut|shortcuts ...; server off|on|list [SERVER_ID]; groupchat off|on|list [here|CHAT_ID]", "Manage member voices, voice shortcuts, and the servers and group chats where voice is off."),
     "voiceoff": ("of", "MEMBER", "Disable speech for a member."),
     "voiceformat": ("vf", "MEMBER on|off [MODE]", "Configure semantic speech formatting."),
 }
@@ -829,6 +829,51 @@ def _voice_server_reply(store: Store, account_id: str, parts: list[str],
     return f"Voice is {'now' if changed else 'already'} on in {where}."
 
 
+GROUP_CHAT_WORDS = {"groupchat", "groupchats", "gc"}
+
+
+def _voice_group_chat_reply(store: Store, account_id: str, parts: list[str],
+                            current_group_chat_id: str | None, prefix: str) -> str:
+    """Handle `voice groupchat off|on|list [here|CHAT_ID]` for both chat platforms.
+
+    With no target, off/on covers every group chat. ``here`` means the group
+    chat the command was sent in.
+    """
+    usage = (f"Use `{prefix}voice groupchat off|on` for every group chat, "
+             f"`{prefix}voice groupchat off|on here` (or a chat ID) for one, "
+             f"or `{prefix}voice groupchat list`.")
+    action = parts[0].casefold() if parts else ""
+    if action == "list" and len(parts) == 1:
+        chats = store.voice_muted_group_chats(account_id)
+        if not chats:
+            return "Voice is on in every group chat."
+        if chats[0] == "*":
+            return "Voice is off in every group chat."
+        return "Voice is off in these group chats:\n" + "\n".join(
+            f"• `{chat}`{' (this group chat)' if chat == current_group_chat_id else ''}" for chat in chats)
+    if action not in {"off", "on"} or len(parts) > 2:
+        return usage
+    target = parts[1] if len(parts) == 2 else "all"
+    if target.casefold() == "all":
+        changed = store.set_voice_group_chat_muted(account_id, "*", action == "off")
+        if action == "off":
+            return (f"Voice is {'now' if changed else 'already'} off in every group chat. "
+                    "Proxies there stay silent for every member.")
+        return f"Voice is {'now' if changed else 'already'} on in every group chat."
+    if target.casefold() == "here":
+        if not current_group_chat_id:
+            return f"Use `{prefix}voice groupchat {action} here` inside a group chat, or give its ID."
+        target = current_group_chat_id
+    if action == "on" and "*" in store.voice_muted_group_chats(account_id):
+        return (f"Voice is off in every group chat. Use `{prefix}voice groupchat on` to turn it back on "
+                "everywhere first.")
+    changed = store.set_voice_group_chat_muted(account_id, target, action == "off")
+    where = "this group chat" if target == current_group_chat_id else f"group chat `{target}`"
+    if action == "off":
+        return f"Voice is {'now' if changed else 'already'} off in {where}. Proxies there stay silent for every member."
+    return f"Voice is {'now' if changed else 'already'} on in {where}."
+
+
 def _load_stoat() -> tuple[Any, Any]:
     """Load the runtime adapter only when a bot is being created."""
     if importlib.util.find_spec("stoat") is None:
@@ -873,7 +918,19 @@ def _stoat_server_id(message: Any) -> str | None:
     return None
 
 
-def _incoming_from_stoat_message(message: Any, author: Any) -> Incoming:
+def _stoat_group_chat_id(message: Any, sdk: Any) -> str | None:
+    """Return the channel ID when a Stoat message was sent in a group chat."""
+    get_channel = getattr(message, "get_channel", None)
+    if sdk is None or not callable(get_channel):
+        return None
+    try:
+        channel = get_channel()
+    except Exception:
+        return None
+    return str(message.channel_id) if _is_group_channel(channel, sdk) else None
+
+
+def _incoming_from_stoat_message(message: Any, author: Any, sdk: Any = None) -> Incoming:
     """Translate a Stoat message into the platform-neutral proxy model."""
     reply_id = None
     if message.replies:
@@ -887,6 +944,7 @@ def _incoming_from_stoat_message(message: Any, author: Any) -> Incoming:
         bool(getattr(author, "bot", None)),
         reply_id,
         _stoat_server_id(message),
+        _stoat_group_chat_id(message, sdk) is not None,
     )
 
 
@@ -1450,6 +1508,13 @@ def create_bot(prefix: str, database: str) -> Any:
             except (PermissionError, ValueError) as error:
                 reply = str(error)
             await ctx.send(reply); return
+        if words and words[0].casefold() in GROUP_CHAT_WORDS:
+            try:
+                reply = _voice_group_chat_reply(store, ctx.author.id, words[1:],
+                                                _stoat_group_chat_id(ctx.message, stoat), prefix)
+            except (PermissionError, ValueError) as error:
+                reply = str(error)
+            await ctx.send(reply); return
         if voice_service is None:
             await ctx.send("Custom voice storage is not configured.")
             return
@@ -1777,7 +1842,7 @@ def create_bot(prefix: str, database: str) -> Any:
         author = message.get_author()
         if author is None:
             return
-        incoming = _incoming_from_stoat_message(message, author)
+        incoming = _incoming_from_stoat_message(message, author, stoat)
         reply_id = incoming.reply_to_id
         confirmation = delete_confirmations.get(reply_id) if reply_id else None
         if confirmation and confirmation[0] == author.id:

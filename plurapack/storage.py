@@ -274,6 +274,12 @@ class Store:
                     server_id TEXT NOT NULL,
                     PRIMARY KEY(system_id, server_id)
                 );
+                -- Group chats where a system's speech is never generated; '*' means every group chat.
+                CREATE TABLE IF NOT EXISTS voice_muted_group_chats (
+                    system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
+                    channel_id TEXT NOT NULL,
+                    PRIMARY KEY(system_id, channel_id)
+                );
                 CREATE TABLE IF NOT EXISTS proxy_tags (
                     id INTEGER PRIMARY KEY,
                     system_id TEXT NOT NULL REFERENCES systems(id) ON DELETE CASCADE,
@@ -659,12 +665,56 @@ class Store:
                               (system_id,)).fetchall()
         return [str(row[0]) for row in rows]
 
-    def voice_muted_in(self, system_id: str, server_id: str | None) -> bool:
-        if not server_id:
+    def set_voice_group_chat_muted(self, account_id: str, channel_id: str, muted: bool) -> bool:
+        """Turn speech off (or back on) in one group chat, or in all of them with ``*``.
+
+        Turning every group chat back on also clears single-chat entries, so
+        ``on`` always means voice plays in group chats again. Returns whether
+        anything changed.
+        """
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        channel_id = channel_id.strip()
+        if not channel_id or len(channel_id) > 64:
+            raise ValueError("Give a valid group chat ID.")
+        with self.connect() as db:
+            if muted:
+                changed = db.execute("INSERT OR IGNORE INTO voice_muted_group_chats VALUES (?,?)",
+                                     (system_id, channel_id)).rowcount
+            elif channel_id == "*":
+                changed = db.execute("DELETE FROM voice_muted_group_chats WHERE system_id=?",
+                                     (system_id,)).rowcount
+            else:
+                changed = db.execute("DELETE FROM voice_muted_group_chats WHERE system_id=? AND channel_id=?",
+                                     (system_id, channel_id)).rowcount
+        return bool(changed)
+
+    def voice_muted_group_chats(self, account_id: str) -> list[str]:
+        """List muted group chat IDs; ``*`` (every group chat) sorts first when present."""
+        system_id = self.system_for(account_id)
+        if system_id is None:
+            raise PermissionError("Create a system first.")
+        with self.connect() as db:
+            rows = db.execute("SELECT channel_id FROM voice_muted_group_chats WHERE system_id=? "
+                              "ORDER BY channel_id!='*', channel_id", (system_id,)).fetchall()
+        return [str(row[0]) for row in rows]
+
+    def voice_muted_in(self, system_id: str, server_id: str | None,
+                       group_chat_id: str | None = None) -> bool:
+        """Whether speech is off for this system in a server or a group chat."""
+        if not server_id and not group_chat_id:
             return False
         with self.connect() as db:
-            return db.execute("SELECT 1 FROM voice_muted_servers WHERE system_id=? AND server_id=?",
-                              (system_id, server_id)).fetchone() is not None
+            if server_id and db.execute(
+                    "SELECT 1 FROM voice_muted_servers WHERE system_id=? AND server_id=?",
+                    (system_id, server_id)).fetchone() is not None:
+                return True
+            if group_chat_id and db.execute(
+                    "SELECT 1 FROM voice_muted_group_chats WHERE system_id=? AND channel_id IN ('*',?)",
+                    (system_id, group_chat_id)).fetchone() is not None:
+                return True
+        return False
 
     def proxy_name(self, member: Member, server_id: str | None = None,
                    channel_id: str | None = None) -> str:

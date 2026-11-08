@@ -34,6 +34,8 @@ from .bot import (
     _update_profile_image_from_message,
     _download_voice_attachment,
     _voice_server_reply,
+    _voice_group_chat_reply,
+    GROUP_CHAT_WORDS,
     _positive_environment_integer,
 )
 from .chatterbox import ChatterboxBackend
@@ -521,6 +523,14 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
             guild_id = getattr(getattr(ctx, "message", ctx), "guild_id", None)
             await run(ctx, lambda: _voice_server_reply(store, account(ctx), words[1:],
                                                        str(guild_id) if guild_id else None, prefix),
+                      lambda reply: reply); return
+        if words and words[0].casefold() in GROUP_CHAT_WORDS:
+            message = getattr(ctx, "message", ctx)
+            channel = getattr(ctx, "channel", None) or getattr(message, "channel", None)
+            group_dm = getattr(getattr(fluxer, "ChannelType", None), "GROUP_DM", 3)
+            here = (str(message.channel_id) if getattr(channel, "type", None) == group_dm
+                    and getattr(message, "channel_id", None) else None)
+            await run(ctx, lambda: _voice_group_chat_reply(store, account(ctx), words[1:], here, prefix),
                       lambda reply: reply); return
         if voice_service is None: await ctx.send("Custom voice storage is not configured."); return
         try: parts = shlex.split(arguments)

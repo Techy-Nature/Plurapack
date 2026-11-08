@@ -41,6 +41,21 @@ posted; they just are not spoken, for every member and every playback mode.
 
 This works on both Stoat and Fluxer, and does not need custom voice storage.
 
+## Turn voice off in group chats
+
+Group chats (group DMs) can be kept silent too. Proxies there are still posted;
+they just are not spoken, for every member and every playback mode. Servers and
+one-to-one DMs are not affected.
+
+1. Send `p;voice groupchat off` anywhere to switch voice off in every group chat.
+2. To silence only one group chat, send `p;voice groupchat off here` inside it,
+   or `p;voice groupchat off CHAT_ID` from anywhere else.
+3. See where voice is off with `p;voice groupchat list`.
+4. Turn voice back on in every group chat with `p;voice groupchat on`. Use
+   `p;voice groupchat on here` (or a chat ID) to undo a single group chat.
+
+`p;voice gc` is a short form of `p;voice groupchat`.
+
 ## Configure a member
 
 ```text
