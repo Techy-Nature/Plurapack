@@ -213,3 +213,42 @@ def test_stoat_incoming_marks_group_chats():
     assert not _incoming_from_stoat_message(message(TextChannel()), author, sdk).group_chat
     assert not _incoming_from_stoat_message(message(None), author, sdk).group_chat
     assert not _incoming_from_stoat_message(message(GroupChannel()), author).group_chat
+
+
+async def test_vc_off_and_format_match_voiceoff_and_voiceformat(tmp_path, monkeypatch):
+    database = tmp_path / "fluxer-vc.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    store.create_system("123", "Fluxer system")
+    member = store.add_member("123", "Alex Kay", "[a]")
+    store.configure_voice("123", member.id, "Jordan.wav", "{}", "send", "generic")
+    replies = []
+
+    async def send(message, **kwargs): replies.append(message)
+    ctx = SimpleNamespace(author=SimpleNamespace(id=123), send=send,
+                          message=SimpleNamespace(guild_id=None, channel_id=55))
+    await commands["vc"](ctx, arguments='format "Alex Kay" on whisper')
+    assert replies[-1] == "Speech formatting for **Alex Kay** is On; crossed-out text is `whisper`."
+    await commands["vc"](ctx, arguments="format nobody maybe")
+    assert replies[-1] == "Formatting must be on or off."
+    await commands["vc"](ctx, arguments='off "Alex Kay"')
+    assert replies[-1] == "Voice for **Alex Kay** is Off."
+    assert store.member_selected("123", member.id).playback == "off"
+    await commands["vc"](ctx, arguments="off")
+    assert replies[-1].startswith("Use `p;voice off MEMBER`")
+
+
+async def test_stoat_vc_off(tmp_path):
+    from plurapack import bot
+    database = tmp_path / "stoat-vc.sqlite3"
+    client = bot.create_bot("p;", str(database))
+    store = Store(database)
+    store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Alex", "[a]")
+    replies = []
+
+    async def send(message): replies.append(message)
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send, message=SimpleNamespace())
+    await client.get_command("voice").callback(ctx, arguments="off Alex")
+    assert replies == ["Voice for **Alex** is Off."]
+    assert store.member_selected("owner", member.id).playback == "off"

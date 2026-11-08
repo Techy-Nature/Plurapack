@@ -36,6 +36,8 @@ from .bot import (
     _voice_server_reply,
     _voice_group_chat_reply,
     GROUP_CHAT_WORDS,
+    VOICE_OFF_OR_FORMAT_WORDS,
+    _voice_off_or_format_reply,
     _positive_environment_integer,
 )
 from .chatterbox import ChatterboxBackend
@@ -538,6 +540,9 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
                       lambda reply: reply); return
         if words and words[0].casefold() in GROUP_CHAT_WORDS:
             await group_chat_voice(ctx, words); return
+        if words and words[0].casefold() in VOICE_OFF_OR_FORMAT_WORDS:
+            await run(ctx, lambda: _voice_off_or_format_reply(store, account(ctx), arguments, prefix),
+                      lambda reply: reply); return
         if voice_service is None: await ctx.send("Custom voice storage is not configured."); return
         try: parts = shlex.split(arguments)
         except ValueError as error: await ctx.send(str(error)); return

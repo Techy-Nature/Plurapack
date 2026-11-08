@@ -55,6 +55,8 @@ one-to-one DMs are not affected.
 3. See where voice is off with `p;voice gcs list`.
 
 `p;vc` is a short form of `p;voice`, so `p;vc gcs off` and `p;vc gc off` work too.
+`p;vc off MEMBER` and `p;vc format MEMBER on|off [MODE]` do the same as
+`p;voiceoff` and `p;voiceformat`.
 
 ## Configure a member
 

@@ -139,7 +139,7 @@ COMMAND_HELP = {
     "viewmember": ("vm", "MEMBER", "Show one member card."),
     "deletemember": ("dm", "MEMBER", "Permanently delete an owned member."),
     "deletesystem": ("ds", "", "Start permanent system deletion."),
-    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings|shortcut|shortcuts ...; server off|on|list [SERVER_ID]; gcs off|on|list; gc [CHAT_ID] off|on", "Manage member voices, voice shortcuts, and the servers and group chats where voice is off."),
+    "voice": ("vo", "upload MEMBER VOICE_NAME [PLAYBACK] + WAV/MP3; list|default|generic|rename|delete|settings|shortcut|shortcuts ...; off MEMBER; format MEMBER on|off [MODE]; server off|on|list [SERVER_ID]; gcs off|on|list; gc [CHAT_ID] off|on", "Manage member voices, voice shortcuts, and the servers and group chats where voice is off."),
     "voiceoff": ("of", "MEMBER", "Disable speech for a member."),
     "voiceformat": ("vf", "MEMBER on|off [MODE]", "Configure semantic speech formatting."),
 }
@@ -829,6 +829,37 @@ def _voice_server_reply(store: Store, account_id: str, parts: list[str],
     return f"Voice is {'now' if changed else 'already'} on in {where}."
 
 
+def _voice_off_or_format_reply(store: Store, account_id: str, arguments: str, prefix: str) -> str:
+    """Handle `voice off MEMBER` and `voice format MEMBER on|off [MODE]`.
+
+    These are the same as the separate `voiceoff` and `voiceformat` commands, so
+    `p;vc off`/`p;vc format` work through the short voice command too.
+    """
+    try:
+        parts = shlex.split(arguments)
+    except ValueError as error:
+        return str(error)
+    action = parts.pop(0).casefold() if parts else ""
+    if action == "off":
+        if len(parts) != 1:
+            return f"Use `{prefix}voice off MEMBER` (quote names containing spaces)."
+        configured = store.configure_voice(account_id, parts[0], None, "{}", "off")
+        return f"Voice for **{configured.name}** is Off."
+    if not 1 <= len(parts) <= 3:
+        return f"Use `{prefix}voice format MEMBER on|off [mumble|normal|omit|whisper]`."
+    enabled = parts[1].casefold() if len(parts) > 1 else "on"
+    if enabled not in {"on", "off"}:
+        return "Formatting must be on or off."
+    strikethrough = parts[2].casefold() if len(parts) > 2 else "normal"
+    configured = store.configure_speech_formatting(account_id, parts[0], enabled == "on", strikethrough)
+    state = "On" if configured.speech_formatting else "Off"
+    return (f"Speech formatting for **{configured.name}** is {state}; crossed-out text is "
+            f"`{configured.strikethrough_speech}`.")
+
+
+VOICE_OFF_OR_FORMAT_WORDS = {"off", "format"}
+
+
 ALL_GROUP_CHATS_WORDS = {"groupchats", "gcs"}
 ONE_GROUP_CHAT_WORDS = {"groupchat", "gc"}
 GROUP_CHAT_WORDS = ALL_GROUP_CHATS_WORDS | ONE_GROUP_CHAT_WORDS
@@ -1515,6 +1546,12 @@ def create_bot(prefix: str, database: str) -> Any:
             try:
                 reply = _voice_server_reply(store, ctx.author.id, words[1:],
                                             _stoat_server_id(ctx.message), prefix)
+            except (PermissionError, ValueError) as error:
+                reply = str(error)
+            await ctx.send(reply); return
+        if words and words[0].casefold() in VOICE_OFF_OR_FORMAT_WORDS:
+            try:
+                reply = _voice_off_or_format_reply(store, ctx.author.id, arguments, prefix)
             except (PermissionError, ValueError) as error:
                 reply = str(error)
             await ctx.send(reply); return
