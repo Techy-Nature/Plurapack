@@ -58,6 +58,14 @@ one-to-one DMs are not affected.
 `p;vc off MEMBER` and `p;vc format MEMBER on|off [MODE]` do the same as
 `p;voiceoff` and `p;voiceformat`.
 
+### From the dashboard
+
+1. Open the dashboard and select your system.
+2. Scroll to **Voice in servers and group chats**.
+3. Paste a server ID or group chat ID and press **Turn voice off**.
+4. Press **Turn voice on** next to an ID to undo it.
+5. Tick **Voice off in every group chat** to silence all group chats at once.
+
 ## Configure a member
 
 ```text

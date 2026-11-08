@@ -368,6 +368,9 @@ every group chat, and `p;voice gcs on` to undo it. `p;voice gc off` (or
 `p;voice gc CHAT_ID off` silences one by ID. `p;voice gcs list` shows where voice
 is off. `p;vc` works as a short form of `p;voice`, including `p;vc off MEMBER`
 and `p;vc format MEMBER on|off [MODE]` for `p;voiceoff` and `p;voiceformat`.
+The dashboard's system page has the same switches under **Voice in servers and
+group chats**: add a server or group chat ID to turn voice off there, press
+**Turn voice on** to undo it, or tick **Voice off in every group chat**.
 During speech Plurapack sends only text and `generic:Jordan` or `custom:<UUID>`;
 Modal retrieves the recording independently. Reference audio is not fetched or
 uploaded by Plurapack for every TTS message. Generic WAV files keep their filenames

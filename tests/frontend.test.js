@@ -209,3 +209,18 @@ test("only the app's own launcher origins count as an app launcher", () => {
   assert.equal(h.appLauncherUrl("not a url"), null);
   assert.equal(h.appLauncherUrl(""), null);
 });
+
+test("voice mute endpoints cover servers, group chats and every group chat", () => {
+  assert.equal(h.voiceMuteEndpoint("sys 1", "servers", "01SERVER"), "/api/systems/sys%201/voice-mutes/servers/01SERVER");
+  assert.equal(h.voiceMuteEndpoint("s", "group-chats", "all"), "/api/systems/s/voice-mutes/group-chats/all");
+  assert.throws(() => h.voiceMuteEndpoint("s", "channels", "1"));
+});
+
+test("voice mute IDs must be one word and not the reserved all", () => {
+  assert.equal(h.voiceMuteIdError("servers", " 01SERVER "), "");
+  assert.equal(h.voiceMuteIdError("servers", ""), "Enter a server ID.");
+  assert.equal(h.voiceMuteIdError("group-chats", "  "), "Enter a group chat ID.");
+  assert.match(h.voiceMuteIdError("servers", "two words"), /doesn't look right/);
+  assert.match(h.voiceMuteIdError("servers", "x".repeat(65)), /doesn't look right/);
+  assert.match(h.voiceMuteIdError("group-chats", "ALL"), /switch/);
+});
