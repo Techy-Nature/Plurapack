@@ -25,6 +25,7 @@ from .bot import (
     _group_member_detail,
     _help_pages,
     _prefix_summary,
+    _system_not_found,
     _member_creation_options,
     _print_cli_status,
     _resolve_group,
@@ -481,13 +482,23 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         members = store.members_for_system(system.id)
         await ctx.send("\n\n".join(map(member_card, members)) if members else f"**{system.display_name}** has no members.")
 
+    async def send_system(ctx: Any, system: System) -> None:
+        members = store.members_for_system(system.id)
+        await ctx.send(f"**{system.display_name}**\n{system.description or 'No system description provided.'}\nSystem ID: `{system.id}` | Members: {len(members)}\nAvatar: {system.logo or 'None'} | Banner: {system.banner or 'None'}\n\n" + "\n\n".join(map(member_card, members)))
+
     async def viewinfo_command(ctx: Any, *, selector: str = "") -> None:
         try: system = store.system_info(selector or store.system_for(account(ctx))) if (selector or store.system_for(account(ctx))) else None
         except ValueError as error: await ctx.send(str(error)); return
-        if system:
-            members = store.members_for_system(system.id)
-            await ctx.send(f"**{system.display_name}**\n{system.description or 'No system description provided.'}\nSystem ID: `{system.id}` | Members: {len(members)}\nAvatar: {system.logo or 'None'} | Banner: {system.banner or 'None'}\n\n" + "\n\n".join(map(member_card, members))); return
+        if system: await send_system(ctx, system); return
         await viewmember_command(ctx, selector=selector)
+
+    async def viewsystem_command(ctx: Any, *, system_selector: str = "") -> None:
+        """Like viewinfo, but never falls back to a member."""
+        value = system_selector or store.system_for(account(ctx))
+        try: system = store.system_info(value) if value else None
+        except ValueError as error: await ctx.send(str(error)); return
+        if system is None: await ctx.send(_system_not_found(system_selector)); return
+        await send_system(ctx, system)
 
     async def info_command(ctx: Any, *, selector: str) -> None:
         try: value = store.public_info_selected(account(ctx), selector)
@@ -642,7 +653,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         "front": front_command, "autoproxy": autoproxy_command, "autofront": autofront_command,
         "color": color_command, "edit": edit_command, "reproxy": reproxy_command, "link": link_command, "verify": verify_command,
         "privacy": privacy_command, "token": token_command,
-        "import": import_command, "export": export_command, "viewinfo": viewinfo_command,
+        "import": import_command, "export": export_command, "viewinfo": viewinfo_command, "viewsystem": viewsystem_command,
         "info": info_command, "viewgroup": viewgroup_command, "viewmembers": viewmembers_command, "viewmember": viewmember_command,
         "group": group_command, "deletemember": deletemember_command,
         "deletesystem": deletesystem_command, "voice": voice_command,

@@ -490,3 +490,22 @@ async def test_fluxer_token_create_requires_a_direct_message(tmp_path, monkeypat
     assert [token.scope for token in store.api_tokens("123")] == ["read:private"]
     await commands["pv"](in_server, "system", arguments="public")
     assert replies[-1] == "Your system card is now public in the API."
+
+
+async def test_fluxer_viewsystem_only_matches_systems(tmp_path, monkeypatch):
+    database = tmp_path / "viewsystem.sqlite3"
+    commands = make_fluxer_commands(monkeypatch, database)
+    store = Store(database)
+    own = store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Jaden", "[j]", "")
+    replies = []
+
+    async def send(message, **kwargs):
+        replies.append(message)
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    assert commands["vs"] is commands["viewsystem"]
+    await commands["viewsystem"](ctx)
+    assert replies[-1].startswith("**Crew**") and f"`{own}`" in replies[-1]
+    await commands["vs"](ctx, system_selector=member.id)
+    assert replies[-1] == "System not found. Use an exact system name or stable system ID."

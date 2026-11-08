@@ -313,6 +313,54 @@ def test_view_is_registered_as_an_alias_of_info_not_viewinfo(tmp_path):
     assert bot.get_command("vg") is bot.get_command("viewgroup")
 
 
+def test_viewsystem_is_its_own_command_with_vs_shortcut(tmp_path):
+    from plurapack.bot import _help_pages
+
+    bot = create_bot("p;", str(tmp_path / "viewsystem.sqlite3"))
+    assert bot.get_command("vs") is bot.get_command("viewsystem")
+    assert bot.get_command("viewsystem") is not bot.get_command("viewinfo")
+    assert bot.get_command("v") is bot.get_command("verify")
+    help_text = _help_pages("p;", "vs")[0]
+    assert help_text.startswith("**viewsystem**")
+    assert "`p;vs`" in help_text
+
+
+async def test_viewsystem_shows_own_system_by_default_and_never_members(tmp_path, monkeypatch):
+    database = tmp_path / "viewsystem-only.sqlite3"
+    store = Store(database)
+    own = store.create_system("owner", "Crew")
+    member = store.add_member("owner", "Jaden", "[j]", "")
+    other = store.create_system("other", "Quiet System")
+    sent = []
+
+    async def send(*args, **kwargs):
+        sent.append((args, kwargs))
+        return SimpleNamespace(id="posted", channel_id="channel")
+
+    ctx = SimpleNamespace(author=SimpleNamespace(id="owner"), send=send)
+    bot = create_bot("p;", str(database))
+    # stoat.py's HTTPClient attributes are read-only, so stub the method on its class.
+    monkeypatch.setattr(type(bot.state.http), "add_reaction_to_message", lambda *a, **k: _noop())
+    callback = bot.get_command("viewsystem").callback
+
+    await callback(ctx)
+    assert f"`{own}`" in sent[0][1]["embeds"][0].description
+
+    sent.clear()
+    await callback(ctx, system_selector=other)
+    assert f"`{other}`" in sent[0][1]["embeds"][0].description
+
+    for selector in (member.id, "Jaden"):
+        sent.clear()
+        await callback(ctx, system_selector=selector)
+        assert sent == [(("System not found. Use an exact system name or stable system ID.",), {})]
+
+    sent.clear()
+    lonely = SimpleNamespace(author=SimpleNamespace(id="nobody"), send=send)
+    await callback(lonely)
+    assert "isn't connected to a system" in sent[0][0][0]
+
+
 @pytest.mark.parametrize("selector_kind", ["name", "alias", "id"])
 async def test_viewgroup_shows_member_id_color_and_description(tmp_path, selector_kind):
     database = tmp_path / f"viewgroup-{selector_kind}.sqlite3"
