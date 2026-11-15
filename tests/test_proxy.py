@@ -472,3 +472,24 @@ async def test_tul_and_tup_reproxy_behave_like_our_own_prefix(store, command):
     assert service.parse_reproxy_command(f"{command} Sam") == ReproxyRequest("Sam", True)
     await service.handle(Incoming("cmd", "channel", "owner", f"{command} Sam", reply_to_id="proxy-1"))
     assert platform.reproxied == [("proxy-1", sam.id)]
+
+
+def test_reply_quote_shortens_long_text_and_keeps_member_color():
+    from plurapack.proxy import REPLY_QUOTE_MAX_CHARACTERS, reply_quote
+
+    quote = reply_quote("Varinn", "x" * 500, "7B68EE")
+
+    assert quote.title == "↩ Replying to Varinn"
+    assert quote.description == "x" * REPLY_QUOTE_MAX_CHARACTERS + "…"
+    assert quote.color == "#7b68ee"
+
+
+def test_reply_quote_limits_lines_and_handles_empty_messages():
+    from plurapack.proxy import reply_quote
+
+    assert reply_quote("A", "one\n\ntwo\nthree\nfour", None).description == "one\ntwo\nthree…"
+    assert reply_quote(None, "", "not-a-color", has_attachments=True) == reply_quote(
+        "", "  ", None, has_attachments=True)
+    assert reply_quote(None, "", None, has_attachments=True).description == "*(attachment)*"
+    assert reply_quote(None, None, None).description == "*(no text)*"
+    assert reply_quote(None, None, None).title == "↩ Replying to a message"

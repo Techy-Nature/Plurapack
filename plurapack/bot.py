@@ -23,7 +23,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
-from .proxy import ALTERNATIVE_COMMAND_PREFIXES, EditCommandError, Incoming, ProxyService, command_prefixes
+from .proxy import (ALTERNATIVE_COMMAND_PREFIXES, EditCommandError, Incoming, ProxyService, ReplyQuote,
+                    command_prefixes, reply_quote)
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .browser_audio import BrowserAudioStore
@@ -1004,6 +1005,33 @@ def _incoming_from_stoat_message(message: Any, author: Any, sdk: Any = None) -> 
     )
 
 
+async def _stoat_author_name(message: Any, state: Any) -> str | None:
+    """Name shown for a Stoat message: its proxy name, nickname or display name."""
+    masquerade = getattr(message, "masquerade", None)
+    masked = getattr(masquerade, "name", None) if masquerade else None
+    if isinstance(masked, str) and masked.strip():
+        return masked
+    author = None
+    get_author = getattr(message, "get_author", None)
+    if callable(get_author):
+        try:
+            author = get_author()
+        except Exception:
+            author = None
+    if author is None:
+        author_id = getattr(message, "author_id", None)
+        if author_id:
+            try:
+                author = await state.http.get_user(author_id)
+            except Exception:
+                author = None
+    for attribute in ("nick", "display_name", "name"):
+        value = getattr(author, attribute, None)
+        if isinstance(value, str) and value.strip():
+            return value
+    return None
+
+
 @dataclass
 class StoatPlatform:
     messages: dict[str, Any]
@@ -1015,6 +1043,12 @@ class StoatPlatform:
         channel = source.get_channel()
         if channel is None:
             raise RuntimeError("Source channel is unavailable; the original was preserved.")
+        extra: dict[str, Any] = {}
+        quote = await self._reply_quote(incoming, member)
+        if quote is not None:
+            extra["embeds"] = [self.sdk.SendableEmbed(
+                title=quote.title, description=quote.description, color=quote.color,
+            )]
         posted = await channel.send(
             content,
             masquerade=self.sdk.MessageMasquerade(
@@ -1022,8 +1056,25 @@ class StoatPlatform:
                 avatar=member.avatar,
                 color=None if _is_group_channel(channel, self.sdk) else member.color,
             ),
+            **extra,
         )
         return posted.id
+
+    async def _reply_quote(self, incoming: Incoming, member: Member) -> ReplyQuote | None:
+        """Quote the message being replied to; a failed lookup never blocks the proxy."""
+        if not incoming.reply_to_id:
+            return None
+        try:
+            replied = await self.state.http.get_message(incoming.channel_id, incoming.reply_to_id)
+            author = await _stoat_author_name(replied, self.state)
+            attachments = getattr(replied, "attachments", None) or getattr(
+                replied, "internal_attachments", None)
+            return reply_quote(author, getattr(replied, "content", None),
+                               getattr(member, "color", None), bool(attachments))
+        except Exception as error:
+            logging.getLogger(__name__).warning(
+                "Could not quote replied-to message (%s)", type(error).__name__)
+            return None
 
     async def delete_source(self, incoming: Incoming) -> bool:
         source = self.messages[incoming.id]

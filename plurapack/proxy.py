@@ -80,6 +80,45 @@ class Incoming:
     group_chat: bool = False
 
 
+# A proxied reply ends with a short quote of the message it answers, tinted with
+# the replying headmate's color, because the platform's own reply marker is lost
+# when the original message is replaced by the proxy.
+REPLY_QUOTE_MAX_CHARACTERS = 200
+REPLY_QUOTE_MAX_LINES = 3
+REPLY_QUOTE_ARROW = "\u21a9"
+
+
+@dataclass(frozen=True)
+class ReplyQuote:
+    title: str
+    description: str
+    color: str | None = None  # "#rrggbb", or None for the platform default
+
+
+def reply_quote(author: str | None, content: str | None, color: str | None,
+                has_attachments: bool = False) -> ReplyQuote:
+    """Build the platform-neutral quote shown at the end of a proxied reply."""
+    name = (author or "").strip() or "a message"
+    lines = [line.rstrip() for line in (content or "").strip().splitlines()]
+    lines = [line for line in lines if line.strip()]
+    shortened = len(lines) > REPLY_QUOTE_MAX_LINES
+    text = "\n".join(lines[:REPLY_QUOTE_MAX_LINES])
+    if len(text) > REPLY_QUOTE_MAX_CHARACTERS:
+        text = text[:REPLY_QUOTE_MAX_CHARACTERS].rstrip()
+        shortened = True
+    if shortened:
+        text += "\u2026"
+    if not text:
+        text = "*(attachment)*" if has_attachments else "*(no text)*"
+    return ReplyQuote(f"{REPLY_QUOTE_ARROW} Replying to {name}", text, normalize_color(color))
+
+
+def normalize_color(color: str | None) -> str | None:
+    """Return a stored member color as ``#rrggbb``, or None when it is unusable."""
+    value = (color or "").strip().lower().removeprefix("#")
+    return f"#{value}" if re.fullmatch(r"[0-9a-f]{6}", value) else None
+
+
 class Platform(Protocol):
     async def send_proxy(self, incoming: Incoming, member: Member, content: str) -> str: ...
     async def delete_source(self, incoming: Incoming) -> bool: ...

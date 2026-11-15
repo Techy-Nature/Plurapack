@@ -509,3 +509,60 @@ async def test_fluxer_viewsystem_only_matches_systems(tmp_path, monkeypatch):
     assert replies[-1].startswith("**Crew**") and f"`{own}`" in replies[-1]
     await commands["vs"](ctx, system_selector=member.id)
     assert replies[-1] == "System not found. Use an exact system name or stable system ID."
+
+
+async def test_fluxer_proxied_reply_ends_with_member_colored_quote():
+    sent = {}
+
+    class Webhook:
+        name = "Plurapack Proxy"
+
+        async def send(self, content, **kwargs):
+            sent.update(content=content, **kwargs)
+            return SimpleNamespace(id=43)
+
+    replied = SimpleNamespace(
+        id=9, content="Are we going out?", attachments=[],
+        author=SimpleNamespace(display_name="Remi", username="remi"),
+    )
+    platform = FluxerPlatform(
+        SimpleNamespace(), webhooks={"20": Webhook()},
+        messages={"10": SimpleNamespace(referenced_message=replied)},
+    )
+    member = SimpleNamespace(name="Alex", avatar=None, color="#7b68ee")
+
+    await platform.send_proxy(Incoming("10", "20", "30", "[a] yes", reply_to_id="9"), member, "yes")
+
+    assert sent["content"] == "yes"
+    assert sent["embeds"] == [{
+        "title": "↩ Replying to Remi",
+        "description": "Are we going out?",
+        "color": 0x7B68EE,
+    }]
+
+
+async def test_fluxer_reproxy_does_not_quote_the_proxy_it_replaces():
+    sent = {}
+
+    class Webhook:
+        name = "Plurapack Proxy"
+        id, token = 1, "t"
+
+        async def send(self, content, **kwargs):
+            sent.update(content=content, **kwargs)
+            return SimpleNamespace(id=44)
+
+    platform = FluxerPlatform(
+        SimpleNamespace(), webhooks={"20": Webhook()},
+        messages={"10": SimpleNamespace(referenced_message=SimpleNamespace(
+            content="old", attachments=[], author=SimpleNamespace(display_name="Alex")))},
+    )
+
+    async def proxy_content(channel_id, proxy_id):
+        return "old"
+
+    platform.proxy_content = proxy_content
+    member = SimpleNamespace(name="Remi", avatar=None, color="#123456")
+    await platform.send_reproxy(Incoming("10", "20", "30", "remi", reply_to_id="9"), "9", member)
+
+    assert "embeds" not in sent
