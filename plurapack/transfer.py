@@ -17,7 +17,8 @@ from .storage import SELECTOR_NAME, Member, Store, new_group_id, new_profile_id,
 
 MAX_FILE_SIZE = 5 * 1024 * 1024
 MAX_MEMBERS, MAX_GROUPS = 2000, 500
-FORMATS = ("plurapack", "pluralkit", "tupperbox")
+FORMATS = ("plurapack", "pluralkit", "tupperbox", "fishingbucket")
+IMPORT_ALIASES = {"pk": "pluralkit", "tupper": "tupperbox", "fb": "fishingbucket", "fishing_bucket": "fishingbucket"}
 
 
 class TransferError(ValueError):
@@ -153,12 +154,14 @@ def detect_format(root: dict[str, Any]) -> str:
     matches: list[str] = []
     if root.get("format") == "plurapack": matches.append("plurapack")
     if isinstance(root.get("tuppers"), list): matches.append("tupperbox")
+    # Fishing Bucket's export is a "proxies" array plus a "tags" object keyed "$0", "$1", ...
+    if isinstance(root.get("proxies"), list) and isinstance(root.get("tags", {}), dict): matches.append("fishingbucket")
     # PK's documented full export has a top-level system object plus members/groups.
     if root.get("format") != "plurapack" and isinstance(root.get("members"), list) and (isinstance(root.get("system"), dict) or
                                                    "accounts" in root or "switches" in root):
         matches.append("pluralkit")
     if len(matches) != 1:
-        raise TransferError("Import format is ambiguous or unrecognized; specify plurapack, pluralkit, or tupperbox.")
+        raise TransferError("Import format is ambiguous or unrecognized; specify plurapack, pluralkit, tupperbox, or fishingbucket.")
     return matches[0]
 
 
@@ -239,11 +242,161 @@ def _parse_tb(root: dict[str, Any]) -> ImportedSystem:
     return ImportedSystem(_text(root.get("name"),"System name",80,nullable=True) or "Imported Tupperbox system",tuple(members),groups=tuple(groups),warnings=("Tupperbox IDs, ownership, usage counts, timestamps, birthdays, and bracket-display flags were not imported.",))
 
 
+def _fb_template_parts(template: str) -> list[tuple[str, str]] | None:
+    """Split a Fishing Bucket template into ("text"|"expr", content) parts.
+
+    Mirrors Fishing Bucket's own parser: ``\\`` escapes the next character,
+    ``{...}`` is an expression (quotes inside braces may hold braces), and a
+    bare ``{}`` is the message placeholder. Returns ``None`` when unbalanced.
+    """
+    parts: list[tuple[str, str]] = []
+    text = expr = ""
+    depth = 0
+    quote = ""
+    chars = iter(template)
+    for char in chars:
+        if depth == 0:
+            if char == "\\":
+                text += next(chars, "")
+            elif char == "{":
+                parts.append(("text", text)); text = ""; depth = 1
+            elif char == "}":
+                return None
+            else:
+                text += char
+            continue
+        if quote:
+            if char == "\\":
+                expr += char + next(chars, ""); continue
+            if char == quote: quote = ""
+        elif char in "\"'":
+            quote = char
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                parts.append(("expr", expr)); expr = ""; continue
+        expr += char
+    if depth:
+        return None
+    parts.append(("text", text))
+    return parts
+
+
+def _fb_trigger(trigger: Any) -> dict[str, str] | None:
+    """Turn a plain ``prefix {} suffix`` trigger into a proxy tag.
+
+    Scripted triggers (any expression other than the bare placeholder) have no
+    Plurapack equivalent and return ``None`` so the caller can report them.
+    """
+    if not isinstance(trigger, str):
+        return None
+    parts = _fb_template_parts(trigger)
+    if parts is None:
+        return None
+    exprs = [i for i, (kind, _) in enumerate(parts) if kind == "expr"]
+    if len(exprs) != 1 or parts[exprs[0]][1].strip() not in {"", "text"}:
+        return None
+    prefix = "".join(c for _, c in parts[:exprs[0]]).strip()
+    suffix = "".join(c for _, c in parts[exprs[0] + 1:]).strip()
+    if not prefix and not suffix or len(prefix) > 32 or len(suffix) > 32:
+        return None
+    return {"prefix": prefix, "suffix": suffix}
+
+
+def _fb_clip(value: Any, label: str, maximum: int, clipped: list[str]) -> str:
+    text = _text(value if value is not None else "", label, 1_000_000) or ""
+    if len(text) > maximum:
+        clipped.append(label)
+        return text[:maximum]
+    return text
+
+
+def _parse_fb(root: dict[str, Any]) -> ImportedSystem:
+    raw_tags = _obj(root.get("tags", {}), "Fishing Bucket tags")
+    groups: list[TransferGroup] = []
+    display_tags = 0
+    for i, (key, raw) in enumerate(raw_tags.items(), 1):
+        t = _obj(raw, "Fishing Bucket tag")
+        name = _text(t.get("name"), "Group name", 80) or f"Group {i}"
+        groups.append(TransferGroup(str(key), name, re.sub(r"\s+", "-", name)[:24] or f"group{i}"))
+        if t.get("tag"):
+            display_tags += 1
+    proxies = [_obj(x, "Fishing Bucket proxy") for x in _array(root.get("proxies"), "Fishing Bucket proxies")]
+    # A nickname is the name Fishing Bucket shows on proxied messages, so it
+    # becomes the member name; fall back to the proxy name if nicknames clash.
+    names = [_text(p.get("name"), f"Proxy {i} name", 80) or "" for i, p in enumerate(proxies, 1)]
+    nicks = [_text(p.get("nickname"), f"Proxy {i} nickname", 80, nullable=True) or "" for i, p in enumerate(proxies, 1)]
+    wanted = [n or name for n, name in zip(nicks, names)]
+    counts: dict[str, int] = {}
+    for value in wanted + [name for name, nick in zip(names, nicks) if nick]:
+        counts[value.casefold()] = counts.get(value.casefold(), 0) + 1
+    members: list[ImportedMember] = []
+    skipped_triggers = 0
+    clipped: list[str] = []
+    for i, (p, name, nick) in enumerate(zip(proxies, names, nicks), 1):
+        if not name:
+            raise TransferError(f"Proxy {i} must have a name.")
+        use_nick = bool(nick) and nick.casefold() != name.casefold() and counts[nick.casefold()] == 1
+        triggers = _array(p.get("triggers", []), "Fishing Bucket triggers")
+        tags: list[dict[str, str]] = []
+        for trigger in triggers:
+            tag = _fb_trigger(trigger)
+            if tag is None:
+                skipped_triggers += 1
+            elif tag not in tags:
+                tags.append(tag)
+        record = {
+            "id": f"proxy-{i}",
+            "name": nick if use_nick else name,
+            "alias": name if use_nick and SELECTOR_NAME.fullmatch(name) else None,
+            "avatar_url": p.get("avatar_url") or None,
+            "pronouns": _fb_clip(p.get("pronouns"), "Member pronouns", 100, clipped) or None,
+            "description": _fb_clip(p.get("description"), "Member description", 1000, clipped),
+            "proxy_tags": tags,
+            "groups": [str(ref) for ref in _array(p.get("tags", []), "Fishing Bucket proxy tags")],
+        }
+        member = _member(record, i, external=True)
+        forms = _obj(p.get("forms", {}), "Fishing Bucket forms")
+        for form_name, url in forms.items():
+            form_name = str(form_name).strip()
+            if not form_name:
+                continue
+            member.forms.append(TransferForm(
+                export_id=f"proxy-{i}-form-{form_name}",
+                # Plurapack form names must differ from each other and from
+                # the member name, so qualify them like "Alex (happy)".
+                display_name=f"{member.name[:80 - len(form_name[:40]) - 3]} ({form_name[:40]})",
+                avatar=_url(url or None, "Form avatar"),
+                nickname=form_name if SELECTOR_NAME.fullmatch(form_name) else None,
+            ))
+        current = str(p.get("current_form") or "")
+        if current.strip() and current in forms:
+            member.default_form = f"proxy-{i}-form-{current.strip()}"
+        members.append(member)
+    warnings = ["Fishing Bucket usage counts and creation dates were not imported."]
+    if skipped_triggers:
+        warnings.append(f"{skipped_triggers} scripted or catch-all Fishing Bucket triggers have no Plurapack "
+                        "equivalent and were skipped; members left without a trigger use `Name:`.")
+    if display_tags:
+        warnings.append(f"{display_tags} Fishing Bucket tags had name templates; tags were imported as groups "
+                        "without their name decorations.")
+    if clipped:
+        warnings.append(f"{len(clipped)} long descriptions or pronouns were shortened to fit Plurapack's limits.")
+    return ImportedSystem(_text(root.get("name"), "System name", 80, nullable=True) or "Imported Fishing Bucket system",
+                          tuple(members), groups=tuple(groups), warnings=tuple(warnings))
+
+
+def normalize_format(source: str) -> str:
+    fmt = source.strip().casefold().replace("-", "").replace(" ", "")
+    return IMPORT_ALIASES.get(fmt, fmt)
+
+
 def parse_import(source: str | None, document: str | bytes) -> ImportedSystem:
-    root=parse_json(document); fmt=source.casefold().replace("-","") if source else detect_format(root)
-    aliases={"pk":"pluralkit","tupper":"tupperbox"}; fmt=aliases.get(fmt,fmt)
-    if fmt not in FORMATS: raise TransferError("Source must be pluralkit, tupperbox, or plurapack.")
-    result={"plurapack":_parse_native,"pluralkit":_parse_pk,"tupperbox":_parse_tb}[fmt](root)
+    root=parse_json(document); fmt=normalize_format(source) if source else detect_format(root)
+    if fmt not in FORMATS: raise TransferError("Source must be pluralkit, tupperbox, fishingbucket, or plurapack.")
+    result={"plurapack":_parse_native,"pluralkit":_parse_pk,"tupperbox":_parse_tb,"fishingbucket":_parse_fb}[fmt](root)
     if len(result.members)>MAX_MEMBERS or len(result.groups)>MAX_GROUPS: raise TransferError("Import exceeds member or group count limits.")
     mids=[m.export_id for m in result.members]; gids={g.export_id for g in result.groups}
     if len(set(x.casefold() for x in (m.name for m in result.members))) != len(result.members): raise TransferError("Imported member names must be unique.")
@@ -356,7 +509,7 @@ def export_document(format_name: str, system_name: str, members: Iterable[Member
 
 def import_system(store: Store, account_id: str, document: str | bytes, format_name: str | None=None, strategy: str="merge") -> TransferReport:
     if strategy not in {"merge","skip-existing","overwrite"}: raise TransferError("Strategy must be merge, skip-existing, or overwrite.")
-    data=parse_import(format_name,document); fmt=format_name or detect_format(parse_json(document)); imported=skipped=groups_count=tags_count=0
+    data=parse_import(format_name,document); fmt=normalize_format(format_name) if format_name else detect_format(parse_json(document)); imported=skipped=groups_count=tags_count=0
     with store.connect() as db:
         owner=db.execute("SELECT system_id FROM owners WHERE account_id=?",(account_id,)).fetchone()
         if owner: sid=owner[0]

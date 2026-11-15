@@ -124,7 +124,7 @@ COMMAND_HELP = {
                 "Choose what the public API shows. Everything starts private."),
     "token": ("tk", "create [read:public|read:private|write] [NAME] | list | revoke TOKEN_ID|all",
               "Manage API tokens for outside dashboards and viewers. Create them in a DM."),
-    "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, or Plurapack JSON."),
+    "import": ("i", "FORMAT JSON", "Import PluralKit, Tupperbox, Fishing Bucket, or Plurapack JSON."),
     "export": ("x", "[FORMAT] [--forms-loss|--forms-members]", "Export portable system metadata."),
     "viewinfo": ("vi", "[SYSTEM_OR_MEMBER]",
                  "Show system or member information. With nothing after it, shows your own system."),
@@ -1436,7 +1436,7 @@ def create_bot(prefix: str, database: str) -> Any:
 
     @bot.command(name="import", aliases=[COMMAND_SHORTCUTS["import"]])
     async def import_system(ctx: commands.Context, source: str = "", *, document: str = "") -> None:
-        """Import pasted JSON from PluralKit, Tupperbox, or Plurapack."""
+        """Import pasted JSON from PluralKit, Tupperbox, Fishing Bucket, or Plurapack."""
         document = document.strip()
         strategy = "merge"
         option_words = [word for word in (source + " " + document).split() if word.startswith("--")]

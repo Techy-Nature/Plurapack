@@ -20,6 +20,7 @@ p;import <attached JSON>
 p;import plurapack <attached JSON>
 p;import pluralkit <attached JSON>
 p;import tupperbox <attached JSON>
+p;import fishingbucket <attached JSON>
 ```
 
 `export` defaults to Plurapack. An omitted import format is detected from schema
@@ -60,14 +61,29 @@ transfer service. It offers the same merge, skip-existing, and overwrite choices
 PluralKit compatibility targets its full JSON export v2 layout (`system`, `members`,
 `groups`, and `switches`). Tupperbox compatibility targets the documented root
 `tuppers` and `groups` arrays; its flat bracket sequence is read as prefix/suffix
-pairs. External service IDs are used only as temporary relationship references and
+pairs. Fishing Bucket compatibility (import only, also spelled `fb`) reads the
+`proxies` array and `tags` object from its `export` command's
+`fishing_bucket.json`:
+
+- A proxy becomes a member. Its nickname, when set, becomes the member name and
+  the original name becomes the member alias if it has no spaces.
+- Plain triggers such as `a: {}` or `[{}]` become proxy tags. Scripted triggers
+  (anything inside braces other than the bare `{}` placeholder) and catch-all
+  `{}` triggers are skipped and counted in the warnings.
+- Avatar, description, and pronouns are kept.
+- Each form becomes a Plurapack form named `Member (form)` with the form's
+  picture and the form name as its nickname. The proxy's current form becomes
+  the member's default form.
+- Tags become groups. Their name templates (such as `{} 🌸`) are not imported.
+
+External service IDs are used only as temporary relationship references and
 never as Plurapack ownership or database IDs.
 
 Compatibility formats are for migration and can lose Plurapack-only information.
 PluralKit cannot represent forms as forms, aliases, speech settings, or system-tag
 visibility. Tupperbox cannot represent forms as forms, colors, pronouns, aliases,
 multiple group memberships, or Plurapack settings. Forms can instead be promoted
-to standalone members/tuppers with `--forms-members`. Usage counters, timestamps, switches,
+to standalone members/tuppers with `--forms-members`. Usage counters, timestamps, switches, Fishing Bucket scripted triggers,
 accounts, ownership IDs, and privacy fields without a safe equivalent are ignored.
 
 JSON backups never contain bot tokens, login/link challenges, session or OAuth
