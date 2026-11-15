@@ -967,3 +967,107 @@ async def test_reply_warns_that_attached_uploads_are_permanent_but_typed_urls_do
 def test_help_explains_that_attached_uploads_cannot_be_deleted():
     page = "\n".join(bot._help_pages("p;", "avatar"))
     assert "permanently" in page and "https://freeimage.host" in page
+
+
+class FakeEmbed:
+    def __init__(self, title=None, description=None, *, color=None):
+        self.title, self.description, self.color = title, description, color
+
+
+async def test_stoat_proxied_reply_ends_with_member_colored_quote():
+    sent = {}
+
+    class Channel:
+        async def send(self, content, *, masquerade, embeds=None):
+            sent.update(content=content, embeds=embeds)
+            return SimpleNamespace(id="proxy-id")
+
+    class HTTP:
+        async def get_message(self, channel_id, message_id):
+            assert (channel_id, message_id) == ("channel-id", "replied-id")
+            return SimpleNamespace(content="Are we going out?",
+                                   masquerade=SimpleNamespace(name="Remi"), attachments=[])
+
+    platform = bot.StoatPlatform(
+        {"source-id": SimpleNamespace(get_channel=lambda: Channel())},
+        SimpleNamespace(http=HTTP()),
+        SimpleNamespace(MessageMasquerade=FakeMasquerade, SendableEmbed=FakeEmbed),
+    )
+    member = SimpleNamespace(name="Alex", avatar=None, color="#7b68ee")
+    incoming = Incoming("source-id", "channel-id", "owner-id", "[a] yes", reply_to_id="replied-id")
+
+    assert await platform.send_proxy(incoming, member, "yes") == "proxy-id"
+    [embed] = sent["embeds"]
+    assert sent["content"] == "yes"
+    assert embed.title == "↩ Replying to Remi"
+    assert embed.description == "Are we going out?"
+    assert embed.color == "#7b68ee"
+
+
+async def test_stoat_reply_quote_uses_nickname_or_fetched_user():
+    cached = SimpleNamespace(masquerade=None, get_author=lambda: SimpleNamespace(
+        nick="Nicky", display_name="Display", name="user"))
+
+    class HTTP:
+        async def get_user(self, user_id):
+            assert user_id == "user-id"
+            return SimpleNamespace(display_name=None, name="fetched")
+
+    uncached = SimpleNamespace(masquerade=None, get_author=lambda: None, author_id="user-id")
+
+    assert await bot._stoat_author_name(cached, SimpleNamespace()) == "Nicky"
+    assert await bot._stoat_author_name(uncached, SimpleNamespace(http=HTTP())) == "fetched"
+
+
+async def test_stoat_reproxy_keeps_original_quote_in_new_members_color():
+    sent = {}
+
+    class Channel:
+        async def send(self, content, *, masquerade, embeds=None):
+            sent.update(content=content, embeds=embeds)
+            return SimpleNamespace(id="new-proxy")
+
+    class HTTP:
+        async def get_message(self, channel_id, proxy_id):
+            return SimpleNamespace(content="yes", internal_embeds=[
+                SimpleNamespace(title="↩ Replying to Sam", description="Going out?",
+                                color="#7b68ee"),
+            ])
+
+    platform = bot.StoatPlatform(
+        {"cmd": SimpleNamespace(get_channel=lambda: Channel())},
+        SimpleNamespace(http=HTTP()),
+        SimpleNamespace(MessageMasquerade=FakeMasquerade, SendableEmbed=FakeEmbed),
+    )
+    member = SimpleNamespace(name="Remi", avatar=None, color="#123456")
+
+    await platform.send_reproxy(Incoming("cmd", "channel", "owner", "p;rp remi"), "old", member)
+
+    [embed] = sent["embeds"]
+    assert (embed.title, embed.description, embed.color) == (
+        "↩ Replying to Sam", "Going out?", "#123456")
+
+
+async def test_stoat_reproxy_ignores_embeds_that_are_not_reply_quotes():
+    sent = {}
+
+    class Channel:
+        async def send(self, content, *, masquerade, embeds=None):
+            sent.update(embeds=embeds)
+            return SimpleNamespace(id="new-proxy")
+
+    class HTTP:
+        async def get_message(self, channel_id, proxy_id):
+            return SimpleNamespace(content="https://example.test", internal_embeds=[
+                SimpleNamespace(title="Example site", description="A link preview", color=None),
+            ])
+
+    platform = bot.StoatPlatform(
+        {"cmd": SimpleNamespace(get_channel=lambda: Channel())},
+        SimpleNamespace(http=HTTP()),
+        SimpleNamespace(MessageMasquerade=FakeMasquerade, SendableEmbed=FakeEmbed),
+    )
+    await platform.send_reproxy(Incoming("cmd", "channel", "owner", "p;rp remi"), "old",
+                                SimpleNamespace(name="Remi", avatar=None, color=None))
+
+    assert sent["embeds"] is None

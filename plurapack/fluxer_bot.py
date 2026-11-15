@@ -5,6 +5,7 @@ import asyncio
 import importlib
 import importlib.util
 import json
+import logging
 import os
 import shlex
 import urllib.request
@@ -48,7 +49,7 @@ from .voice_service import VoiceService
 from .voice_shortcuts import SHORTCUT_ACTIONS, voice_shortcut_reply
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .login import LoginError, LoginService
-from .proxy import EditCommandError, Incoming, ProxyService, command_prefixes
+from .proxy import EditCommandError, Incoming, ProxyService, ReplyQuote, carried_reply_quote, command_prefixes, reply_quote
 from .storage import Group, Member, Store, System
 from .api_commands import privacy_reply, token_reply
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
@@ -91,10 +92,17 @@ class FluxerPlatform:
             self.webhooks[channel_id] = webhook
         return webhook
 
-    async def _send(self, incoming: Incoming, member: Member, content: str) -> str:
+    async def _send(self, incoming: Incoming, member: Member, content: str,
+                    quote: ReplyQuote | None = None) -> str:
         webhook = await self._webhook(incoming.channel_id)
+        extra: dict[str, Any] = {}
+        if quote is not None:
+            embed: dict[str, Any] = {"title": quote.title, "description": quote.description}
+            if quote.color:
+                embed["color"] = int(quote.color.removeprefix("#"), 16)
+            extra["embeds"] = [embed]
         posted = await webhook.send(
-            content, username=member.name, avatar_url=member.avatar, wait=True
+            content, username=member.name, avatar_url=member.avatar, wait=True, **extra
         )
         if posted is None:
             raise RuntimeError("Fluxer did not return the proxy message.")
@@ -103,7 +111,25 @@ class FluxerPlatform:
         return proxy_id
 
     async def send_proxy(self, incoming: Incoming, member: Member, content: str) -> str:
-        return await self._send(incoming, member, content)
+        return await self._send(incoming, member, content, self._reply_quote(incoming, member))
+
+    def _reply_quote(self, incoming: Incoming, member: Member) -> ReplyQuote | None:
+        """Quote the message being replied to; a missing one never blocks the proxy."""
+        if not incoming.reply_to_id:
+            return None
+        try:
+            replied = getattr(self.messages.get(incoming.id), "referenced_message", None)
+            if replied is None:
+                return None
+            author = getattr(replied, "author", None)
+            name = getattr(author, "display_name", None) or getattr(author, "username", None)
+            return reply_quote(name, getattr(replied, "content", None),
+                               getattr(member, "color", None),
+                               bool(getattr(replied, "attachments", None)))
+        except Exception as error:
+            logging.getLogger(__name__).warning(
+                "Could not quote replied-to message (%s)", type(error).__name__)
+            return None
 
     async def delete_source(self, incoming: Incoming) -> bool:
         await self.messages.pop(incoming.id).delete()
@@ -130,7 +156,9 @@ class FluxerPlatform:
         self.proxy_webhooks.pop(proxy_id, None)
 
     async def send_reproxy(self, incoming: Incoming, proxy_id: str, member: Member) -> str:
-        return await self._send(incoming, member, await self.proxy_content(incoming.channel_id, proxy_id))
+        data = await self._request_webhook_message("GET", incoming.channel_id, proxy_id)
+        quote = carried_reply_quote(data.get("embeds"), getattr(member, "color", None))
+        return await self._send(incoming, member, str(data.get("content", "")), quote)
 
     async def proxy_content(self, channel_id: str, proxy_id: str) -> str:
         data = await self._request_webhook_message("GET", channel_id, proxy_id)

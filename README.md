@@ -279,6 +279,7 @@ p;member Sam S: :S              # proxy with: S: hello :S
 p;color abc12 7b68ee            # color that member's username (also accepts #7b68ee)
 p;import pluralkit {"name":"...","members":[...]}  # paste a PluralKit JSON export
 p;import tupperbox {"tuppers":[...]}                 # paste a Tupperbox JSON export
+p;import fishingbucket <attached fishing_bucket.json> # Fishing Bucket export
 p;export plurapack              # attached backup; also: pluralkit or tupperbox
 p;link                          # run on the existing owner account
 p;verify abc123...              # run on the other account
@@ -329,7 +330,10 @@ Username colors are stored against stable member IDs and used on both new and re
 `p;import pluralkit JSON` accepts the `name` and `members` fields from a PluralKit
 JSON export, including the first `proxy_tags` entry, `avatar_url`, and `color`.
 `p;import tupperbox JSON` accepts a `tuppers` array with each tupper's `name`,
-two-item `brackets`, avatar, and color. The JSON may be pasted directly or in a
+two-item `brackets`, avatar, and color. `p;import fishingbucket JSON` (or `fb`)
+accepts the file from Fishing Bucket's `export` command: proxies become members,
+plain triggers become proxy tags, forms become forms, and tags become groups.
+The JSON may be pasted directly or in a
 fenced code block. An account without a system gets one automatically; otherwise
 members are added to its existing system. Imports are all-or-nothing when a name
 or proxy tag conflicts. Members without external proxy tags receive `Name:` as a
