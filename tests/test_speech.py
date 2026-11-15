@@ -500,6 +500,27 @@ def test_voice_tags_inside_actions_follow_action_omission(voice_store):
 
 
 @pytest.mark.parametrize("formatting", [False, True])
+def test_dash_shortcut_performs_supported_voice_tags(voice_store, formatting):
+    member = voice_store.configure_speech_formatting("owner", "Alex", formatting, "normal")
+    parts = speech_parts("-Sighs- fine -chuckle-, ok -clears throat- (-laugh-)", member)
+    assert " ".join(part.text for part in parts) == "[sigh] fine [chuckle], ok [clear throat] ([laugh])"
+    assert speech_parts("-sigh-", member) == (SpeechPart("[sigh]"),)
+
+
+def test_dash_shortcut_leaves_hyphenated_text_alone(voice_store):
+    member = voice_store.member_named("owner", "Alex")
+    source = "a well-known laugh-track, a-laugh-a-minute, x-sigh-y, -whispers- and - sigh - or --gasp--"
+    assert speech_parts(source, member) == (SpeechPart(source),)
+
+
+def test_dash_shortcut_inside_actions_follows_action_omission(voice_store):
+    member = voice_store.configure_speech_formatting("owner", "Alex", True, "normal")
+    assert [(p.text, p.style) for p in speech_parts("hi *-sigh- waves* **-laughs- wow**", member)] == [
+        ("hi", "normal"), ("[laugh] wow", "emphasis"),
+    ]
+
+
+@pytest.mark.parametrize("formatting", [False, True])
 def test_thinking_sounds_are_respelled_so_they_are_spoken(voice_store, formatting):
     member = voice_store.configure_speech_formatting("owner", "Alex", formatting, "normal")
     parts = speech_parts("hmmm, I will add voice options to groups", member)

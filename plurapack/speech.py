@@ -39,15 +39,34 @@ _BRACKET_PATTERN = re.compile(r"\[([^\[\]\n]{1,40})\]")
 _TAG_LIKE_PATTERN = re.compile(r"^[a-z]+(?:[ '-][a-z]+){0,2}$")
 
 
+# ``-chuckle-`` is a shortcut for ``[chuckle]`` that chat Markdown leaves alone.
+# Only supported tag names count, and the dashes must stand apart from other
+# words, so hyphenated text such as ``well-known`` or ``a-laugh-a-minute`` and
+# unknown words such as ``-whispers-`` are spoken exactly as before.
+_DASH_PATTERN = re.compile(r"(?<![\w-])-([a-z]+(?: +[a-z]+)?)-(?![\w-])", re.IGNORECASE)
+
+
+def dash_tags(text: str) -> str:
+    """Turn ``-tag-`` shortcuts for supported voice tags into ``[tag]`` form."""
+    def replace(match: re.Match) -> str:
+        name = " ".join(match.group(1).lower().split())
+        return f"[{VOICE_TAGS[name]}]" if name in VOICE_TAGS else match.group(0)
+
+    return _DASH_PATTERN.sub(replace, text)
+
+
 def voice_tags(text: str) -> str:
-    """Normalize supported ``[tags]`` and drop unsupported tag-like brackets."""
+    """Normalize supported ``[tags]`` and drop unsupported tag-like brackets.
+
+    The ``-tag-`` shortcut is accepted for supported tags as well.
+    """
     def replace(match: re.Match) -> str:
         name = " ".join(match.group(1).lower().split())
         if name in VOICE_TAGS:
             return f"[{VOICE_TAGS[name]}]"
         return " " if _TAG_LIKE_PATTERN.fullmatch(name) else match.group(0)
 
-    return _BRACKET_PATTERN.sub(replace, text)
+    return _BRACKET_PATTERN.sub(replace, dash_tags(text))
 
 
 # Chatterbox tends to skip thinking sounds like "hmmm," entirely, especially
@@ -73,7 +92,8 @@ def speech_parts(text: str, member: Member) -> tuple[SpeechPart, ...]:
     are emphasized. Strikethrough follows the member's explicit preference.
     Delimiters are never spoken. This intentionally is not a full Markdown
     renderer, which keeps unmatched punctuation from silently eating speech.
-    Voice tags such as ``[sigh]`` are handled whether or not formatting is on.
+    Voice tags such as ``[sigh]`` or ``-sigh-`` are handled whether or not
+    formatting is on.
     """
     tagged = voice_tags(hum_sounds(text))
     if not member.speech_formatting:

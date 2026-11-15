@@ -275,6 +275,18 @@ forms also work, so `[Sighs]`, `[laughing]`, and `[clears throat]` are accepted.
 These are Chatterbox Nano's native paralinguistic tags, so no extra service or
 sound files are involved, and the chat message itself keeps the tag as typed.
 
+If square brackets look odd in your chat app, wrap the tag in dashes instead.
+`-chuckle-` works exactly like `[chuckle]`:
+
+```text
+[a]Oh, that's hilarious -chuckle- anyway, where were we?
+[a]-sighs- Fine, I'll do the dishes.
+```
+
+The dash shortcut only applies to the supported tags above, and only when the
+dashes stand on their own, so hyphenated words like `well-known` or
+`a-laugh-a-minute` and other words like `-whispers-` are spoken as written.
+
 Short word-only brackets that are not supported, such as `[whispers]` or
 `[very excited]`, are dropped from speech so they are never read aloud. Other
 brackets such as `[2.1]` or `[see: notes!]` are spoken normally. Tags work
