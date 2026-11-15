@@ -113,6 +113,23 @@ def reply_quote(author: str | None, content: str | None, color: str | None,
     return ReplyQuote(f"{REPLY_QUOTE_ARROW} Replying to {name}", text, normalize_color(color))
 
 
+def carried_reply_quote(embeds: object, color: str | None) -> ReplyQuote | None:
+    """Find the reply quote on an existing proxy so a reproxy keeps it.
+
+    The quote is recolored with the new member's color, because it marks who
+    is replying.
+    """
+    for embed in embeds or ():
+        def field(name: str) -> object:
+            return embed.get(name) if isinstance(embed, dict) else getattr(embed, name, None)
+
+        title, description = field("title"), field("description")
+        if (isinstance(title, str) and title.startswith(f"{REPLY_QUOTE_ARROW} Replying to ")
+                and isinstance(description, str) and description):
+            return ReplyQuote(title, description, normalize_color(color))
+    return None
+
+
 def normalize_color(color: str | None) -> str | None:
     """Return a stored member color as ``#rrggbb``, or None when it is unusable."""
     value = (color or "").strip().lower().removeprefix("#")

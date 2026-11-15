@@ -49,7 +49,7 @@ from .voice_service import VoiceService
 from .voice_shortcuts import SHORTCUT_ACTIONS, voice_shortcut_reply
 from .voice_storage import ForgejoVoiceStorage, VoiceStorageError
 from .login import LoginError, LoginService
-from .proxy import EditCommandError, Incoming, ProxyService, ReplyQuote, command_prefixes, reply_quote
+from .proxy import EditCommandError, Incoming, ProxyService, ReplyQuote, carried_reply_quote, command_prefixes, reply_quote
 from .storage import Group, Member, Store, System
 from .api_commands import privacy_reply, token_reply
 from .transfer import TransferError, export_system as create_export, import_system as apply_import
@@ -156,7 +156,9 @@ class FluxerPlatform:
         self.proxy_webhooks.pop(proxy_id, None)
 
     async def send_reproxy(self, incoming: Incoming, proxy_id: str, member: Member) -> str:
-        return await self._send(incoming, member, await self.proxy_content(incoming.channel_id, proxy_id))
+        data = await self._request_webhook_message("GET", incoming.channel_id, proxy_id)
+        quote = carried_reply_quote(data.get("embeds"), getattr(member, "color", None))
+        return await self._send(incoming, member, str(data.get("content", "")), quote)
 
     async def proxy_content(self, channel_id: str, proxy_id: str) -> str:
         data = await self._request_webhook_message("GET", channel_id, proxy_id)

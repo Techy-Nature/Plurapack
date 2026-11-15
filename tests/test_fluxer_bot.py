@@ -541,12 +541,9 @@ async def test_fluxer_proxied_reply_ends_with_member_colored_quote():
     }]
 
 
-async def test_fluxer_reproxy_does_not_quote_the_proxy_it_replaces():
-    sent = {}
-
+def _reproxy_platform(sent, old_data):
     class Webhook:
         name = "Plurapack Proxy"
-        id, token = 1, "t"
 
         async def send(self, content, **kwargs):
             sent.update(content=content, **kwargs)
@@ -558,11 +555,34 @@ async def test_fluxer_reproxy_does_not_quote_the_proxy_it_replaces():
             content="old", attachments=[], author=SimpleNamespace(display_name="Alex")))},
     )
 
-    async def proxy_content(channel_id, proxy_id):
-        return "old"
+    async def request(method, channel_id, proxy_id, **kwargs):
+        assert (method, channel_id, proxy_id) == ("GET", "20", "9")
+        return old_data
 
-    platform.proxy_content = proxy_content
+    platform._request_webhook_message = request
+    return platform
+
+
+async def test_fluxer_reproxy_does_not_quote_the_proxy_it_replaces():
+    sent = {}
+    platform = _reproxy_platform(sent, {"content": "old", "embeds": []})
     member = SimpleNamespace(name="Remi", avatar=None, color="#123456")
+
     await platform.send_reproxy(Incoming("10", "20", "30", "remi", reply_to_id="9"), "9", member)
 
+    assert sent["content"] == "old"
     assert "embeds" not in sent
+
+
+async def test_fluxer_reproxy_keeps_original_quote_in_new_members_color():
+    sent = {}
+    platform = _reproxy_platform(sent, {"content": "yes", "embeds": [
+        {"title": "\u21a9 Replying to Sam", "description": "Going out?", "color": 0x7B68EE},
+    ]})
+    member = SimpleNamespace(name="Remi", avatar=None, color="#123456")
+
+    await platform.send_reproxy(Incoming("10", "20", "30", "p;rp remi"), "9", member)
+
+    assert sent["embeds"] == [{
+        "title": "\u21a9 Replying to Sam", "description": "Going out?", "color": 0x123456,
+    }]

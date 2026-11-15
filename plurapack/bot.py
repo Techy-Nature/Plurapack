@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 
 from .proxy import (ALTERNATIVE_COMMAND_PREFIXES, EditCommandError, Incoming, ProxyService, ReplyQuote,
-                    command_prefixes, reply_quote)
+                    carried_reply_quote, command_prefixes, reply_quote)
 from .chatterbox import ChatterboxBackend
 from .speech import SpeechQueue, speech_worker
 from .browser_audio import BrowserAudioStore
@@ -1104,6 +1104,15 @@ class StoatPlatform:
         channel = self.messages[incoming.id].get_channel()
         if channel is None:
             raise RuntimeError("Proxy channel is unavailable; the original was preserved.")
+        extra: dict[str, Any] = {}
+        quote = carried_reply_quote(
+            getattr(old, "internal_embeds", None) or getattr(old, "embeds", None),
+            getattr(member, "color", None),
+        )
+        if quote is not None:
+            extra["embeds"] = [self.sdk.SendableEmbed(
+                title=quote.title, description=quote.description, color=quote.color,
+            )]
         posted = await channel.send(
             old.content,
             masquerade=self.sdk.MessageMasquerade(
@@ -1111,6 +1120,7 @@ class StoatPlatform:
                 avatar=member.avatar,
                 color=None if _is_group_channel(channel, self.sdk) else member.color,
             ),
+            **extra,
         )
         return posted.id
 
