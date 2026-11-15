@@ -93,7 +93,7 @@ See the [public API guide](documentation/docs/guides/public-api.md).
 The API provides `/api/account`, authorized system/member/form CRUD, front
 retrieval and switching, and `/api/health`; interactive OpenAPI documentation is
 at `/docs`. Plurapack does not rely on Stoat OAuth. Instead, `/login` creates a
-five-minute, one-time code and asks the user to send `<prefix>login CODE` to the
+one-hour, one-time code and asks the user to send `<prefix>login CODE` to the
 Plurapack bot. The bot obtains the real account ID from the authenticated Stoat
 message author, and the initiating browser exchanges its separate private secret
 for the existing signed `plurapack_session` cookie. Neither the public attempt ID
@@ -103,7 +103,7 @@ Run the bot and web process against the same `PLURAPACK_DATABASE`; otherwise the
 bot cannot approve the web process's pending codes. Login codes use eight
 unambiguous characters displayed as `XXXX-XXXX`, and both those codes and the
 browser credentials are stored only as SHA-256 hashes. Attempts are single-use,
-expire after five minutes, and records more than a day past expiration are
+expire after one hour, and records more than a day past expiration are
 removed when another login begins. `POST /api/auth/logout` removes the local
 session; it does not alter the user's Stoat account.
 

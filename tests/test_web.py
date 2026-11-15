@@ -48,7 +48,7 @@ async def test_bot_verified_login_session_and_logout(api):
         login = started.json()
         assert len(login["attemptId"]) >= 24
         assert len(login["browserSecret"]) >= 32
-        assert login["expiresIn"] == 300
+        assert login["expiresIn"] == 3600
         assert login["code"][4] == "-"
 
         with store.connect() as db:
