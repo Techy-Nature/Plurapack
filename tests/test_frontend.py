@@ -39,6 +39,17 @@ def test_login_page_offers_stoat_and_fluxer():
     assert "Plurapack bot on Stoat or Fluxer" in page
 
 
+def test_login_page_resumes_the_same_code_after_a_reload():
+    """Phones reload the tab while the person sends the code; keep the attempt."""
+    page = (Path(__file__).parent.parent / "login.html").read_text()
+    assert "localStorage.setItem(STORAGE_KEY" in page
+    assert "const saved=loadAttempt();if(saved){showAttempt(saved);poll()}else start();" in page
+    # Coming back to the tab checks right away instead of waiting for a timer.
+    assert "addEventListener('visibilitychange',checkNow)" in page
+    # A dropped connection keeps polling rather than abandoning the code.
+    assert "Still waiting with the same code" in page
+
+
 def test_browser_speech_requests_wav_without_server_credentials():
     script = (Path(__file__).parent.parent / "voice_playback.js").read_text()
     assert 'audio ? "audio/wav" : "application/json"' in script
