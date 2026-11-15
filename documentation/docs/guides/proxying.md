@@ -15,6 +15,14 @@ A: This tag has two sides. :A
 
 Plurapack ignores bot messages, commands, messages already being processed, and source IDs it has already proxied.
 
+## Replies
+
+When you reply to a message and it gets proxied, the proxy ends with a short
+quote of the message you replied to: who sent it and up to three lines (200
+characters) of its text. The quote is tinted with the replying member's color
+(`p;color`), or the platform default when the member has none.
+Re-proxying a message keeps its quote and recolors it for the new member.
+
 ## System tags
 
 Set a system tag with `p;systemtag TAG`. When enabled, it is appended to every
