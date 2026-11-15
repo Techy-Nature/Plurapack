@@ -28,7 +28,10 @@ On desktop the button keeps the normal in-page playback.
 ```
 native/
 ├── launcher/index.html     The server picker shown when the app starts
-├── icon-source.png         1024×1024 source for every app icon
+├── launcher/logo.svg       Pixel-art logo shown in the server picker
+├── pixel_logo.py           Draws the pixel-art logo and writes every icon
+├── icon-source.svg         The pixel-art logo as an SVG
+├── icon-source.png         1024×1024 PNG of the same logo
 ├── package.json            Tauri command-line scripts
 └── src-tauri/
     ├── tauri.conf.json     App name, window size, dark theme, bundle settings
@@ -213,18 +216,24 @@ npx tauri build --target universal-apple-darwin
 
 ## Changing the icon
 
-Replace `icon-source.png` with a square PNG of at least 1024×1024 pixels, then regenerate every size:
+The icon is a pixel-art version of the Plurapack logo, drawn on a 48×48 grid by `pixel_logo.py`. The circle sizes and region colours are constants at the top of that file. After changing them, run this from the repository root:
 
 ```bash
-npm run icons
+pip install pillow
+python native/pixel_logo.py
 ```
 
-If `src-tauri/gen/android` exists, this also updates the Android launcher icons.
+It rewrites every icon in one go, keeping the pixels sharp:
 
-The committed Android icons have two hand tweaks that `npm run icons` overwrites, so redo them afterwards:
+- `native/icon-source.svg`, `native/icon-source.png` and `native/launcher/logo.svg`
+- every desktop, Windows Store, macOS (`icon.icns`) and Windows (`icon.ico`) icon in `src-tauri/icons/`
+- the Android launcher icons, with the adaptive foreground already shrunk to about 62% of the canvas so launchers do not crop its edges
+- the dashboard's `favicon.svg`, `favicon.ico` and `apple-touch-icon.png` at the repository root
+- the documentation site's `documentation/docs/img/favicon.ico`
 
-- Each `src-tauri/icons/android/mipmap-*/ic_launcher_foreground.png` has the logo shrunk to about 62% of the canvas, centred on a transparent background. Android launchers crop adaptive icons to a circle or squircle, and a full-size logo gets its edges cut off.
-- `src-tauri/icons/android/values/ic_launcher_background.xml` uses `#00000000` (transparent) instead of `#FFFFFF`, so the logo has no white backing.
+`src-tauri/icons/android/values/ic_launcher_background.xml` stays `#00000000` (transparent), so the logo has no white backing.
+
+`npm run icons` (Tauri's own generator) still works from `icon-source.png`, but it smooths small sizes and resets the Android tweaks above, so prefer `pixel_logo.py`.
 
 ## Good to know
 
