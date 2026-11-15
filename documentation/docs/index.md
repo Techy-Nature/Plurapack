@@ -20,7 +20,7 @@ Plurapack welcomes systems of every origin, as well as people who are questionin
 - Optionally proxy untagged messages with autoproxy, either as one member or, with `p;autoproxy on`, as whoever is fronting. Autoproxy starts Off.
 - Give members aliases and alternate forms.
 - Share one system between multiple authorized Stoat accounts.
-- Import from PluralKit, Tupperbox, or another Plurapack installation.
+- Import from PluralKit, Tupperbox, Fishing Bucket, or another Plurapack installation.
 - Export portable member metadata for backups.
 - Optionally attach generated speech through an configured protected Modal Chatterbox Turbo endpoint.
 
