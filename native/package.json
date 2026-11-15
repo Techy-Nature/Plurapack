@@ -1,7 +1,7 @@
 {
   "name": "plurapack-app",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Plurapack dashboard as a desktop (WebKit) and Android app, built with Tauri 2.",
   "scripts": {
     "tauri": "tauri",

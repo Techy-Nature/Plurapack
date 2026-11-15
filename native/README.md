@@ -190,6 +190,12 @@ npx tauri build --target universal-apple-darwin
     npm run android:init
     ```
 
+    `android:init` fills the project with Tauri's placeholder icons. Copy the Plurapack ones over them (GitHub's build does this for you):
+
+    ```bash
+    cp -R src-tauri/icons/android/. src-tauri/gen/android/app/src/main/res/
+    ```
+
 6. Try it on a phone with USB debugging on, or on an emulator from Android Studio:
 
     ```bash
