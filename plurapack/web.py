@@ -817,6 +817,22 @@ def create_app(store: Store | None = None, static_root: Path | None = ROOT,
             return FileResponse(static_root / "voice_playback.js", media_type="text/javascript",
                                 headers=dashboard_headers)
 
+        icon_headers = {"Cache-Control": "public, max-age=86400"}
+        icon_files = {
+            "/favicon.svg": ("favicon.svg", "image/svg+xml"),
+            "/favicon.ico": ("favicon.ico", "image/x-icon"),
+            "/apple-touch-icon.png": ("apple-touch-icon.png", "image/png"),
+        }
+
+        def icon_route(filename: str, media_type: str):
+            async def icon() -> FileResponse:
+                return FileResponse(static_root / filename, media_type=media_type, headers=icon_headers)
+            return icon
+
+        for path, (filename, media_type) in icon_files.items():
+            app.add_api_route(path, icon_route(filename, media_type), methods=["GET"],
+                              include_in_schema=False)
+
         @app.get("/styles.css", include_in_schema=False)
         async def stylesheet() -> FileResponse:
             return FileResponse(static_root / "styles.css", media_type="text/css",

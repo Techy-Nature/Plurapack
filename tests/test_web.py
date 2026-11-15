@@ -174,6 +174,33 @@ async def test_dashboard_static_responses_are_never_cached(tmp_path, path):
     assert response.headers["cache-control"] == "no-store"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path,media_type", [
+    ("/favicon.svg", "image/svg+xml"),
+    ("/favicon.ico", "image/x-icon"),
+    ("/apple-touch-icon.png", "image/png"),
+])
+async def test_dashboard_serves_the_pixel_logo_icons(tmp_path, path, media_type):
+    app = create_app(Store(tmp_path / "icons.sqlite3"))
+
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                 base_url="http://test") as client:
+        response = await client.get(path)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(media_type)
+    assert response.content
+    if path == "/favicon.svg":
+        assert 'shape-rendering="crispEdges"' in response.text
+
+
+def test_dashboard_pages_link_the_pixel_logo_icons():
+    for page in ("index.html", "login.html", "viewer.html"):
+        html = (web.ROOT / page).read_text(encoding="utf-8")
+        assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in html
+        assert '<link rel="apple-touch-icon" href="/apple-touch-icon.png">' in html
+
+
 def write_dashboard_assets(root, app_javascript="app contents"):
     (root / "index.html").write_text(
         '<link rel="stylesheet" href="/styles.css?v={{STYLES_VERSION}}">'

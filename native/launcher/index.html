@@ -5,12 +5,13 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <title>Plurapack</title>
+<link rel="icon" href="logo.svg" type="image/svg+xml">
 <style>
 :root{color-scheme:dark;--bg:#0b1017;--panel:#121a24;--line:#2a3746;--text:#f2f5f7;--muted:#aeb9c5;--accent:#73d7bd;--danger:#ffacb8}
 *{box-sizing:border-box}
 body{margin:0;min-height:100dvh;display:grid;place-items:center;padding:max(1rem,env(safe-area-inset-top)) 1rem max(1rem,env(safe-area-inset-bottom));background:var(--bg);color:var(--text);font:16px system-ui,sans-serif}
 main{width:min(440px,100%);padding:2rem;border:1px solid var(--line);border-radius:1rem;background:var(--panel);box-shadow:0 1rem 3rem #0008}
-.mark{width:56px;height:56px;display:grid;place-items:center;border-radius:50%;background:linear-gradient(135deg,#73d7bd,#8d7cf8);color:#f7f5ff;font-size:1.6rem;margin-bottom:1rem}
+.mark{display:block;width:64px;height:64px;margin-bottom:1rem;image-rendering:pixelated}
 h1{margin:0 0 .4rem;font-size:1.5rem}
 p{margin:0 0 1.2rem;color:var(--muted);line-height:1.45}
 label{display:grid;gap:.45rem;font-weight:700}
@@ -26,7 +27,7 @@ button:focus-visible,input:focus-visible{outline:3px solid #f7cf68;outline-offse
 </head>
 <body>
 <main>
-  <div class="mark" aria-hidden="true">✦</div>
+  <img class="mark" src="logo.svg" alt="" width="64" height="64">
   <h1>Open your Plurapack dashboard</h1>
   <p>Enter the address of your Plurapack server, the same one you open in a browser. You sign in the usual way, with a one-time code sent to the bot.</p>
   <form id="connect" novalidate>
