@@ -117,6 +117,17 @@ jobs:
       - run: npm ci
       # The Android project is generated rather than committed, so it always matches the Tauri version.
       - run: npx tauri android init --ci
+      # `android init` fills gen/ with Tauri's placeholder icons. Copy ours over
+      # them, so the APK and its install dialog show the Plurapack logo.
+      - name: Use the Plurapack Android icons
+        run: |
+          set -euo pipefail
+          res=src-tauri/gen/android/app/src/main/res
+          cp -R src-tauri/icons/android/. "$res/"
+          for file in $(cd src-tauri/icons/android && find . -type f); do
+            cmp "src-tauri/icons/android/$file" "$res/$file"
+          done
+          echo "Copied $(find src-tauri/icons/android -type f | wc -l) icon files into $res"
       - run: npx tauri android build --apk --ci
       - name: Sign the APK
         env:
