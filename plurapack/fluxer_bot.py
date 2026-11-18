@@ -213,9 +213,60 @@ def _register_command(bot: Any, name: str, callback: Any) -> None:
             seen.add(command_name)
 
 
+class FluxerGatewayStatus(logging.Handler):
+    """Report Fluxer connection drops in the same status log as everything else.
+
+    fluxer.py reports a dropped gateway connection only at INFO level, which never
+    reaches the Railway logs, so a drop and its recovery used to be invisible. This
+    handler turns the gateway's own messages into ``[Plurapack]`` status lines. The
+    matching ``on_resumed`` and ``on_ready`` events then show that the bot came back.
+    """
+
+    # fluxer.py's message templates (0.4.x) and the status line each one becomes.
+    # ``None`` hides a library message that a status line already covers.
+    STATUS_LINES: dict[str, str | None] = {
+        "Gateway closed with code %d": "Fluxer disconnected (code {0}).",
+        "Unknown close code %d, attempting reconnect": None,
+        "Fatal close code %d (%s), not reconnecting":
+            "Fluxer closed the connection for good (code {0}, {1}); it will not reconnect.",
+        "Gateway connection error: %s. Reconnecting in 5s...":
+            "Fluxer reconnect attempt failed; trying again in 5s.",
+    }
+
+    def emit(self, record: logging.LogRecord) -> None:
+        template = record.msg if isinstance(record.msg, str) else None
+        if template in self.STATUS_LINES:
+            line = self.STATUS_LINES[template]
+            if line is not None:
+                try:
+                    _print_cli_status(line.format(*(record.args or ())))
+                except Exception:
+                    self.handleError(record)
+            return
+        # A handler here stops Python's fallback printer for this logger, so keep
+        # showing fluxer.py's other warnings when nothing else is set up to.
+        if (record.levelno >= logging.WARNING and logging.lastResort is not None
+                and not logging.getLogger().handlers):
+            logging.lastResort.handle(record)
+
+
+def watch_fluxer_gateway() -> FluxerGatewayStatus:
+    """Attach the status handler to fluxer.py's gateway logger once per process."""
+    gateway_log = logging.getLogger("fluxer.gateway")
+    for handler in gateway_log.handlers:
+        if isinstance(handler, FluxerGatewayStatus):
+            return handler
+    handler = FluxerGatewayStatus(logging.INFO)
+    gateway_log.addHandler(handler)
+    if gateway_log.getEffectiveLevel() > logging.INFO:
+        gateway_log.setLevel(logging.INFO)
+    return handler
+
+
 def create_fluxer_bot(prefix: str, database: str) -> Any:
     """Create, but do not connect, the Fluxer side of Plurapack."""
     fluxer = _load_fluxer()
+    watch_fluxer_gateway()
     # Proxies necessarily inspect ordinary message text, so request Fluxer's
     # privileged content intent in addition to its normal bot event set.
     intents = fluxer.Intents.default() | fluxer.Intents.MESSAGE_CONTENT
@@ -694,9 +745,21 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     if set(callbacks) | {"help", "login", "setup", "member", "avatar", "banner"} != set(COMMAND_HELP):
         raise RuntimeError("Fluxer command registration is out of sync with COMMAND_HELP.")
 
+    ready_count = 0
+
     @bot.event
     async def on_ready() -> None:
-        _print_cli_status(f"Fluxer ready to use. Command prefix: {_prefix_summary(prefix)}")
+        # fluxer.py sends READY again when a dropped session could not be resumed.
+        nonlocal ready_count
+        ready_count += 1
+        if ready_count == 1:
+            _print_cli_status(f"Fluxer ready to use. Command prefix: {_prefix_summary(prefix)}")
+        else:
+            _print_cli_status("Fluxer reconnected with a new session; ready to use again.")
+
+    @bot.event
+    async def on_resumed() -> None:
+        _print_cli_status("Fluxer reconnected (session resumed).")
 
     @bot.event
     async def on_message(message: Any) -> None:
