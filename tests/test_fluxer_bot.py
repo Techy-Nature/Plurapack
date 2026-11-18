@@ -586,3 +586,81 @@ async def test_fluxer_reproxy_keeps_original_quote_in_new_members_color():
     assert sent["embeds"] == [{
         "title": "\u21a9 Replying to Sam", "description": "Going out?", "color": 0x123456,
     }]
+
+
+def make_fluxer_events(monkeypatch, database):
+    events = {}
+
+    class Bot:
+        def __init__(self, **kwargs): pass
+        def command(self, name): return lambda callback: callback
+        def event(self, callback):
+            events[callback.__name__] = callback
+            return callback
+
+    monkeypatch.setattr(
+        "plurapack.fluxer_bot._load_fluxer",
+        lambda: SimpleNamespace(Bot=Bot, Intents=SimpleNamespace(default=lambda: 0, MESSAGE_CONTENT=1)),
+    )
+    create_fluxer_bot("p;", str(database))
+    return events
+
+
+def test_fluxer_gateway_drop_is_reported_as_status_line(tmp_path, monkeypatch, capsys):
+    import logging
+
+    make_fluxer_events(monkeypatch, tmp_path / "drop.sqlite3")
+    gateway_log = logging.getLogger("fluxer.gateway")
+
+    # The same two messages fluxer.py logs when Fluxer drops the socket with 1006.
+    gateway_log.info("Gateway closed with code %d", 1006)
+    gateway_log.warning("Unknown close code %d, attempting reconnect", 1006)
+    gateway_log.info("Connecting to gateway: %s", "wss://gateway.example.test")
+
+    out = capsys.readouterr()
+    assert out.out == "[Plurapack] Fluxer disconnected (code 1006).\n"
+    assert "Unknown close code" not in out.err
+
+
+def test_fluxer_gateway_fatal_close_and_failed_retry_are_reported(tmp_path, monkeypatch, capsys):
+    import logging
+
+    make_fluxer_events(monkeypatch, tmp_path / "fatal.sqlite3")
+    gateway_log = logging.getLogger("fluxer.gateway")
+
+    gateway_log.warning("Gateway connection error: %s. Reconnecting in 5s...", "timed out")
+    gateway_log.error("Fatal close code %d (%s), not reconnecting", 4004, "AUTHENTICATION_FAILED")
+
+    assert capsys.readouterr().out == (
+        "[Plurapack] Fluxer reconnect attempt failed; trying again in 5s.\n"
+        "[Plurapack] Fluxer closed the connection for good (code 4004, AUTHENTICATION_FAILED); "
+        "it will not reconnect.\n"
+    )
+
+
+def test_fluxer_gateway_status_handler_is_attached_once(tmp_path, monkeypatch):
+    import logging
+
+    from plurapack.fluxer_bot import FluxerGatewayStatus
+
+    make_fluxer_events(monkeypatch, tmp_path / "once-a.sqlite3")
+    make_fluxer_events(monkeypatch, tmp_path / "once-b.sqlite3")
+
+    handlers = [handler for handler in logging.getLogger("fluxer.gateway").handlers
+                if isinstance(handler, FluxerGatewayStatus)]
+    assert len(handlers) == 1
+    assert logging.getLogger("fluxer.gateway").isEnabledFor(logging.INFO)
+
+
+async def test_fluxer_reconnects_are_reported(tmp_path, monkeypatch, capsys):
+    events = make_fluxer_events(monkeypatch, tmp_path / "reconnect.sqlite3")
+
+    await events["on_ready"]()
+    await events["on_resumed"]()
+    await events["on_ready"]()
+
+    assert capsys.readouterr().out == (
+        "[Plurapack] Fluxer ready to use. Command prefix: p; (also pk;, tul;, tup;)\n"
+        "[Plurapack] Fluxer reconnected (session resumed).\n"
+        "[Plurapack] Fluxer reconnected with a new session; ready to use again.\n"
+    )
