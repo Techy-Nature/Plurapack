@@ -13,6 +13,7 @@ Plurapack reads configuration from environment variables. It does not automatica
 | `PLURAPACK_TTS_API_KEY` | For protected Modal TTS | — | Modal proxy credential (`wk-....ws-....`), sent server-to-server as `Authorization: Bearer ...`. |
 | `PLURAPACK_TTS_QUEUE_LIMIT` | No | `8` | Pending speech limit, from 1 to 1000. |
 | `PLURAPACK_TTS_WORKERS` | No | `1` | Speech workers, from 1 to 4. |
+| `PLURAPACK_FLUXER_CATCH_UP_MINUTES` | No | `10` | After Fluxer drops the bot and cannot resume its session, messages sent this many minutes back or less are fetched and proxied when it reconnects. From 0 to 60; `0` turns catch-up off. |
 | `PLURAPACK_API_RATE_LIMIT` | No | `120` | Public API requests allowed per minute for each token, or each client without a token. |
 
 Restart the bot after changing its process environment. Keep secrets out of Git, shell history where possible, support messages, and screenshots.
