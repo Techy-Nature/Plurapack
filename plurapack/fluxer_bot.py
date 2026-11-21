@@ -8,8 +8,10 @@ import json
 import logging
 import os
 import shlex
+import time
 import urllib.request
-from datetime import date
+from collections import OrderedDict
+from datetime import date, datetime, timezone
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
@@ -261,6 +263,102 @@ def watch_fluxer_gateway() -> FluxerGatewayStatus:
     if gateway_log.getEffectiveLevel() > logging.INFO:
         gateway_log.setLevel(logging.INFO)
     return handler
+
+
+# How far back a fresh Fluxer session looks for messages it never received.
+# A message older than this is left alone: proxying it now would drop it far
+# below the conversation it belonged to.  0 turns the catch-up off.
+CATCH_UP_MINUTES_DEFAULT = 10
+CATCH_UP_MINUTES_MAX = 60
+# Only channels that saw a message within this long are checked after a drop.
+CATCH_UP_CHANNEL_WINDOW_SECONDS = 24 * 60 * 60
+CATCH_UP_CHANNEL_LIMIT = 25
+CATCH_UP_MESSAGES_PER_CHANNEL = 50
+RECENT_MESSAGE_LIMIT = 2000
+
+
+def resolve_catch_up_minutes() -> int:
+    """Read PLURAPACK_FLUXER_CATCH_UP_MINUTES (0 to 60, default 10)."""
+    name = "PLURAPACK_FLUXER_CATCH_UP_MINUTES"
+    raw = os.environ.get(name, str(CATCH_UP_MINUTES_DEFAULT))
+    try:
+        value = int(raw)
+    except ValueError as error:
+        raise ValueError(f"{name} must be a whole number of minutes.") from error
+    if not 0 <= value <= CATCH_UP_MINUTES_MAX:
+        raise ValueError(f"{name} must be between 0 and {CATCH_UP_MINUTES_MAX}.")
+    return value
+
+
+@dataclass(frozen=True)
+class ChannelMark:
+    """The newest message Plurapack has seen in one channel."""
+
+    message_id: str
+    server_id: str | None
+    seen_at: float
+
+
+class FluxerCatchUp:
+    """Remember where each channel was, so a fresh gateway session can fill the gap.
+
+    When Fluxer cannot resume a dropped session, the new session starts from
+    "now" and never delivers the messages sent while the bot was away.  This
+    keeps the last message ID per recently active channel and remembers which
+    messages were already handled, so the gap can be fetched and proxied once.
+    """
+
+    def __init__(self, *, channel_limit: int = CATCH_UP_CHANNEL_LIMIT,
+                 channel_window: float = CATCH_UP_CHANNEL_WINDOW_SECONDS,
+                 recent_limit: int = RECENT_MESSAGE_LIMIT,
+                 clock: Any = time.monotonic) -> None:
+        self._channel_limit = channel_limit
+        self._channel_window = channel_window
+        self._recent_limit = recent_limit
+        self._clock = clock
+        self._marks: OrderedDict[str, ChannelMark] = OrderedDict()
+        self._recent: OrderedDict[str, None] = OrderedDict()
+
+    def saw(self, channel_id: str, message_id: str, server_id: str | None) -> bool:
+        """Record a message; False means it was already handled once."""
+        if message_id in self._recent:
+            return False
+        self._recent[message_id] = None
+        while len(self._recent) > self._recent_limit:
+            self._recent.popitem(last=False)
+        previous = self._marks.pop(channel_id, None)
+        newest = message_id
+        if previous is not None and _id_number(previous.message_id) > _id_number(message_id):
+            newest = previous.message_id
+        self._marks[channel_id] = ChannelMark(
+            newest, server_id or (previous.server_id if previous else None), self._clock())
+        while len(self._marks) > self._channel_limit:
+            self._marks.popitem(last=False)
+        return True
+
+    def channels_to_check(self) -> list[tuple[str, ChannelMark]]:
+        """Recently active channels, most recent first, as they stood right now."""
+        oldest = self._clock() - self._channel_window
+        return [(channel_id, mark) for channel_id, mark in reversed(self._marks.items())
+                if mark.seen_at >= oldest]
+
+
+def _id_number(message_id: str) -> int:
+    try:
+        return int(message_id)
+    except (TypeError, ValueError):
+        return -1
+
+
+def _message_time(data: dict[str, Any]) -> datetime | None:
+    raw = data.get("timestamp")
+    if not isinstance(raw, str):
+        return None
+    try:
+        when = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return when if when.tzinfo else when.replace(tzinfo=timezone.utc)
 
 
 def create_fluxer_bot(prefix: str, database: str) -> Any:
@@ -746,6 +844,87 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
         raise RuntimeError("Fluxer command registration is out of sync with COMMAND_HELP.")
 
     ready_count = 0
+    catch_up = FluxerCatchUp()
+    catch_up_minutes = resolve_catch_up_minutes()
+    catch_up_log = logging.getLogger(__name__)
+
+    async def handle_message(message: Any, server_id: str | None = None) -> str | None:
+        """Run one Fluxer message through the proxy, at most once per message."""
+        guild_id = getattr(message, "guild_id", None)
+        incoming_server = str(guild_id) if guild_id else server_id
+        if not catch_up.saw(str(message.channel_id), str(message.id), incoming_server):
+            return None
+        reply = getattr(message, "referenced_message", None)
+        incoming = Incoming(
+            str(message.id),
+            str(message.channel_id),
+            str(message.author.id),
+            message.content,
+            bool(message.author.bot),
+            str(reply.id) if reply else None,
+            incoming_server,
+        )
+        platform.messages[incoming.id] = message
+        try:
+            return await service.handle(incoming)
+        except EditCommandError as error:
+            # Same reply call the speech delivery already relies on.
+            channel = await bot.fetch_channel(incoming.channel_id)
+            await channel.send(
+                str(error),
+                message_reference={"message_id": incoming.id, "channel_id": incoming.channel_id},
+            )
+            return None
+        finally:
+            platform.messages.pop(incoming.id, None)
+
+    def parse_fetched(data: dict[str, Any]) -> Any:
+        parse = getattr(bot, "_parse_message", None)
+        if callable(parse):
+            return parse(data)
+        return fluxer.Message.from_data(data, getattr(bot, "_http", None))
+
+    async def catch_up_after_new_session() -> None:
+        """Proxy messages sent while a dropped session could not be resumed.
+
+        Fluxer replays missed events when a session resumes, but a brand-new
+        session starts empty.  Each recently active channel is read from just
+        after its last known message, and anything newer than the catch-up
+        window goes through the normal proxy path.  Messages that were already
+        proxied are skipped by the proxy service itself.
+        """
+        if catch_up_minutes == 0:
+            return
+        channels = catch_up.channels_to_check()
+        http = getattr(bot, "_http", None)
+        if not channels or http is None or not hasattr(http, "get_messages"):
+            return
+        oldest = datetime.now(timezone.utc).timestamp() - catch_up_minutes * 60
+        proxied = failed = 0
+        for channel_id, mark in channels:
+            try:
+                fetched = await http.get_messages(
+                    channel_id, limit=CATCH_UP_MESSAGES_PER_CHANNEL, after=mark.message_id)
+            except Exception as error:
+                failed += 1
+                catch_up_log.warning("Fluxer catch-up could not read channel %s (%s)",
+                                     channel_id, type(error).__name__)
+                continue
+            for data in sorted(fetched or [], key=lambda item: _id_number(str(item.get("id")))):
+                sent_at = _message_time(data)
+                if sent_at is None or sent_at.timestamp() < oldest:
+                    continue
+                try:
+                    if await handle_message(parse_fetched(data), mark.server_id):
+                        proxied += 1
+                except Exception as error:
+                    catch_up_log.warning("Fluxer catch-up could not proxy a message (%s)",
+                                         type(error).__name__)
+        summary = (f"Fluxer catch-up checked {len(channels)} channel(s); "
+                   f"proxied {proxied} message(s) sent while disconnected.")
+        if failed:
+            summary += f" {failed} channel(s) could not be read."
+        _print_cli_status(summary)
 
     @bot.event
     async def on_ready() -> None:
@@ -756,6 +935,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
             _print_cli_status(f"Fluxer ready to use. Command prefix: {_prefix_summary(prefix)}")
         else:
             _print_cli_status("Fluxer reconnected with a new session; ready to use again.")
+            await catch_up_after_new_session()
 
     @bot.event
     async def on_resumed() -> None:
@@ -764,28 +944,7 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
     @bot.event
     async def on_message(message: Any) -> None:
         # fluxer.py permits replacing its dispatcher event, so explicitly retain it.
-        reply = getattr(message, "referenced_message", None)
-        incoming = Incoming(
-            str(message.id),
-            str(message.channel_id),
-            str(message.author.id),
-            message.content,
-            bool(message.author.bot),
-            str(reply.id) if reply else None,
-            str(message.guild_id) if message.guild_id else None,
-        )
-        platform.messages[incoming.id] = message
-        try:
-            await service.handle(incoming)
-        except EditCommandError as error:
-            # Same reply call the speech delivery already relies on.
-            channel = await bot.fetch_channel(incoming.channel_id)
-            await channel.send(
-                str(error),
-                message_reference={"message_id": incoming.id, "channel_id": incoming.channel_id},
-            )
-        finally:
-            platform.messages.pop(incoming.id, None)
+        await handle_message(message)
 
     @bot.event
     async def on_raw_reaction_add(event: Any) -> None:
@@ -794,4 +953,5 @@ def create_fluxer_bot(prefix: str, database: str) -> Any:
             str(event.channel_id), str(event.message_id), str(event.user_id), emoji
         )
 
+    bot.fluxer_catch_up = catch_up
     return bot
