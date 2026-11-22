@@ -632,7 +632,7 @@ def test_fluxer_gateway_fatal_close_and_failed_retry_are_reported(tmp_path, monk
     gateway_log.error("Fatal close code %d (%s), not reconnecting", 4004, "AUTHENTICATION_FAILED")
 
     assert capsys.readouterr().out == (
-        "[Plurapack] Fluxer reconnect attempt failed; trying again in 5s.\n"
+        "[Plurapack] Fluxer reconnect attempt failed (timed out); trying again in 5s.\n"
         "[Plurapack] Fluxer closed the connection for good (code 4004, AUTHENTICATION_FAILED); "
         "it will not reconnect.\n"
     )

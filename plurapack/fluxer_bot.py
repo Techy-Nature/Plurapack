@@ -189,6 +189,9 @@ def _plurapack_fluxer_bot_class(fluxer: Any) -> type:
 
         async def setup_hook(self) -> None:
             await super().setup_hook()
+            # fluxer.py builds its gateway just before setup_hook and connects
+            # just after it, so this is the one place to adjust how it reconnects.
+            install_resume_fallback(getattr(self, "_gateway", None))
             if self.speech_queue:
                 self._speech_tasks = [
                     asyncio.create_task(speech_worker(self.speech_queue), name=f"fluxer-speech-{index}")
@@ -232,8 +235,23 @@ class FluxerGatewayStatus(logging.Handler):
         "Fatal close code %d (%s), not reconnecting":
             "Fluxer closed the connection for good (code {0}, {1}); it will not reconnect.",
         "Gateway connection error: %s. Reconnecting in 5s...":
-            "Fluxer reconnect attempt failed; trying again in 5s.",
+            "Fluxer reconnect attempt failed ({0}); trying again in 5s.",
     }
+
+    # Long enough for an HTTP status and its URL, short enough for one log line.
+    REASON_LIMIT = 200
+
+    @classmethod
+    def _describe(cls, value: Any) -> str:
+        """Readable text for a log argument; exceptions with no message use their type."""
+        if isinstance(value, BaseException):
+            text = str(value) or type(value).__name__
+        else:
+            text = str(value)
+        text = " ".join(text.split())
+        if len(text) > cls.REASON_LIMIT:
+            text = text[:cls.REASON_LIMIT - 3] + "..."
+        return text
 
     def emit(self, record: logging.LogRecord) -> None:
         template = record.msg if isinstance(record.msg, str) else None
@@ -241,7 +259,8 @@ class FluxerGatewayStatus(logging.Handler):
             line = self.STATUS_LINES[template]
             if line is not None:
                 try:
-                    _print_cli_status(line.format(*(record.args or ())))
+                    args = record.args if isinstance(record.args, tuple) else ()
+                    _print_cli_status(line.format(*(self._describe(arg) for arg in args)))
                 except Exception:
                     self.handleError(record)
             return
@@ -263,6 +282,90 @@ def watch_fluxer_gateway() -> FluxerGatewayStatus:
     if gateway_log.getEffectiveLevel() > logging.INFO:
         gateway_log.setLevel(logging.INFO)
     return handler
+
+
+# A gateway that has not sent HELLO this long after we start connecting is
+# treated as down, so a hung connection can't hold the bot offline for minutes.
+FLUXER_HELLO_TIMEOUT_SECONDS = 15.0
+_GATEWAY_HELLO_OPCODE = 10
+_resume_fallback_classes: dict[type, type] = {}
+
+
+def _resume_fallback_class(base: type) -> type:
+    """A subclass of fluxer.py's Gateway that stops retrying a dead resume address.
+
+    fluxer.py 0.4.x reconnects to the session's ``resume_gateway_url`` for as long
+    as the session exists, and forgets that address only when Fluxer answers
+    "invalid session". When the node behind that address goes away (a drain or an
+    outage), every retry hits the same dead address until it comes back, which
+    kept Plurapack offline for about 15 minutes on 21 November 2026 while the main
+    gateway was already working again. This subclass forgets the resume address
+    after any attempt that never reached HELLO, so the next attempt goes to the
+    main gateway (still sending RESUME, so a live session is kept when it can be).
+    It also gives up on an attempt that gets no HELLO within
+    ``FLUXER_HELLO_TIMEOUT_SECONDS``, which fluxer.py otherwise lets hang.
+    """
+    cached = _resume_fallback_classes.get(base)
+    if cached is not None:
+        return cached
+
+    class ResumeFallbackGateway(base):  # type: ignore[misc, valid-type]
+        async def _handle_payload(self, payload: Any) -> None:
+            if getattr(payload, "op", None) == _GATEWAY_HELLO_OPCODE:
+                hello = getattr(self, "_plurapack_hello", None)
+                if hello is not None:
+                    hello.set()
+            await super()._handle_payload(payload)
+
+        async def _connect_and_run(self, url: str) -> None:
+            tried_resume_url = getattr(self, "_resume_gateway_url", None)
+            hello = asyncio.Event()
+            self._plurapack_hello = hello
+            run = asyncio.ensure_future(super()._connect_and_run(url))
+            waiter = asyncio.ensure_future(hello.wait())
+            try:
+                done, _ = await asyncio.wait(
+                    {run, waiter}, timeout=FLUXER_HELLO_TIMEOUT_SECONDS,
+                    return_when=asyncio.FIRST_COMPLETED)
+                if not done:
+                    raise asyncio.TimeoutError(
+                        f"no answer within {FLUXER_HELLO_TIMEOUT_SECONDS:g}s")
+                await run
+            finally:
+                waiter.cancel()
+                if not run.done():
+                    run.cancel()
+                    try:
+                        await run
+                    except BaseException:
+                        pass
+                if (tried_resume_url and not hello.is_set()
+                        and getattr(self, "_resume_gateway_url", None) == tried_resume_url):
+                    self._resume_gateway_url = None
+                    _print_cli_status(
+                        "Fluxer's resume address did not answer; "
+                        "the next attempt uses the main gateway.")
+
+    ResumeFallbackGateway.__name__ = ResumeFallbackGateway.__qualname__ = (
+        f"ResumeFallback{base.__name__}")
+    _resume_fallback_classes[base] = ResumeFallbackGateway
+    return ResumeFallbackGateway
+
+
+def install_resume_fallback(gateway: Any) -> bool:
+    """Give a fluxer.py gateway the resume-address fallback; False if it can't take it."""
+    if gateway is None:
+        return False
+    base = type(gateway)
+    if base in _resume_fallback_classes.values():
+        return True
+    if not (callable(getattr(base, "_connect_and_run", None))
+            and callable(getattr(base, "_handle_payload", None))
+            and hasattr(gateway, "_resume_gateway_url")):
+        _print_cli_status("Fluxer's gateway changed shape; the resume-address fallback is off.")
+        return False
+    gateway.__class__ = _resume_fallback_class(base)
+    return True
 
 
 # How far back a fresh Fluxer session looks for messages it never received.
